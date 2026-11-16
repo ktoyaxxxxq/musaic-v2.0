@@ -1,0 +1,7 @@
+{
+  "name": "Musaic Creator Pro",
+  "description": "Professional music library management system with advanced creator tools, AI features, and localized persistence.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

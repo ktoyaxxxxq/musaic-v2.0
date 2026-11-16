@@ -1,0 +1,234 @@
+/* Musaic Global Styles & Ultra-Smooth Animations */
+:root {
+  --anim-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --anim-ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --anim-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --anim-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Ensure smooth animations with zero frame drop */
+html {
+  color-scheme: dark;
+  scroll-behavior: smooth;
+}
+
+/* Fluid hardware-accelerated transitions */
+.transition-smooth {
+  transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.transition-lift {
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1) 0.04s,
+              box-shadow 0.35s cubic-bezier(0.22, 1, 0.36, 1) 0.04s,
+              border-color 0.3s cubic-bezier(0.22, 1, 0.36, 1) 0.04s;
+}
+
+/* perf: promote a GPU layer only while hovered, not for every card on the page */
+.transition-lift:hover {
+  transform: translateY(-3px);
+  will-change: transform;
+}
+
+/* Direct-hover-only smooth text underline with gentle delay (no abrupt flash on cursor pass) */
+.hover-text-link {
+  text-decoration-line: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  text-decoration-color: transparent;
+  transition: color 0.3s cubic-bezier(0.22, 1, 0.36, 1) 0.045s,
+              text-decoration-color 0.3s cubic-bezier(0.22, 1, 0.36, 1) 0.045s,
+              opacity 0.28s ease 0.045s;
+}
+
+.hover-text-link:hover {
+  color: #ffffff;
+  text-decoration-color: currentColor;
+}
+
+/* Smooth delayed border outline highlight for cards */
+.hover-outline-card {
+  transition: transform 0.38s cubic-bezier(0.22, 1, 0.36, 1) 0.045s,
+              translate 0.38s cubic-bezier(0.22, 1, 0.36, 1) 0.045s,
+              border-color 0.34s cubic-bezier(0.22, 1, 0.36, 1) 0.045s,
+              background-color 0.34s cubic-bezier(0.22, 1, 0.36, 1) 0.045s,
+              box-shadow 0.38s cubic-bezier(0.22, 1, 0.36, 1) 0.045s;
+}
+
+.hover-outline-card:hover {
+  border-color: rgba(255, 255, 255, 0.24) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 16px 38px -12px rgba(0, 0, 0, 0.58);
+}
+
+/* Smooth delayed border outline highlight for list rows */
+.hover-outline-row {
+  transition: border-color 0.32s cubic-bezier(0.22, 1, 0.36, 1) 0.04s,
+              background-color 0.32s cubic-bezier(0.22, 1, 0.36, 1) 0.04s,
+              box-shadow 0.32s cubic-bezier(0.22, 1, 0.36, 1) 0.04s,
+              transform 0.28s cubic-bezier(0.22, 1, 0.36, 1) 0.04s;
+}
+
+.hover-outline-row:hover {
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  background-color: rgba(255, 255, 255, 0.065) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Smooth delayed subtle outline for interactive avatar & media frames */
+.hover-outline-media {
+  transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1) 0.045s,
+              border-color 0.35s cubic-bezier(0.22, 1, 0.36, 1) 0.045s,
+              box-shadow 0.42s cubic-bezier(0.22, 1, 0.36, 1) 0.045s;
+}
+
+.hover-outline-media:hover {
+  border-color: rgba(255, 255, 255, 0.35) !important;
+}
+
+/* ==========================================================================
+   MUSAIC DESIGN LAYER v2
+   Glass sheen, gradients, softer radii, smoother motion.
+   Pure CSS on top of the existing Tailwind classes: no logic or layout changes.
+   Selectors start with :root so they win over the Tailwind CDN styles.
+   Transforms use the individual `translate` / `scale` properties so they never
+   break elements already positioned with Tailwind translate classes.
+   ========================================================================== */
+:root {
+  --ds-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ds-ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ds-fast: 0.18s;
+  --ds-med: 0.32s;
+  --ds-slow: 0.5s;
+  --ds-rf: min(var(--radius-factor, 1.3), 1.8);
+  --ds-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.012) 38%, rgba(255, 255, 255, 0) 70%);
+  --ds-glass-border: rgba(255, 255, 255, 0.075);
+  --ds-inner-hl: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --ds-accent-soft: color-mix(in srgb, var(--accent-color) 16%, transparent);
+  --ds-accent-line: color-mix(in srgb, var(--accent-color) 55%, transparent);
+  --ds-accent-light: color-mix(in srgb, var(--accent-color) 72%, white);
+  --ds-ring: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000);
+}
+
+/* ---------- 1. Softer radii that follow the "radius" slider in settings ---------- */
+:root .rounded-lg { border-radius: calc(0.5rem * var(--ds-rf)); }
+:root .rounded-xl { border-radius: calc(0.72rem * var(--ds-rf)); }
+:root .rounded-2xl { border-radius: calc(0.95rem * var(--ds-rf)); }
+:root .rounded-3xl { border-radius: min(calc(1.4rem * var(--ds-rf)), 2.25rem); }
+
+/* ---------- 2. Glass surfaces (sheen + inner highlight, no extra blur = cheap) ---------- */
+:root :is(.rounded-2xl, .rounded-3xl):is(.bg-black\/30, .bg-black\/40, .bg-black\/45, .bg-black\/50, .bg-zinc-900\/40, .bg-zinc-900\/50, .bg-zinc-900\/55, .bg-zinc-900\/60, .bg-zinc-900\/70, .bg-zinc-900\/80, .bg-zinc-900, .bg-zinc-950, .theme-card, .glass-card) {
+  background-image: var(--ds-sheen);
+  box-shadow: var(--ds-ring), var(--ds-inner-hl), 0 10px 30px -16px rgba(0, 0, 0, 0.55);
+}
+:root :is(.rounded-lg, .rounded-xl):is(.bg-black\/30, .bg-black\/40, .bg-black\/45, .bg-black\/50, .bg-white\/5, .bg-white\/\[0\.05\], .bg-white\/\[0\.06\], .bg-white\/\[0\.07\], .bg-zinc-900\/60, .bg-zinc-900\/80) {
+  background-image: var(--ds-sheen);
+}
+:root :is(.border-white\/5, .border-white\/\[0\.06\], .border-white\/\[0\.07\]) { border-color: var(--ds-glass-border); }
+
+/* ---------- 3. Softer, deeper shadows (keep Tailwind rings working) ---------- */
+:root .shadow-md { box-shadow: var(--ds-ring), 0 6px 16px -6px rgba(0, 0, 0, 0.5), var(--ds-inner-hl); }
+:root .shadow-lg { box-shadow: var(--ds-ring), 0 14px 30px -12px rgba(0, 0, 0, 0.6), var(--ds-inner-hl); }
+:root .shadow-xl { box-shadow: var(--ds-ring), 0 20px 42px -16px rgba(0, 0, 0, 0.65), var(--ds-inner-hl); }
+:root .shadow-2xl { box-shadow: var(--ds-ring), 0 28px 60px -20px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(255, 255, 255, 0.03), var(--ds-inner-hl); }
+
+/* ---------- 4. Accent buttons & selected chips: gradient + glow ---------- */
+:root .theme-bg-accent {
+  background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 45%, rgba(0, 0, 0, 0.12) 100%);
+}
+:root :is(button, a).theme-bg-accent {
+  box-shadow: var(--ds-ring), 0 6px 18px -6px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+:root button.theme-bg-accent:hover:not(:disabled) {
+  box-shadow: var(--ds-ring), 0 10px 26px -6px var(--accent-glow-strong), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  filter: brightness(1.06);
+}
+:root button { transition-property: background-color, border-color, color, box-shadow, transform, opacity, filter, scale, translate; }
+:root button:active:not(:disabled) { scale: 0.97; }
+
+/* ---------- 5. Inputs: accent focus glow ---------- */
+:root :is(input[type="text"], input[type="number"], input[type="search"], input[type="date"], input:not([type]), textarea, select):focus {
+  border-color: var(--ds-accent-line) !important;
+  box-shadow: 0 0 0 3px var(--ds-accent-soft), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  outline: none;
+}
+:root select option { background: #111116; color: #fafafa; }
+:root input::placeholder, :root textarea::placeholder { color: rgba(161, 161, 170, 0.75); }
+:root input[type="range"]:not(.opacity-0) { accent-color: var(--accent-color); }
+
+/* ---------- 6. App shell: header, sidebar, player ---------- */
+:root .app-header { box-shadow: 0 10px 30px -24px rgba(0, 0, 0, 0.85); }
+:root .app-header::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, var(--ds-accent-line) 30%, rgba(129, 140, 248, 0.35) 70%, transparent 100%);
+  opacity: 0.45;
+}
+:root .app-sidebar { box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.035), 18px 0 40px -34px rgba(0, 0, 0, 0.9); }
+:root .app-player { box-shadow: 0 -18px 40px -24px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.05); }
+:root .app-player::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -1px; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, var(--ds-accent-line) 50%, transparent 100%);
+  opacity: 0.4;
+}
+:root .app-mobile-nav { box-shadow: 0 -10px 30px -18px rgba(0, 0, 0, 0.9); }
+
+/* active sidebar item: glowing accent bar */
+:root .app-sidebar button.translate-x-1 { position: relative; }
+:root .app-sidebar button.translate-x-1::before {
+  content: ""; position: absolute; left: -7px; top: 22%; bottom: 22%; width: 3px; border-radius: 9999px;
+  background: linear-gradient(180deg, var(--ds-accent-light), var(--accent-color));
+  box-shadow: 0 0 12px var(--accent-glow);
+  animation: ds-grow-y var(--ds-med) var(--ds-ease-spring) both;
+}
+@keyframes ds-grow-y { from { scale: 1 0.2; opacity: 0; } to { scale: 1 1; opacity: 1; } }
+
+/* ---------- 7. Modals & overlays: frosted backdrop + soft entrance ---------- */
+:root .fixed.inset-0:is(.bg-black\/60, .bg-black\/70, .bg-black\/75, .bg-black\/80, .bg-black\/85, .bg-black\/90) {
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  backdrop-filter: blur(10px) saturate(120%);
+}
+/* only overlays that are NOT animated by motion (no inline opacity/transform) */
+:root .fixed.inset-0:is(.bg-black\/60, .bg-black\/70, .bg-black\/75, .bg-black\/80, .bg-black\/85, .bg-black\/90):not([style*="opacity"]):not([style*="transform"]) {
+  animation: ds-fade var(--ds-med) var(--ds-ease) both;
+}
+:root .fixed.inset-0:not([style*="opacity"]) > :is(.rounded-3xl, .rounded-2xl):not([style*="transform"]):not([style*="opacity"]) {
+  animation: ds-pop var(--ds-slow) var(--ds-ease-spring) both;
+}
+@keyframes ds-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ds-pop { from { opacity: 0; translate: 0 10px; scale: 0.975; } to { opacity: 1; translate: 0 0; scale: 1; } }
+
+/* ---------- 8. Cards with artwork: smoother lift, cover zoom, accent glow ---------- */
+:root .group img { transition: transform 0.7s var(--ds-ease), filter 0.5s var(--ds-ease), opacity 0.4s var(--ds-ease); }
+:root .hover-outline-card:hover { translate: 0 -2px; }
+:root :is(.hover-outline-card, .theme-card-glow):hover {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 18px 40px -16px rgba(0, 0, 0, 0.65), 0 0 28px -12px var(--accent-glow);
+}
+:root .hover-outline-row:hover { background-image: linear-gradient(90deg, var(--ds-accent-soft) 0%, transparent 55%); }
+
+/* ---------- 9. Motion polish & helpers ---------- */
+:root :is(.transition-all, .transition-colors, .transition) { transition-timing-function: var(--ds-ease); }
+:root a, :root button { -webkit-tap-highlight-color: transparent; }
+.ds-shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.09) 50%, rgba(255,255,255,0.03) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.ds-gradient-border { position: relative; }
+.ds-gradient-border::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+  background: linear-gradient(135deg, var(--ds-accent-line), rgba(129, 140, 248, 0.35), transparent 70%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+}
+
+/* ---------- 10. Typography ---------- */
+:root :is(.font-black, .font-extrabold) { letter-spacing: -0.02em; }
+:root .tabular-nums { font-variant-numeric: tabular-nums; }
+h1, h2, h3 { text-wrap: balance; }
+
+/* ---------- 11. Accessibility ---------- */
+@media (prefers-reduced-motion: reduce) {
+  :root .app-sidebar button.translate-x-1::before,
+  :root .fixed.inset-0,
+  :root .fixed.inset-0 > * { animation: none !important; }
+  :root .group img { transition: none; }
+  :root button:active:not(:disabled) { scale: none; }
+}
