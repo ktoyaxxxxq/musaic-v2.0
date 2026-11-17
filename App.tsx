@@ -104,6 +104,7 @@ import {
   getReleaseHypeMultiplier,
   ReleaseHypeControl
 } from './SimulationMode';
+import './fontsExtra';
 
 // --- Types & Constants ---
 
@@ -141,6 +142,11 @@ const AVAILABLE_FONTS = [
   { id: "'Plus Jakarta Sans', sans-serif", name: 'Plus Jakarta Sans', desc: 'Стиль музыкального стриминга' },
   { id: "'Montserrat', sans-serif", name: 'Montserrat (Выразительный)', desc: 'Плотный выразительный шрифт' },
   { id: "'JetBrains Mono', monospace", name: 'JetBrains Mono', desc: 'Технический моноширинный шрифт' },
+  { id: "'Onest', 'Inter', sans-serif", name: 'Onest (Новый)', desc: 'Современный чистый гротеск с отличной кириллицей' },
+  { id: "'Golos Text', 'Inter', sans-serif", name: 'Golos Text', desc: 'Мягкий и очень читаемый' },
+  { id: "'Inter Tight', 'Inter', sans-serif", name: 'Inter Tight', desc: 'Плотный, как в Apple Music' },
+  { id: "'Geologica', 'Inter', sans-serif", name: 'Geologica', desc: 'Адаптивный с характером' },
+  { id: "'Jost', sans-serif", name: 'Jost', desc: 'Геометрический минимализм' },
 ];
 
 export interface ThemeConfig {
@@ -179,6 +185,8 @@ export interface ThemeConfig {
   artistHero?: boolean; // big artist header
   albumHero?: boolean; // big album header
   smoothTransitions?: boolean; // animated page transitions
+  artistHeroStyle?: 'cinema' | 'poster'; // big artist header variant
+  typographyMode?: 'classic' | 'modern' | 'editorial' | 'display'; // font pairs for the whole app
 }
 
 const DEFAULT_THEME: ThemeConfig = {
@@ -216,6 +224,8 @@ const DEFAULT_THEME: ThemeConfig = {
   artistHero: true,
   albumHero: true,
   smoothTransitions: true,
+  artistHeroStyle: 'cinema',
+  typographyMode: 'classic',
 };
 
 // --- Genre Catalog (Curated & Synchronized with Search & Creation) ---
@@ -1340,21 +1350,97 @@ const PlaceholderArt: React.FC<{
 
   const textSizeClass = lines.length > 1 || trimmed.length > 10 ? 'text-[8.2cqw]' : 'text-[9.5cqw]';
 
+  // Typographic layout variant, stable per album (tracks of one album share the album's look)
+  const STYLE_COUNT = 8;
+  const styleIdx = isArtist ? (Math.abs(hash >> 5) % 2 === 0 ? 0 : 2) : Math.abs(hash >> 5) % STYLE_COUNT;
+  const textBase = 'pointer-events-none select-none break-words';
+  const longText = trimmed.length > 12;
+
+  const renderText = () => {
+    switch (styleIdx) {
+      case 1: // editorial bottom-left
+        return (
+          <div className="absolute inset-0 flex flex-col justify-end p-[9cqw]">
+            <span className="block w-[14cqw] h-px bg-white/25 mb-[3cqw]" />
+            <span className={`${textBase} text-white/50 leading-[1.02] text-left`} style={{ fontFamily: "'Inter Tight', 'Inter', sans-serif", fontWeight: 700, fontSize: longText ? '9cqw' : '11cqw', letterSpacing: '-0.03em' }}>
+              {trimmed}
+            </span>
+          </div>
+        );
+      case 2: // serif centre
+        return (
+          <div className="absolute inset-0 flex items-center justify-center p-[10cqw]">
+            <span className={`${textBase} text-white/45 text-center leading-[1.0]`} style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: 'italic', fontWeight: 600, fontSize: longText ? '11cqw' : '14cqw' }}>
+              {trimmed}
+            </span>
+          </div>
+        );
+      case 3: // wide caps top-left
+        return (
+          <div className="absolute inset-0 flex flex-col justify-start p-[9cqw]">
+            <span className={`${textBase} text-white/45 uppercase text-left leading-[1.1]`} style={{ fontFamily: "'Unbounded', sans-serif", fontWeight: 700, fontSize: longText ? '5.6cqw' : '7cqw', letterSpacing: '0.06em' }}>
+              {trimmed}
+            </span>
+            <span className="mt-auto block w-full h-px bg-white/10" />
+          </div>
+        );
+      case 4: // condensed poster, bottom
+        return (
+          <div className="absolute inset-0 flex items-end justify-center p-[7cqw]">
+            <span className={`${textBase} text-white/40 uppercase text-center leading-[0.9]`} style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600, fontSize: longText ? '13cqw' : '18cqw', letterSpacing: '-0.01em' }}>
+              {trimmed}
+            </span>
+          </div>
+        );
+      case 5: // mono label
+        return (
+          <div className="absolute inset-0 flex flex-col justify-between p-[8cqw]">
+            <span className="block w-[6cqw] h-[6cqw] rounded-full border border-white/20" />
+            <span className={`${textBase} text-white/45 lowercase text-left leading-[1.25]`} style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 500, fontSize: longText ? '5.4cqw' : '6.6cqw' }}>
+              {trimmed}
+            </span>
+          </div>
+        );
+      case 6: // outline display
+        return (
+          <div className="absolute inset-0 flex items-center justify-center p-[9cqw]">
+            <span
+              className={`${textBase} uppercase text-center leading-[0.95] text-transparent`}
+              style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: longText ? '10cqw' : '13cqw', WebkitTextStroke: '0.35cqw rgba(255,255,255,0.35)' }}
+            >
+              {trimmed}
+            </span>
+          </div>
+        );
+      case 7: // spaced light in a frame
+        return (
+          <div className="absolute inset-[7cqw] border border-white/12 flex items-center justify-center p-[6cqw]">
+            <span className={`${textBase} text-white/45 uppercase text-center leading-[1.5]`} style={{ fontFamily: "'Manrope', sans-serif", fontWeight: 500, fontSize: longText ? '4.6cqw' : '5.6cqw', letterSpacing: '0.32em' }}>
+              {trimmed}
+            </span>
+          </div>
+        );
+      default: // classic centred (original)
+        return (
+          <div className="absolute inset-0 flex items-center justify-center p-[11cqw]">
+            <div className="flex flex-col items-center justify-center w-full gap-[1.5cqw]">
+              {lines.map((line, idx) => (
+                <span
+                  key={idx}
+                  className={`${textSizeClass} font-extrabold text-white/40 pointer-events-none select-none tracking-tight leading-[1.02] text-center break-words uppercase`}
+                >
+                  {line}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+    }
+  };
+
   return (
     <div className={`w-full h-full ${backgrounds[variant]} flex flex-col items-center justify-center relative overflow-hidden select-none [container-type:size] ${innerClassName}`}>
-      {/* Centered stylized text - Balanced compact sizing */}
-      <div className="absolute inset-0 flex items-center justify-center p-[11cqw]">
-        <div className="flex flex-col items-center justify-center w-full gap-[1.5cqw]">
-          {lines.map((line, idx) => (
-            <span 
-              key={idx} 
-              className={`${textSizeClass} font-extrabold text-white/40 pointer-events-none select-none tracking-tight leading-[1.02] text-center break-words uppercase`}
-            >
-              {line}
-            </span>
-          ))}
-        </div>
-      </div>
+      {renderText()}
     </div>
   );
 };
@@ -3490,26 +3576,60 @@ html[data-design="classic"] .page-cover-blur { display: none !important; }
 html[data-design="classic"] .artist-hero-compact { box-shadow: inset 0 -1px 0 rgba(255,255,255,0.07); }
 html[data-design="classic"] .album-cover-glow { opacity: 0.25 !important; filter: blur(18px) !important; }
 @media (prefers-reduced-motion: reduce) { .artist-hero-img { transform: none !important; } }
+html[data-typography="modern"] { --typo-body: 'Onest', 'Inter', sans-serif; --typo-head: 'Inter Tight', 'Onest', sans-serif; }
+html[data-typography="editorial"] { --typo-body: 'Golos Text', 'Inter', sans-serif; --typo-head: 'Geologica', 'Golos Text', sans-serif; }
+html[data-typography="display"] { --typo-body: 'Manrope', 'Inter', sans-serif; --typo-head: 'Unbounded', 'Manrope', sans-serif; }
+html[data-typography]:not([data-typography="classic"]) body,
+html[data-typography]:not([data-typography="classic"]) .font-main { font-family: var(--typo-body) !important; }
+html[data-typography]:not([data-typography="classic"]) :is(h1, h2, h3, .font-display, .font-headline) { font-family: var(--typo-head) !important; letter-spacing: -0.03em; }
+html[data-typography="display"] :is(h1, h2, h3) { letter-spacing: -0.015em; }
+html[data-typography]:not([data-typography="classic"]) p { text-wrap: pretty; }
+html[data-typography]:not([data-typography="classic"]) h1 { text-wrap: balance; }
 `;
 
-// --- Big artist header (Apple Music style) ---
+// --- Big artist header (Apple Music style): "cinema" (full-bleed photo, can expand to the whole photo) or "poster" (whole photo on a blurred backdrop) ---
 const ArtistHero: React.FC<{
   artist: Artist;
   coverUrl: string;
   palette: [string, string, string, string];
   useColors: boolean;
   animate: boolean;
+  variant?: 'cinema' | 'poster';
   onPlay: () => void;
   onZoom?: () => void;
-}> = ({ artist, coverUrl, palette, useColors, animate, onPlay, onZoom }) => {
+}> = ({ artist, coverUrl, palette, useColors, animate, variant = 'cinema', onZoom }) => {
   const heroRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLDivElement>(null);
-  const [compact, setCompact] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [ratio, setRatio] = useState<number | null>(null);
+  const [expandedH, setExpandedH] = useState<number | null>(null);
 
+  const c0 = palette[0];
+  const c1 = palette[1];
+  const hasImage = Boolean(coverUrl) && !imgFailed;
+
+  // full-photo height for the expanded cinema view
   useEffect(() => {
+    if (!expanded || !ratio) return;
+    const calc = () => {
+      const w = heroRef.current?.offsetWidth || 0;
+      if (w) setExpandedH(Math.min(Math.round(w * ratio), Math.round(window.innerHeight * 1.6)));
+    };
+    calc();
+    window.addEventListener('resize', calc);
+    return () => window.removeEventListener('resize', calc);
+  }, [expanded, ratio]);
+
+  // gentle parallax (cinema, collapsed only)
+  useEffect(() => {
+    if (variant !== 'cinema') return;
     const el = heroRef.current;
     if (!el) return;
+    if (!animate || expanded) {
+      if (imgRef.current) imgRef.current.style.transform = 'none';
+      return;
+    }
     const scroller = el.closest('.overflow-y-auto') as HTMLElement | null;
     if (!scroller) return;
     let raf = 0;
@@ -3518,10 +3638,9 @@ const ArtistHero: React.FC<{
       raf = requestAnimationFrame(() => {
         const y = scroller.scrollTop;
         const h = el.offsetHeight || 1;
-        if (animate && imgRef.current) {
+        if (imgRef.current) {
           imgRef.current.style.transform = `translate3d(0, ${Math.min(y * 0.35, 140)}px, 0) scale(${1 + Math.min(y / h, 1) * 0.06})`;
         }
-        setCompact(y > h - 96);
       });
     };
     onScroll();
@@ -3530,87 +3649,154 @@ const ArtistHero: React.FC<{
       scroller.removeEventListener('scroll', onScroll);
       cancelAnimationFrame(raf);
     };
-  }, [animate]);
+  }, [animate, expanded, variant]);
 
-  const c0 = palette[0];
-  const c1 = palette[1];
-  const hasImage = Boolean(coverUrl) && !imgFailed;
+  const titleBlock = (
+    <>
+      {artist.verified && (
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-white/90 mb-2">
+          <CheckCircle2 className="w-4 h-4 fill-sky-400 text-black" />
+          <span>Подтвержденный исполнитель</span>
+        </div>
+      )}
+      <h1
+        className="font-black text-white leading-[0.95] break-words"
+        style={{ fontSize: 'clamp(40px, 7vw, 96px)', letterSpacing: '-0.035em', textShadow: '0 6px 32px rgba(0,0,0,0.45)' }}
+      >
+        {artist.name}
+      </h1>
+      <p className="mt-3 text-sm md:text-base font-medium text-white/85 tabular-nums">
+        {formatListeners(artist.followers)}{artist.genre ? ` · ${artist.genre}` : ''}
+      </p>
+    </>
+  );
+
+  if (variant === 'poster') {
+    return (
+      <div ref={heroRef} className="artist-hero relative overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none">
+          {hasImage && (
+            <div
+              className="page-cover-blur absolute -inset-20 bg-cover bg-center blur-[80px] opacity-60 scale-110"
+              style={{ backgroundImage: `url(${coverUrl})` }}
+            />
+          )}
+          <div
+            className="absolute inset-0 transition-all duration-700"
+            style={{
+              background: useColors
+                ? `linear-gradient(120deg, ${c0}66 0%, ${c1}22 50%, rgba(0,0,0,0.25) 100%)`
+                : 'linear-gradient(120deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0.2) 100%)'
+            }}
+          />
+          <div className="absolute inset-x-0 bottom-0 h-28" style={{ background: 'linear-gradient(to bottom, transparent, var(--bg-color))' }} />
+        </div>
+        <div className="relative max-w-7xl mx-auto px-6 md:px-8 pt-10 pb-10 flex flex-col-reverse md:flex-row md:items-end gap-6 md:gap-12">
+          <motion.div
+            initial={animate ? { opacity: 0, y: 16 } : false}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+            className="flex-1 min-w-0 text-center md:text-left"
+          >
+            {titleBlock}
+          </motion.div>
+          <motion.div
+            initial={animate ? { opacity: 0, scale: 0.96 } : false}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+            className="shrink-0 self-center md:self-auto"
+          >
+            {hasImage ? (
+              <button
+                type="button"
+                onClick={onZoom}
+                className="block rounded-3xl overflow-hidden border border-white/10 cursor-zoom-in transition-transform duration-500 hover:scale-[1.015]"
+                style={{ boxShadow: useColors ? `0 30px 80px -20px ${c0}88` : '0 30px 80px -20px rgba(0,0,0,0.7)' }}
+                title="Открыть фото"
+              >
+                <img
+                  src={coverUrl}
+                  alt={artist.name}
+                  className="block w-auto h-auto max-h-[340px] md:max-h-[420px] max-w-[80vw] md:max-w-[440px] object-contain"
+                  onError={() => setImgFailed(true)}
+                />
+              </button>
+            ) : (
+              <div className="w-56 h-56 rounded-3xl" style={{ background: `linear-gradient(135deg, ${c0}, ${c1})` }} />
+            )}
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <>
-      {/* Compact sticky bar that appears after the hero scrolls away */}
-      <div className="sticky top-0 z-40 h-0">
-        <div
-          className={`artist-hero-compact absolute inset-x-0 top-0 h-14 px-6 md:px-8 flex items-center gap-3 transition-all duration-200 ${compact ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-2 pointer-events-none'}`}
-          style={{ background: useColors ? `linear-gradient(90deg, ${c0}40 0%, rgba(12,12,14,0.94) 60%)` : 'rgba(12,12,14,0.94)' }}
-        >
-          <button
-            type="button"
-            onClick={onPlay}
-            className="w-9 h-9 rounded-full theme-bg-accent page-accent-bg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 transition-transform"
-            title="Воспроизвести"
-          >
-            <Play className="w-4 h-4 text-black fill-black ml-0.5" />
-          </button>
-          <span className="text-base font-bold text-white truncate">{artist.name}</span>
-          {artist.verified && <CheckCircle2 className="w-4 h-4 fill-sky-400 text-black shrink-0" />}
-        </div>
+    <div
+      ref={heroRef}
+      className={`artist-hero relative overflow-hidden ${expanded && expandedH ? '' : 'h-[300px] sm:h-[380px] md:h-[440px]'}`}
+      style={{
+        height: expanded && expandedH ? expandedH : undefined,
+        transition: 'height 0.55s cubic-bezier(0.22, 1, 0.36, 1)'
+      }}
+    >
+      <div ref={imgRef} className="artist-hero-img absolute inset-0 will-change-transform">
+        {hasImage ? (
+          <img
+            src={coverUrl}
+            alt={artist.name}
+            className="w-full h-full object-cover"
+            style={{ objectPosition: expanded ? 'center' : 'center 25%' }}
+            onLoad={(e) => {
+              const im = e.currentTarget;
+              if (im.naturalWidth) setRatio(im.naturalHeight / im.naturalWidth);
+            }}
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <div className="w-full h-full" style={{ background: `linear-gradient(135deg, ${c0} 0%, ${c1} 100%)` }} />
+        )}
       </div>
-
-      <div ref={heroRef} className="artist-hero relative h-[300px] sm:h-[380px] md:h-[440px] overflow-hidden">
-        <div ref={imgRef} className="artist-hero-img absolute inset-0 will-change-transform">
-          {hasImage ? (
-            <img
-              src={coverUrl}
-              alt={artist.name}
-              className="w-full h-full object-cover"
-              style={{ objectPosition: 'center 25%' }}
-              onError={() => setImgFailed(true)}
-            />
-          ) : (
-            <div className="w-full h-full" style={{ background: `linear-gradient(135deg, ${c0} 0%, ${c1} 100%)` }} />
+      <div
+        className="absolute inset-0 pointer-events-none transition-opacity duration-500"
+        style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 32%, rgba(0,0,0,0.35) 68%, var(--bg-color) 100%)', opacity: expanded ? 0.55 : 1 }}
+      />
+      {useColors && !expanded && (
+        <div className="absolute inset-0 pointer-events-none opacity-70 transition-all duration-700" style={{ background: `linear-gradient(to top, ${c0}55 0%, transparent 55%)` }} />
+      )}
+      {hasImage && (
+        <div className="absolute top-4 right-4 flex items-center gap-2 z-10">
+          {ratio && (
+            <button
+              type="button"
+              onClick={() => setExpanded(v => !v)}
+              className="px-3 py-1.5 rounded-full bg-black/45 hover:bg-black/65 text-white/90 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+              title={expanded ? 'Свернуть' : 'Показать фото целиком'}
+            >
+              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              <span>{expanded ? 'Свернуть' : 'Фото целиком'}</span>
+            </button>
+          )}
+          {onZoom && (
+            <button
+              type="button"
+              onClick={onZoom}
+              className="p-2 rounded-full bg-black/45 hover:bg-black/65 text-white/80 hover:text-white cursor-pointer transition-colors"
+              title="Открыть фото"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
           )}
         </div>
-        <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 32%, rgba(0,0,0,0.35) 68%, var(--bg-color) 100%)' }} />
-        {useColors && (
-          <div className="absolute inset-0 pointer-events-none opacity-70 transition-all duration-700" style={{ background: `linear-gradient(to top, ${c0}55 0%, transparent 55%)` }} />
-        )}
-        {onZoom && hasImage && (
-          <button
-            type="button"
-            onClick={onZoom}
-            className="absolute top-4 right-4 p-2 rounded-full bg-black/40 hover:bg-black/60 text-white/80 hover:text-white cursor-pointer transition-colors"
-            title="Открыть фото"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-        )}
-        <motion.div
-          initial={animate ? { opacity: 0, y: 18 } : false}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-          className="absolute inset-x-0 bottom-0 pb-6"
-        >
-          <div className="max-w-7xl mx-auto px-6 md:px-8">
-            {artist.verified && (
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-white/90 mb-2">
-                <CheckCircle2 className="w-4 h-4 fill-sky-400 text-black" />
-                <span>Подтвержденный исполнитель</span>
-              </div>
-            )}
-            <h1
-              className="font-black text-white leading-[0.95] break-words"
-              style={{ fontSize: 'clamp(40px, 7vw, 96px)', letterSpacing: '-0.035em', textShadow: '0 6px 32px rgba(0,0,0,0.45)' }}
-            >
-              {artist.name}
-            </h1>
-            <p className="mt-3 text-sm md:text-base font-medium text-white/85 tabular-nums">
-              {formatListeners(artist.followers)}{artist.genre ? ` · ${artist.genre}` : ''}
-            </p>
-          </div>
-        </motion.div>
-      </div>
-    </>
+      )}
+      <motion.div
+        initial={animate ? { opacity: 0, y: 18 } : false}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="absolute inset-x-0 bottom-0 pb-6"
+      >
+        <div className="max-w-7xl mx-auto px-6 md:px-8">{titleBlock}</div>
+      </motion.div>
+    </div>
   );
 };
 
@@ -4872,6 +5058,53 @@ const SettingsModal: React.FC<{
                     />
                   </label>
                 ))}
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <p className="text-xs font-bold text-white mb-2">Стиль шапки артиста</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      { id: 'cinema', label: 'Кино', desc: 'Фото на всю ширину' },
+                      { id: 'poster', label: 'Постер', desc: 'Фото целиком' },
+                    ].map(s => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => update('artistHeroStyle', s.id)}
+                        className={`p-2 rounded-lg border text-center cursor-pointer transition-all ${
+                          (theme.artistHeroStyle || 'cinema') === s.id ? 'border-white bg-white/15 text-white' : 'border-white/5 bg-black/30 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-xs font-bold block">{s.label}</span>
+                        <span className="text-[9px] text-zinc-400 block">{s.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <p className="text-xs font-bold text-white mb-2">Режим шрифтов</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {[
+                      { id: 'classic', label: 'Как было', desc: 'Ваш шрифт', font: 'inherit' },
+                      { id: 'modern', label: 'Современный', desc: 'Onest + Inter Tight', font: "'Inter Tight', sans-serif" },
+                      { id: 'editorial', label: 'Редакция', desc: 'Golos + Geologica', font: "'Geologica', sans-serif" },
+                      { id: 'display', label: 'Широкий', desc: 'Manrope + Unbounded', font: "'Unbounded', sans-serif" },
+                    ].map(s => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => update('typographyMode', s.id)}
+                        className={`p-2 rounded-lg border text-center cursor-pointer transition-all ${
+                          (theme.typographyMode || 'classic') === s.id ? 'border-white bg-white/15 text-white' : 'border-white/5 bg-black/30 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-xs font-bold block" style={{ fontFamily: s.font }}>{s.label}</span>
+                        <span className="text-[9px] text-zinc-400 block">{s.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -6363,6 +6596,7 @@ export default function App() {
     root.style.setProperty('--anim-speed', `${theme.animationSpeed}s`);
     root.style.setProperty('--sidebar-width', theme.sidebarWidth.toString() + 'px');
     root.dataset.design = theme.designMode;
+    root.dataset.typography = theme.typographyMode || 'classic';
 
     // Advanced visual controls
     root.style.setProperty('--border-intensity', theme.borderIntensity.toString());
@@ -12602,6 +12836,7 @@ function ArtistView({
           palette={headerPalette}
           useColors={coverColorsOn}
           animate={uiPrefs?.smoothTransitions !== false}
+          variant={uiPrefs?.artistHeroStyle || 'cinema'}
           onPlay={() => filteredArtistTracks[0] && (onPlayTrack ? onPlayTrack(filteredArtistTracks[0]) : navigateTo('track', { id: filteredArtistTracks[0].id }))}
           onZoom={() => openLightbox && openLightbox({ url: artist.imageUrl, title: artist.name, subtitle: formatListeners(artist.followers), type: 'Исполнитель' })}
         />

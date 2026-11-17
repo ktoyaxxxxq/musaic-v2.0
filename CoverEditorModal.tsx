@@ -21,6 +21,7 @@ import {
   Type,
   X
 } from 'lucide-react';
+import './fontsExtra';
 
 export type CoverBgStyle =
   | 'gradient'
@@ -281,7 +282,52 @@ const FONT_OPTIONS = [
   { id: 'Cormorant Garamond', label: 'Cormorant', tag: 'Аристо' },
   { id: 'Lora', label: 'Lora', tag: 'Книжный' },
   { id: 'JetBrains Mono', label: 'JetBrains Mono', tag: 'Код' },
-  { id: 'Space Mono', label: 'Space Mono', tag: 'Ретро' }
+  { id: 'Space Mono', label: 'Space Mono', tag: 'Ретро' },
+  { id: 'Onest', label: 'Onest', tag: 'Модерн' },
+  { id: 'Inter Tight', label: 'Inter Tight', tag: 'Плотный' },
+  { id: 'Golos Text', label: 'Golos', tag: 'Мягкий' },
+  { id: 'Geologica', label: 'Geologica', tag: 'Характер' },
+  { id: 'Jost', label: 'Jost', tag: 'Геометр' },
+  { id: 'Exo 2', label: 'Exo 2', tag: 'Футуризм' },
+  { id: 'Comfortaa', label: 'Comfortaa', tag: 'Округлый' },
+  { id: 'Tenor Sans', label: 'Tenor Sans', tag: 'Элегант' },
+  { id: 'Prata', label: 'Prata', tag: 'Вог' },
+  { id: 'Yeseva One', label: 'Yeseva', tag: 'Дисплей' },
+  { id: 'Forum', label: 'Forum', tag: 'Антика' },
+  { id: 'Caveat', label: 'Caveat', tag: 'Рукопись' },
+  { id: 'Marck Script', label: 'Marck Script', tag: 'Скрипт' },
+  { id: 'Press Start 2P', label: 'Press Start', tag: 'Пиксель' },
+  { id: 'Rubik Mono One', label: 'Rubik Mono', tag: 'Блок' }
+];
+
+// One-click text styles: applied to title + artist (positions and colors stay)
+const TEXT_STYLE_PRESETS: Array<{ id: string; name: string; sample: string; title: Partial<CoverTextLayer>; artist: Partial<CoverTextLayer> }> = [
+  { id: 'minimal', name: 'Минимал', sample: 'Тишина', title: { fontFamily: 'Inter Tight', fontWeight: 700, letterSpacing: -2, uppercase: false, effect: 'clean' }, artist: { fontFamily: 'Inter Tight', fontWeight: 500, letterSpacing: 0, uppercase: false, effect: 'clean' } },
+  { id: 'swiss', name: 'Швейцарский', sample: 'HELVET', title: { fontFamily: 'Onest', fontWeight: 800, letterSpacing: -1, uppercase: true, effect: 'clean' }, artist: { fontFamily: 'Onest', fontWeight: 500, letterSpacing: 2, uppercase: true, effect: 'clean' } },
+  { id: 'thin_wide', name: 'Воздушный', sample: 'В О З Д', title: { fontFamily: 'Jost', fontWeight: 400, letterSpacing: 14, uppercase: true, effect: 'clean' }, artist: { fontFamily: 'Jost', fontWeight: 400, letterSpacing: 8, uppercase: true, effect: 'clean' } },
+  { id: 'luxury', name: 'Люкс', sample: 'Вог', title: { fontFamily: 'Prata', fontWeight: 400, letterSpacing: 1, uppercase: false, effect: 'clean' }, artist: { fontFamily: 'Tenor Sans', fontWeight: 400, letterSpacing: 10, uppercase: true, effect: 'clean' } },
+  { id: 'editorial', name: 'Журнал', sample: 'Роман', title: { fontFamily: 'Cormorant Garamond', fontWeight: 700, letterSpacing: 0, uppercase: false, effect: 'clean' }, artist: { fontFamily: 'Inter Tight', fontWeight: 500, letterSpacing: 4, uppercase: true, effect: 'clean' } },
+  { id: 'poster', name: 'Плакат', sample: 'ГРОМ', title: { fontFamily: 'Anton', fontWeight: 400, letterSpacing: 0, uppercase: true, effect: 'shadow' }, artist: { fontFamily: 'Bebas Neue', fontWeight: 400, letterSpacing: 6, uppercase: true, effect: 'clean' } },
+  { id: 'wide', name: 'Широкий', sample: 'ШИРЬ', title: { fontFamily: 'Unbounded', fontWeight: 800, letterSpacing: 2, uppercase: true, effect: 'clean' }, artist: { fontFamily: 'Manrope', fontWeight: 600, letterSpacing: 4, uppercase: true, effect: 'clean' } },
+  { id: 'hand', name: 'Рукопись', sample: 'лето', title: { fontFamily: 'Caveat', fontWeight: 700, letterSpacing: 0, uppercase: false, effect: 'clean' }, artist: { fontFamily: 'Caveat', fontWeight: 500, letterSpacing: 0, uppercase: false, effect: 'clean' } },
+  { id: 'script_neon', name: 'Неон', sample: 'Ночь', title: { fontFamily: 'Marck Script', fontWeight: 400, letterSpacing: 0, uppercase: false, effect: 'glow' }, artist: { fontFamily: 'Jost', fontWeight: 500, letterSpacing: 10, uppercase: true, effect: 'glow' } },
+  { id: 'chrome', name: 'Хром Y2K', sample: 'ХРОМ', title: { fontFamily: 'Exo 2', fontWeight: 900, letterSpacing: 1, uppercase: true, effect: 'chromatic' }, artist: { fontFamily: 'Exo 2', fontWeight: 600, letterSpacing: 6, uppercase: true, effect: 'clean' } },
+  { id: 'pixel', name: 'Пиксель', sample: '8BIT', title: { fontFamily: 'Press Start 2P', fontWeight: 400, letterSpacing: 0, uppercase: true, effect: 'glow' }, artist: { fontFamily: 'Press Start 2P', fontWeight: 400, letterSpacing: 0, uppercase: true, effect: 'clean' } },
+  { id: 'block', name: 'Блок', sample: 'БЛОК', title: { fontFamily: 'Rubik Mono One', fontWeight: 400, letterSpacing: 0, uppercase: true, effect: 'clean' }, artist: { fontFamily: 'Jost', fontWeight: 600, letterSpacing: 6, uppercase: true, effect: 'clean' } },
+  { id: 'outline', name: 'Контур', sample: 'ЛИНИЯ', title: { fontFamily: 'Syne', fontWeight: 800, letterSpacing: 1, uppercase: true, effect: 'outline' }, artist: { fontFamily: 'Syne', fontWeight: 600, letterSpacing: 4, uppercase: true, effect: 'clean' } },
+  { id: 'soft', name: 'Мягкий', sample: 'облако', title: { fontFamily: 'Comfortaa', fontWeight: 700, letterSpacing: 0, uppercase: false, effect: 'clean' }, artist: { fontFamily: 'Comfortaa', fontWeight: 400, letterSpacing: 1, uppercase: false, effect: 'clean' } },
+  { id: 'mono', name: 'Код', sample: 'v1.0', title: { fontFamily: 'JetBrains Mono', fontWeight: 700, letterSpacing: 0, uppercase: false, effect: 'clean' }, artist: { fontFamily: 'JetBrains Mono', fontWeight: 400, letterSpacing: 0, uppercase: false, effect: 'clean' } },
+  { id: 'antique', name: 'Антика', sample: 'Эпос', title: { fontFamily: 'Forum', fontWeight: 400, letterSpacing: 4, uppercase: true, effect: 'clean' }, artist: { fontFamily: 'Forum', fontWeight: 400, letterSpacing: 8, uppercase: true, effect: 'clean' } }
+];
+
+// Quick positions for the selected text (x is the anchor point for the chosen alignment)
+const TEXT_POSITION_PRESETS: Array<{ id: string; label: string; patch: Partial<CoverTextLayer> }> = [
+  { id: 'tl', label: '↖ Верх', patch: { x: 9, y: 12, align: 'left' } },
+  { id: 'tc', label: '↑ Верх', patch: { x: 50, y: 12, align: 'center' } },
+  { id: 'cc', label: '● Центр', patch: { x: 50, y: 50, align: 'center' } },
+  { id: 'bl', label: '↙ Низ', patch: { x: 9, y: 86, align: 'left' } },
+  { id: 'bc', label: '↓ Низ', patch: { x: 50, y: 86, align: 'center' } },
+  { id: 'br', label: '↘ Низ', patch: { x: 91, y: 86, align: 'right' } }
 ];
 
 const NEUTRAL_COLOR_PALETTES = [
@@ -2014,6 +2060,96 @@ const COVER_TEMPLATES: CoverTemplatePreset[] = [
     }
   }
 ];
+
+// --- Extra templates: minimal and expressive ---
+const tpl = (
+  id: string, name: string, category: TemplateCategory, hasText: boolean,
+  config: CoverTemplatePreset['config']
+): CoverTemplatePreset => ({ id, name, category, hasText, config });
+
+COVER_TEMPLATES.push(
+  // MINIMAL
+  tpl('min_swiss_paper', 'Швейцарская бумага', 'minimal', true, { bgStyle: 'solid', color1: '#f2f0eb', color2: '#f2f0eb', accent: '#18181b', motif: 'grid', motifOpacity: 6, grain: 14, vignette: 0,
+    titleStyle: { x: 8, y: 16, align: 'left', fontFamily: 'Inter Tight', fontWeight: 800, fontSize: 92, letterSpacing: -3, uppercase: false, color: '#111111', effect: 'clean' },
+    artistStyle: { x: 8, y: 24, align: 'left', fontFamily: 'Inter Tight', fontWeight: 500, fontSize: 30, color: '#52525b', effect: 'clean' } }),
+  tpl('min_black_serif', 'Чёрная антиква', 'minimal', true, { bgStyle: 'solid', color1: '#0a0a0a', color2: '#0a0a0a', accent: '#a8a29e', motif: 'none', grain: 10, vignette: 18,
+    titleStyle: { x: 50, y: 50, align: 'center', fontFamily: 'Prata', fontWeight: 400, fontSize: 84, letterSpacing: 0, uppercase: false, color: '#f5f5f4', effect: 'clean' },
+    artistStyle: { x: 50, y: 60, align: 'center', fontFamily: 'Tenor Sans', fontWeight: 400, fontSize: 22, letterSpacing: 10, uppercase: true, color: '#a8a29e', effect: 'clean' } }),
+  tpl('min_receipt', 'Чек', 'minimal', true, { bgStyle: 'solid', color1: '#e7e5e4', color2: '#e7e5e4', accent: '#111111', motif: 'none', grain: 18, vignette: 0,
+    titleStyle: { x: 8, y: 12, align: 'left', fontFamily: 'JetBrains Mono', fontWeight: 700, fontSize: 44, uppercase: true, color: '#111111', effect: 'clean' },
+    artistStyle: { x: 8, y: 18, align: 'left', fontFamily: 'JetBrains Mono', fontWeight: 400, fontSize: 22, color: '#44403c', effect: 'clean' } }),
+  tpl('min_one_orb', 'Одна сфера', 'minimal', true, { bgStyle: 'solid', color1: '#111114', color2: '#111114', accent: '#e4e4e7', motif: 'orb', motifScale: 70, motifOpacity: 90, grain: 12, vignette: 20,
+    titleStyle: { x: 50, y: 86, align: 'center', fontFamily: 'Jost', fontWeight: 500, fontSize: 34, letterSpacing: 14, uppercase: true, color: '#fafafa', effect: 'clean' },
+    artistStyle: { x: 50, y: 91, align: 'center', fontFamily: 'Jost', fontWeight: 400, fontSize: 20, letterSpacing: 6, uppercase: true, color: '#a1a1aa', effect: 'clean' } }),
+  tpl('min_horizon', 'Горизонт', 'minimal', true, { bgStyle: 'horizon_fade', color1: '#0b1220', color2: '#1e293b', accent: '#cbd5e1', motif: 'horizon', motifOpacity: 50, grain: 10, vignette: 14,
+    titleStyle: { x: 8, y: 80, align: 'left', fontFamily: 'Geologica', fontWeight: 700, fontSize: 70, letterSpacing: -1, color: '#f8fafc', effect: 'clean' },
+    artistStyle: { x: 8, y: 87, align: 'left', fontFamily: 'Geologica', fontWeight: 400, fontSize: 26, color: '#94a3b8', effect: 'clean' } }),
+  tpl('min_cream_display', 'Кремовый дисплей', 'minimal', true, { bgStyle: 'solid', color1: '#efe7da', color2: '#efe7da', accent: '#5b4b3a', motif: 'none', grain: 20, vignette: 6,
+    titleStyle: { x: 50, y: 48, align: 'center', fontFamily: 'Yeseva One', fontWeight: 400, fontSize: 120, lineHeight: 0.95, color: '#2b2118', effect: 'clean' },
+    artistStyle: { x: 50, y: 66, align: 'center', fontFamily: 'Forum', fontWeight: 400, fontSize: 24, letterSpacing: 8, uppercase: true, color: '#5b4b3a', effect: 'clean' } }),
+  tpl('min_tiny_corner', 'Маленький угол', 'minimal', true, { bgStyle: 'solid', color1: '#fafafa', color2: '#fafafa', accent: '#71717a', motif: 'none', grain: 8, vignette: 0,
+    titleStyle: { x: 8, y: 10, align: 'left', fontFamily: 'Onest', fontWeight: 600, fontSize: 30, color: '#111111', effect: 'clean' },
+    artistStyle: { x: 8, y: 14, align: 'left', fontFamily: 'Onest', fontWeight: 400, fontSize: 22, color: '#71717a', effect: 'clean' } }),
+  tpl('min_red_block', 'Красный блок', 'minimal', true, { bgStyle: 'solid', color1: '#e11d2e', color2: '#e11d2e', accent: '#0a0a0a', motif: 'none', grain: 16, vignette: 10,
+    titleStyle: { x: 6, y: 86, align: 'left', fontFamily: 'Rubik Mono One', fontWeight: 400, fontSize: 92, uppercase: true, color: '#0a0a0a', effect: 'clean' },
+    artistStyle: { x: 6, y: 93, align: 'left', fontFamily: 'Jost', fontWeight: 600, fontSize: 22, letterSpacing: 6, uppercase: true, color: '#0a0a0a', effect: 'clean' } }),
+  tpl('min_slate_spaced', 'Сланец разрядка', 'neutral', true, { bgStyle: 'gradient', color1: '#0c1117', color2: '#1e293b', accent: '#94a3b8', angle: 160, motif: 'none', grain: 12, vignette: 18,
+    titleStyle: { x: 50, y: 50, align: 'center', fontFamily: 'Inter Tight', fontWeight: 300, fontSize: 32, letterSpacing: 16, uppercase: true, color: '#e2e8f0', effect: 'clean' },
+    artistStyle: { x: 50, y: 56, align: 'center', fontFamily: 'Inter Tight', fontWeight: 400, fontSize: 18, letterSpacing: 6, uppercase: true, color: '#94a3b8', effect: 'clean' } }),
+  tpl('min_paper_serif', 'Бумажная антиква', 'neutral', true, { bgStyle: 'solid', color1: '#f5f2eb', color2: '#f5f2eb', accent: '#57534e', motif: 'none', grain: 22, vignette: 4,
+    titleStyle: { x: 8, y: 14, align: 'left', fontFamily: 'Cormorant Garamond', fontWeight: 700, fontSize: 96, color: '#1c1917', effect: 'clean' },
+    artistStyle: { x: 8, y: 22, align: 'left', fontFamily: 'Inter Tight', fontWeight: 500, fontSize: 22, letterSpacing: 4, uppercase: true, color: '#57534e', effect: 'clean' } }),
+
+  // EXPRESSIVE
+  tpl('art_hand_dusk', 'Рукописный закат', 'art', true, { bgStyle: 'gradient', color1: '#2d1b3d', color2: '#f59e0b', accent: '#fde68a', angle: 160, motif: 'sunburst', motifOpacity: 22, grain: 16, vignette: 18,
+    titleStyle: { x: 50, y: 72, align: 'center', fontFamily: 'Caveat', fontWeight: 700, fontSize: 124, color: '#fff7ed', effect: 'shadow' },
+    artistStyle: { x: 50, y: 83, align: 'center', fontFamily: 'Caveat', fontWeight: 500, fontSize: 42, color: '#fde68a', effect: 'clean' } }),
+  tpl('art_y2k_chrome', 'Y2K хром', 'art', true, { bgStyle: 'conic_sweep', color1: '#c0c0c0', color2: '#1e3a8a', accent: '#e0f2fe', motif: 'liquid_rings', motifOpacity: 55, grain: 8, vignette: 20,
+    titleStyle: { x: 50, y: 50, align: 'center', fontFamily: 'Exo 2', fontWeight: 900, fontSize: 92, letterSpacing: 1, uppercase: true, color: '#ffffff', effect: 'chromatic' },
+    artistStyle: { x: 50, y: 62, align: 'center', fontFamily: 'Exo 2', fontWeight: 600, fontSize: 22, letterSpacing: 8, uppercase: true, color: '#e0f2fe', effect: 'clean' } }),
+  tpl('art_pixel_arcade', 'Аркада', 'art', true, { bgStyle: 'solid', color1: '#0b0b1a', color2: '#0b0b1a', accent: '#22d3ee', motif: 'grid', motifOpacity: 25, scanlines: 30, grain: 6, vignette: 30,
+    titleStyle: { x: 50, y: 46, align: 'center', fontFamily: 'Press Start 2P', fontWeight: 400, fontSize: 48, uppercase: true, color: '#22d3ee', effect: 'glow' },
+    artistStyle: { x: 50, y: 56, align: 'center', fontFamily: 'Press Start 2P', fontWeight: 400, fontSize: 18, uppercase: true, color: '#f0abfc', effect: 'clean' } }),
+  tpl('art_neon_script', 'Неоновая подпись', 'art', true, { bgStyle: 'radial_glow', color1: '#0a0014', color2: '#4c1d95', accent: '#f9a8d4', motif: 'none', grain: 10, vignette: 30,
+    titleStyle: { x: 50, y: 50, align: 'center', fontFamily: 'Marck Script', fontWeight: 400, fontSize: 110, color: '#f9a8d4', effect: 'glow' },
+    artistStyle: { x: 50, y: 64, align: 'center', fontFamily: 'Jost', fontWeight: 500, fontSize: 20, letterSpacing: 12, uppercase: true, color: '#e9d5ff', effect: 'clean' } }),
+  tpl('art_vinyl_soul', 'Виниловый соул', 'art', true, { bgStyle: 'matte_vignette', color1: '#1c1410', color2: '#3b2a1f', accent: '#d6a46a', motif: 'vinyl', motifScale: 95, motifOpacity: 85, grain: 18, vignette: 26,
+    titleStyle: { x: 50, y: 86, align: 'center', fontFamily: 'Playfair Display', fontWeight: 700, fontSize: 64, color: '#f5e6d3', effect: 'clean' },
+    artistStyle: { x: 50, y: 92, align: 'center', fontFamily: 'Tenor Sans', fontWeight: 400, fontSize: 20, letterSpacing: 8, uppercase: true, color: '#d6a46a', effect: 'clean' } }),
+  tpl('art_aurora_soft', 'Мягкая аврора', 'gradient', true, { bgStyle: 'aurora_flow', color1: '#0f172a', color2: '#14b8a6', accent: '#a78bfa', motif: 'aurora_waves', motifOpacity: 45, grain: 10, vignette: 16,
+    titleStyle: { x: 50, y: 48, align: 'center', fontFamily: 'Onest', fontWeight: 800, fontSize: 86, letterSpacing: -2, color: '#ffffff', effect: 'shadow' },
+    artistStyle: { x: 50, y: 58, align: 'center', fontFamily: 'Onest', fontWeight: 500, fontSize: 26, color: '#e2e8f0', effect: 'clean' } }),
+  tpl('art_bauhaus_cream', 'Баухаус крем', 'art', true, { bgStyle: 'solid', color1: '#f1ead8', color2: '#f1ead8', accent: '#d9480f', motif: 'bauhaus', motifOpacity: 90, grain: 14, vignette: 4,
+    titleStyle: { x: 8, y: 88, align: 'left', fontFamily: 'Jost', fontWeight: 700, fontSize: 58, uppercase: true, color: '#1a1a1a', effect: 'clean' },
+    artistStyle: { x: 8, y: 94, align: 'left', fontFamily: 'Jost', fontWeight: 500, fontSize: 20, letterSpacing: 6, uppercase: true, color: '#3f3f46', effect: 'clean' } }),
+  tpl('art_tunnel_mono', 'Монотонный тоннель', 'art', true, { bgStyle: 'solid', color1: '#09090b', color2: '#09090b', accent: '#fafafa', motif: 'tunnel', motifOpacity: 55, grain: 12, vignette: 24,
+    titleStyle: { x: 50, y: 50, align: 'center', fontFamily: 'Unbounded', fontWeight: 800, fontSize: 54, letterSpacing: 2, uppercase: true, color: '#ffffff', effect: 'outline' },
+    artistStyle: { x: 50, y: 60, align: 'center', fontFamily: 'Inter Tight', fontWeight: 500, fontSize: 18, letterSpacing: 10, uppercase: true, color: '#d4d4d8', effect: 'clean' } }),
+  tpl('art_eclipse_gold', 'Золотое затмение', 'art', true, { bgStyle: 'radial_glow', color1: '#050505', color2: '#1c1917', accent: '#fbbf24', motif: 'eclipse', motifOpacity: 90, grain: 12, vignette: 28,
+    titleStyle: { x: 50, y: 82, align: 'center', fontFamily: 'Cormorant Garamond', fontWeight: 700, fontSize: 90, color: '#fde68a', effect: 'glow' },
+    artistStyle: { x: 50, y: 89, align: 'center', fontFamily: 'Tenor Sans', fontWeight: 400, fontSize: 18, letterSpacing: 10, uppercase: true, color: '#e7e5e4', effect: 'clean' } }),
+  tpl('art_topo_green', 'Топография', 'art', true, { bgStyle: 'gradient', color1: '#052e16', color2: '#14532d', accent: '#86efac', angle: 150, motif: 'topography', motifOpacity: 35, grain: 14, vignette: 18,
+    titleStyle: { x: 8, y: 84, align: 'left', fontFamily: 'Geologica', fontWeight: 800, fontSize: 76, letterSpacing: -2, color: '#ecfdf5', effect: 'clean' },
+    artistStyle: { x: 8, y: 91, align: 'left', fontFamily: 'Geologica', fontWeight: 400, fontSize: 24, color: '#bbf7d0', effect: 'clean' } }),
+  tpl('art_glass_shards', 'Стеклянные осколки', 'gradient', true, { bgStyle: 'tri_gradient', color1: '#0f0c29', color2: '#302b63', accent: '#24c6dc', motif: 'glass_shards', motifOpacity: 60, grain: 8, vignette: 20,
+    titleStyle: { x: 50, y: 50, align: 'center', fontFamily: 'Golos Text', fontWeight: 800, fontSize: 80, letterSpacing: -1, color: '#ffffff', effect: 'shadow' },
+    artistStyle: { x: 50, y: 60, align: 'center', fontFamily: 'Golos Text', fontWeight: 500, fontSize: 24, color: '#cffafe', effect: 'clean' } }),
+  tpl('art_pastel_soft', 'Пастельное облако', 'gradient', true, { bgStyle: 'duotone_mist', color1: '#fde2e4', color2: '#cddafd', accent: '#ffffff', motif: 'blobs', motifOpacity: 60, grain: 10, vignette: 0,
+    titleStyle: { x: 50, y: 50, align: 'center', fontFamily: 'Comfortaa', fontWeight: 700, fontSize: 84, color: '#3f3d56', effect: 'clean' },
+    artistStyle: { x: 50, y: 60, align: 'center', fontFamily: 'Comfortaa', fontWeight: 400, fontSize: 26, color: '#5b5a72', effect: 'clean' } }),
+  tpl('art_halftone_pop', 'Поп-арт растр', 'art', true, { bgStyle: 'solid', color1: '#fef08a', color2: '#fef08a', accent: '#111111', motif: 'halftone', motifOpacity: 30, grain: 10, vignette: 0,
+    titleStyle: { x: 50, y: 52, align: 'center', fontFamily: 'Anton', fontWeight: 400, fontSize: 130, lineHeight: 0.9, uppercase: true, color: '#111111', effect: 'clean' },
+    artistStyle: { x: 50, y: 68, align: 'center', fontFamily: 'Bebas Neue', fontWeight: 400, fontSize: 34, letterSpacing: 6, uppercase: true, color: '#111111', effect: 'clean' } }),
+  tpl('art_night_stars', 'Звёздная ночь', 'art', true, { bgStyle: 'gradient', color1: '#020617', color2: '#1e1b4b', accent: '#c7d2fe', angle: 180, motif: 'stars', motifOpacity: 70, grain: 8, vignette: 22,
+    titleStyle: { x: 50, y: 46, align: 'center', fontFamily: 'Yeseva One', fontWeight: 400, fontSize: 88, color: '#f8fafc', effect: 'glow' },
+    artistStyle: { x: 50, y: 56, align: 'center', fontFamily: 'Forum', fontWeight: 400, fontSize: 22, letterSpacing: 10, uppercase: true, color: '#c7d2fe', effect: 'clean' } }),
+
+  // NO TEXT
+  tpl('notext_orb_indigo', 'Индиго сфера', 'gradient', false, { bgStyle: 'radial_glow', color1: '#0b0b10', color2: '#312e81', accent: '#a5b4fc', motif: 'orb', motifOpacity: 85, grain: 10, vignette: 24 }),
+  tpl('notext_rings_sand', 'Песочные кольца', 'neutral', false, { bgStyle: 'solid', color1: '#d6cfc2', color2: '#d6cfc2', accent: '#57534e', motif: 'rings', motifOpacity: 55, grain: 18, vignette: 6 }),
+  tpl('notext_monolith', 'Монолит', 'neutral', false, { bgStyle: 'matte_vignette', color1: '#0c0c0e', color2: '#1f1f24', accent: '#a1a1aa', motif: 'monolith', motifOpacity: 70, grain: 16, vignette: 26 }),
+  tpl('notext_dot_sphere', 'Точечная сфера', 'art', false, { bgStyle: 'solid', color1: '#09090b', color2: '#09090b', accent: '#f4f4f5', motif: 'dot_sphere', motifOpacity: 80, grain: 8, vignette: 20 })
+);
 
 function hexToRgba(hex: string, alpha: number): string {
   const safeHex = (hex || '#000000').trim();
@@ -4318,7 +4454,7 @@ export const CoverEditorModal: React.FC<CoverEditorModalProps> = ({
     document.fonts.ready.then(() => {
       if (alive) setFontsReadyTick(t => t + 1);
     });
-    const activeFonts = Array.from(new Set(config.textLayers.map(l => l.fontFamily)));
+    const activeFonts = Array.from(new Set([...config.textLayers.map(l => l.fontFamily), ...FONT_OPTIONS.map(f => f.id)]));
     Promise.all(
       activeFonts.map(f => document.fonts.load(`700 48px "${f}"`).catch(() => null))
     ).then(() => {
@@ -5667,6 +5803,86 @@ export const CoverEditorModal: React.FC<CoverEditorModalProps> = ({
                       </button>
                     </div>
                   </div>
+
+                  {/* Quick text styles */}
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Быстрые стили текста</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                      {TEXT_STYLE_PRESETS.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() =>
+                            setConfig(prev => ({
+                              ...prev,
+                              showText: true,
+                              textLayers: prev.textLayers.map(l =>
+                                l.id === 'title'
+                                  ? { ...l, ...p.title }
+                                  : l.id === 'artist'
+                                    ? { ...l, ...p.artist }
+                                    : { ...l, fontFamily: p.artist.fontFamily || l.fontFamily }
+                              )
+                            }))
+                          }
+                          className="p-2.5 rounded-xl bg-zinc-900/70 border border-white/[0.08] hover:border-white/25 hover:bg-zinc-800/70 text-left cursor-pointer transition-colors"
+                          title={`${p.title.fontFamily} + ${p.artist.fontFamily}`}
+                        >
+                          <span
+                            className="block text-[15px] text-white leading-tight truncate"
+                            style={{
+                              fontFamily: `"${p.title.fontFamily}"`,
+                              fontWeight: p.title.fontWeight,
+                              letterSpacing: `${(p.title.letterSpacing || 0) / 40}em`,
+                              textTransform: p.title.uppercase ? 'uppercase' : 'none'
+                            }}
+                          >
+                            {p.sample}
+                          </span>
+                          <span className="block text-[10px] text-zinc-500 mt-0.5">{p.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {selectedTextLayer && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Положение: «{selectedTextLayer.label}»</p>
+                      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                        {TEXT_POSITION_PRESETS.map(pos => (
+                          <button
+                            key={pos.id}
+                            type="button"
+                            onClick={() => updateTextLayer(selectedTextLayer.id, pos.patch)}
+                            className="px-2 py-1.5 rounded-lg bg-zinc-900/70 border border-white/[0.08] hover:border-white/25 text-[11px] font-bold text-zinc-300 hover:text-white cursor-pointer transition-colors"
+                          >
+                            {pos.label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-4 gap-1.5">
+                        {[
+                          { label: 'S', size: 0.75 },
+                          { label: 'M', size: 1 },
+                          { label: 'L', size: 1.3 },
+                          { label: 'XL', size: 1.7 }
+                        ].map(sz => (
+                          <button
+                            key={sz.label}
+                            type="button"
+                            onClick={() => {
+                              const base = selectedTextLayer.id === 'title' ? 80 : selectedTextLayer.id === 'artist' ? 30 : 24;
+                              updateTextLayer(selectedTextLayer.id, { fontSize: Math.round(base * sz.size) });
+                            }}
+                            className="py-1.5 rounded-lg bg-zinc-900/70 border border-white/[0.08] hover:border-white/25 text-[11px] font-bold text-zinc-300 hover:text-white cursor-pointer transition-colors"
+                            title="Размер надписи"
+                          >
+                            {sz.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Layer Selector Chips */}
                   <div className="flex flex-wrap gap-1.5">
