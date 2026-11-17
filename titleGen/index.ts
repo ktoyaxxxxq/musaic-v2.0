@@ -1,16 +1,18 @@
 // ============================================================================
-// TRACK TITLE GENERATOR v2
+// TRACK TITLE GENERATOR v3
 // - each title is 100% Russian OR 100% English (never mixed)
-// - realistic length mix: one word / two-three words / long phrase
+// - language: ~60% RU / 40% EN by default, adapts to the artist's catalog,
+//   but the "other" language never drops below ~12%
+// - optional manual language choice (Auto / RU / EN), remembered in localStorage
+// - realistic length mix: one word (most often) / two-three words / sentence (rare)
 // - realistic casing mix: as written / lowercase / UPPERCASE / Sentence case
-// - adapts to the artist: language, casing, length and favourite themes are
-//   learned from the artist's catalog + genre, plus a stable per-artist "signature"
 // - anti-repeat: avoids exact duplicates AND reusing the same brand/word too often
 // ============================================================================
 import type { SimLanguageMix } from '../types';
 import type { LangBank, Pattern, ThemeId } from './types';
 import { EN_BANK } from './banksEn';
 import { RU_BANK } from './banksRu';
+import { RU_EXTRA, EN_EXTRA, mergeBank } from './banksExtra';
 
 export type { ThemeId } from './types';
 
@@ -20,7 +22,7 @@ export type TitleMood =
 
 export const TITLE_MOOD_OPTIONS: Array<{ id: TitleMood; emoji: string; label: string; name: string }> = [
   { id: 'all', emoji: '🎲', name: 'Микс', label: '🎲 Микс' },
-  { id: 'status', emoji: '💰', name: 'Деньги / статус', label: '💰 Деньги' },
+  { id: 'status', emoji: '💰', name: 'Деньги / слава', label: '💰 Деньги' },
   { id: 'relations', emoji: '💔', name: 'Отношения', label: '💔 Отношения' },
   { id: 'fashion', emoji: '💎', name: 'Бренды одежды', label: '💎 Фэшн' },
   { id: 'cars_weapons', emoji: '🏎', name: 'Тачки, стволы, бренды', label: '🏎 Бренды' },
@@ -35,6 +37,41 @@ export const TITLE_MOOD_OPTIONS: Array<{ id: TitleMood; emoji: string; label: st
   { id: 'conceptual', emoji: '🧠', name: 'Концепт', label: '🧠 Концепт' },
   { id: 'absurd', emoji: '🤡', name: 'Абсурд', label: '🤡 Абсурд' }
 ];
+
+// ---------------------------------------------------------------------------
+// manual language choice (optional): 'auto' = adapt to the artist
+// ---------------------------------------------------------------------------
+export type TitleLang = 'auto' | 'ru' | 'en';
+
+export const TITLE_LANG_OPTIONS: Array<{ id: TitleLang; emoji: string; name: string }> = [
+  { id: 'auto', emoji: '🌐', name: 'Авто' },
+  { id: 'ru', emoji: '🇷🇺', name: 'Русский' },
+  { id: 'en', emoji: '🇬🇧', name: 'English' }
+];
+
+const LANG_KEY = 'musaic_title_lang';
+
+let titleLangPref: TitleLang = (() => {
+  try {
+    const v = typeof localStorage !== 'undefined' ? localStorage.getItem(LANG_KEY) : null;
+    return v === 'ru' || v === 'en' ? v : 'auto';
+  } catch {
+    return 'auto';
+  }
+})();
+
+export function getTitleLanguage(): TitleLang {
+  return titleLangPref;
+}
+
+export function setTitleLanguage(lang: TitleLang): void {
+  titleLangPref = lang;
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(LANG_KEY, lang);
+  } catch {
+    /* ignore */
+  }
+}
 
 export interface CasingWeights {
   normal: number; // as written in the bank (Title Case / natural)
@@ -52,17 +89,22 @@ export interface ArtistNamingProfile {
   seed?: number;           // stable per-artist signature
 }
 
-const BANKS: Record<'ru' | 'en', LangBank> = { ru: RU_BANK, en: EN_BANK };
+const BANKS: Record<'ru' | 'en', LangBank> = {
+  ru: mergeBank(RU_BANK, RU_EXTRA),
+  en: mergeBank(EN_BANK, EN_EXTRA)
+};
 
 const DEFAULT_CASING: CasingWeights = { normal: 0.4, lower: 0.28, upper: 0.16, title: 0.16 };
-const DEFAULT_SHORT = 0.4;
-const DEFAULT_PHRASE = 0.16;
+const DEFAULT_SHORT = 0.46;  // one word: most often
+const DEFAULT_PHRASE = 0.12; // sentence: rare
+const DEFAULT_EN = 0.4;      // ~60% RU / 40% EN
+const MIN_OTHER_LANG = 0.12; // the other language never disappears completely
 
 /** How often each theme shows up in "Микс" before artist adaptation. */
 const BASE_THEME_WEIGHTS: Record<ThemeId, number> = {
-  status: 1.45, relations: 1.45, fashion: 1.1, vibe: 0.9, sad: 0.9, aesthetics: 0.9,
-  cars_weapons: 0.85, body_dark: 0.6, mystic: 0.6, numbers: 0.3, real_talk: 1.0, punch: 0.9,
-  rap: 0.55, trap: 0.6, slang: 0.6, celebs: 0.4, digital: 0.3, absurd: 0.25, conceptual: 0.35
+  status: 1.45, relations: 1.45, fashion: 1.1, vibe: 1.1, sad: 0.95, aesthetics: 0.9,
+  cars_weapons: 0.6, body_dark: 0.6, mystic: 0.6, numbers: 0.35, real_talk: 1.0, punch: 1.0,
+  rap: 0.55, trap: 0.55, slang: 0.5, celebs: 0.45, digital: 0.3, absurd: 0.25, conceptual: 0.35
 };
 
 /** Genre -> theme multipliers. */
@@ -110,8 +152,11 @@ function seeded(seed: number, key: string): number {
   return (h % 10000) / 10000;
 }
 
+const CYR = /[А-яЁё]/;
+const LAT = /[A-Za-z]/;
+
 export function hasMixedScripts(s: string): boolean {
-  return /[A-Za-z]/.test(s) && /[\u0410-\u044f\u0401\u0451]/.test(s);
+  return LAT.test(s) && CYR.test(s);
 }
 
 function wordCount(s: string): number {
@@ -122,8 +167,8 @@ type LenBucket = 'one' | 'two' | 'phrase';
 const bucketOf = (n: number): LenBucket => (n <= 1 ? 'one' : n <= 3 ? 'two' : 'phrase');
 
 function chooseBucket(p: ArtistNamingProfile, isAlbum: boolean): LenBucket {
-  const one = clamp(p.shortRatio ?? DEFAULT_SHORT, 0.15, 0.75);
-  const phrase = clamp((p.phraseRatio ?? DEFAULT_PHRASE) * (isAlbum ? 0.7 : 1), 0.04, 0.4);
+  const one = clamp(p.shortRatio ?? DEFAULT_SHORT, 0.2, 0.75);
+  const phrase = clamp((p.phraseRatio ?? DEFAULT_PHRASE) * (isAlbum ? 0.7 : 1), 0.04, 0.3);
   const two = Math.max(0.1, 1 - one - phrase);
   return weighted<LenBucket>([['one', one], ['two', two], ['phrase', phrase]]);
 }
@@ -227,10 +272,11 @@ function themeWeights(profile: ArtistNamingProfile, mood: TitleMood): Array<[The
 
 function normalizeProfile(p: ArtistNamingProfile | boolean): ArtistNamingProfile {
   if (typeof p === 'boolean') {
-    return { enProb: p ? 0.76 : 0.34, casingWeights: DEFAULT_CASING, shortRatio: DEFAULT_SHORT, phraseRatio: DEFAULT_PHRASE };
+    return { enProb: p ? 0.7 : 0.3, casingWeights: DEFAULT_CASING, shortRatio: DEFAULT_SHORT, phraseRatio: DEFAULT_PHRASE };
   }
   return {
     ...p,
+    enProb: clamp(p.enProb ?? DEFAULT_EN, MIN_OTHER_LANG, 1 - MIN_OTHER_LANG),
     casingWeights: p.casingWeights ?? DEFAULT_CASING,
     shortRatio: p.shortRatio ?? DEFAULT_SHORT
   };
@@ -251,7 +297,7 @@ function listKeysOf(patterns: Pattern[]): string[] {
 function getTokenThemeIndex(): Map<string, Set<ThemeId>> {
   if (tokenThemeIndex) return tokenThemeIndex;
   const idx = new Map<string, Set<ThemeId>>();
-  for (const bank of [EN_BANK, RU_BANK]) {
+  for (const bank of [BANKS.en, BANKS.ru]) {
     for (const theme of Object.keys(bank.themes) as ThemeId[]) {
       for (const key of listKeysOf(bank.themes[theme])) {
         for (const atom of bank.lists[key] || []) {
@@ -283,19 +329,19 @@ export function analyzeArtistNamingStyle(artist: any, tracks: Array<{ title?: st
   const K = 4; // smoothing strength towards defaults
   const n = titles.length;
 
-  // language
+  // language: start from ~60/40 RU/EN, then follow what the artist actually uses
   let lat = 0;
   let cyr = 0;
   for (const t of titles) {
-    if (/[A-Za-z]/.test(t)) lat++;
-    else if (/[\u0410-\u044f\u0401\u0451]/.test(t)) cyr++;
+    if (LAT.test(t)) lat++;
+    else if (CYR.test(t)) cyr++;
   }
   const name = String(artist?.name ?? '');
-  let prior = /[\u0410-\u044f\u0401\u0451]/.test(name) ? 0.35 : /[A-Za-z]/.test(name) ? 0.62 : 0.55;
+  let prior = CYR.test(name) ? 0.28 : LAT.test(name) ? 0.46 : DEFAULT_EN;
   const country = String(artist?.country ?? '').toLowerCase();
-  if (/рос|russia|^ru$|белар|казах|^by$|^kz$/.test(country)) prior -= 0.12;
-  if (/usa|^us$|uk|^gb$|canada|austral|сша|англ|брит/.test(country)) prior += 0.18;
-  const enProb = clamp((lat + prior * K) / (lat + cyr + K), 0.08, 0.92);
+  if (/рос|russia|^ru$|белар|казах|^by$|^kz$/.test(country)) prior -= 0.1;
+  if (/usa|^us$|uk|^gb$|canada|austral|сша|англ|брит/.test(country)) prior += 0.2;
+  const enProb = clamp((lat + prior * K) / (lat + cyr + K), MIN_OTHER_LANG, 1 - MIN_OTHER_LANG);
 
   // casing
   const c = { normal: 0, lower: 0, upper: 0, title: 0 };
@@ -346,8 +392,19 @@ export function analyzeArtistNamingStyle(artist: any, tracks: Array<{ title?: st
 }
 
 // ---------------------------------------------------------------------------
-// main entry (same signature as the old generator)
+// main entry (same signature as before)
 // ---------------------------------------------------------------------------
+function pickLanguage(profile: ArtistNamingProfile, languageOverride: SimLanguageMix): 'ru' | 'en' {
+  // 1) explicit simulation setting wins
+  if (languageOverride === 'en') return 'en';
+  if (languageOverride === 'ru') return 'ru';
+  // 2) manual choice in the title menu
+  if (titleLangPref === 'ru' || titleLangPref === 'en') return titleLangPref;
+  // 3) mix / auto
+  if (languageOverride === 'mix') return rnd() < DEFAULT_EN ? 'en' : 'ru';
+  return rnd() < profile.enProb ? 'en' : 'ru';
+}
+
 export function generateModernTitle(
   existingSet: Set<string>,
   isAlbum: boolean,
@@ -358,11 +415,7 @@ export function generateModernTitle(
   const profile = normalizeProfile(profileOrEnglish);
   const mood: TitleMood = typeof moodTheme === 'string' ? moodTheme : 'all';
 
-  const lang: 'ru' | 'en' =
-    languageOverride === 'en' ? 'en'
-      : languageOverride === 'ru' ? 'ru'
-        : languageOverride === 'mix' ? (rnd() < 0.5 ? 'en' : 'ru')
-          : rnd() < profile.enProb ? 'en' : 'ru';
+  const lang = pickLanguage(profile, languageOverride);
   const bank = BANKS[lang];
   const bucket = chooseBucket(profile, isAlbum);
   const themes = themeWeights(profile, mood);
