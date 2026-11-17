@@ -650,6 +650,8 @@ export function getArtistFollowerTier(followers: number | undefined | null): Art
 export interface ArtistSimMetrics {
   artist: Artist;
   hype: number;
+  organicHype?: number;
+  hypeParts?: Array<[string, number]>;
   lastDropDate: string | null;
   lastAlbumDate: string | null;
   lastFeatDate: string | null;
@@ -943,21 +945,48 @@ function computeArtistMetricsFast(
   const hasReleasedAlbum = myAlbums.length > 0 || lastAlbumDate !== null;
   const avgQuality = scoreCnt > 0 ? Math.round(scoreSum / scoreCnt) : 68;
 
+  // --- Hype v2: organic buzz from real events + your manual bias (± on the radar) ---
+  // Hype only shapes the start of a release a little; plays still come mostly from audience, quality and hits.
+  const hypeParts: Array<[string, number]> = [];
+  const addPart = (label: string, v: number) => { const r = Math.round(v); if (r !== 0) hypeParts.push([label, r]); return v; };
+  let organic = 14;
+  organic += addPart('Размер аудитории', Math.min(30, Math.log10(Math.max(1000, realFollowers)) * 4.4 - 8));
+  if (artist.isRisingStar) organic += addPart('Восходящая звезда', 9);
+  if (artist.verified) organic += addPart('Подтверждённый артист', 2);
+  // fresh drop: strong buzz that fades smoothly
+  if (lastDropDate) organic += addPart('Свежий релиз', 17 * Math.exp(-daysSilent / 26));
+  // long silence: buzz cools down (fans may still wait, see expectation on the radar)
+  if (daysSilent > 110) organic += addPart('Долгая тишина', -Math.min(15, (daysSilent - 110) / 18));
+  // momentum: how the last 45 days performed vs the usual level of the artist
+  let recentPlays = 0; let recentCount = 0;
+  for (let i = 0; i < myTracks.length; i++) {
+    const t = myTracks[i];
+    if (!t.releaseDate || t.isSnippet) continue;
+    const d = diffDaysISO(t.releaseDate, currentDate);
+    if (d >= 0 && d <= 45) { recentPlays += t.plays || 0; recentCount++; }
+  }
+  if (recentCount > 0 && catalogAvgPlays > 0) {
+    const ratio = recentPlays / recentCount / catalogAvgPlays;
+    organic += addPart(ratio >= 1 ? 'Релизы заходят лучше обычного' : 'Релизы ниже обычного', clamp(Math.log2(Math.max(0.25, ratio)) * 7, -8, 14));
+  }
+  if (activeSnippet) {
+    const sAge = activeSnippet.releaseDate ? Math.max(0, diffDaysISO(activeSnippet.releaseDate, currentDate)) : 0;
+    organic += addPart('Прогрев сниппетом', 10 * Math.exp(-sAge / 40));
+  }
+  if (daysSinceFeat !== null && daysSinceFeat <= 30) organic += addPart('Свежий фит', 5 * (1 - daysSinceFeat / 30));
+  if (daysSinceAlbum !== null && daysSinceAlbum <= 35) organic += addPart('Неделя альбома', 9 * (1 - daysSinceAlbum / 35));
+  if (avgQuality >= 78) organic += addPart('Высокие оценки', 6);
+  else if (avgQuality >= 68) organic += addPart('Хорошие оценки', 3);
+  else if (avgQuality < 55) organic += addPart('Слабые оценки', -4);
+  if (topHitsCount > 0) organic += addPart('Хиты в каталоге', Math.min(8, Math.sqrt(topHitsCount) * 2.2));
+  const organicHype = clamp(Math.round(organic), 8, 96);
   let hype: number;
   if (typeof artist.hype === 'number' && !isNaN(artist.hype)) {
-    hype = clamp(Math.round(artist.hype), 5, 99);
+    // manual bias is strong, but real events still move the hype
+    hype = clamp(Math.round(artist.hype * 0.7 + organicHype * 0.3), 5, 99);
+    hypeParts.push(['Ручная настройка', Math.round((artist.hype - organicHype) * 0.7)]);
   } else {
-    let score = 22 + Math.min(34, Math.log10(Math.max(1000, realFollowers)) * 4.5);
-    if (artist.isRisingStar) score += 15;
-    if (artist.verified) score += 4;
-    if (daysSilent <= 14) score += 15;
-    else if (daysSilent <= 30) score += 9;
-    else if (daysSilent <= 60) score += 3;
-    else if (daysSilent > 120) score -= 7;
-    if (activeSnippet) score += 11;
-    if (avgQuality >= 78) score += 8;
-    else if (avgQuality >= 68) score += 4;
-    hype = clamp(Math.round(score), 10, 95);
+    hype = organicHype;
   }
 
   const compressedReach = getCompressedReach(realFollowers, topHitsCount, catalogAvgPlays);
@@ -1086,6 +1115,8 @@ function computeArtistMetricsFast(
   return {
     artist,
     hype,
+    organicHype,
+    hypeParts,
     lastDropDate,
     lastAlbumDate,
     lastFeatDate,
@@ -6917,6 +6948,13 @@ const RadarArtistRow = memo<{
   const [localSeed, setLocalSeed] = useState(0);
   const hidden = radarHidden.has(m.artist.id);
   const exp = useMemo(() => computeFanExpectation(m), [m]);
+  // the click changes the SHOWN hype by ±5 (manual bias is blended with organic hype)
+  const adjust = onAdjustHype ? (delta: number) => {
+    const org = m.organicHype ?? m.hype;
+    const target = clamp(m.hype + delta, 5, 99);
+    const manual = clamp(Math.round((target - org * 0.3) / 0.7), 5, 99);
+    onAdjustHype(m.artist.id, manual - (m.artist.hype ?? 50));
+  } : undefined;
   const tierLabel = m.tier === 'mega' ? 'Мега-топ' : m.tier === 'large' ? 'Крупный' : m.tier === 'mid' ? 'Средний' : 'Новичок';
   const ideas = useMemo(() => {
     const base = [m.recommendedFormat];
@@ -6949,9 +6987,9 @@ const RadarArtistRow = memo<{
           <div className="w-28">
             <div className="flex justify-between text-[11px]"><span className="text-zinc-400">Хайп</span><span className="font-mono font-bold text-white">{m.hype}</span></div>
             <div className="flex items-center gap-1 mt-1">
-              {onAdjustHype && <button type="button" onClick={() => onAdjustHype(m.artist.id, -5)} className="w-5 h-5 rounded-md bg-white/[0.06] hover:bg-white/[0.14] text-[11px] font-bold text-zinc-200 cursor-pointer">−</button>}
+              {adjust && <button type="button" onClick={() => adjust(-5)} className="w-5 h-5 rounded-md bg-white/[0.06] hover:bg-white/[0.14] text-[11px] font-bold text-zinc-200 cursor-pointer">−</button>}
               <div className="flex-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full theme-bg-accent rounded-full transition-all duration-500" style={{ width: `${m.hype}%` }} /></div>
-              {onAdjustHype && <button type="button" onClick={() => onAdjustHype(m.artist.id, 5)} className="w-5 h-5 rounded-md bg-white/[0.06] hover:bg-white/[0.14] text-[11px] font-bold text-zinc-200 cursor-pointer">+</button>}
+              {adjust && <button type="button" onClick={() => adjust(5)} className="w-5 h-5 rounded-md bg-white/[0.06] hover:bg-white/[0.14] text-[11px] font-bold text-zinc-200 cursor-pointer">+</button>}
             </div>
           </div>
           <div className="w-32" title={`Фанаты ждут: ${exp.what}`}>
@@ -6992,7 +7030,15 @@ const RadarArtistRow = memo<{
             {suggestedPartner && <div>Возможный фит: <strong className="text-white">{suggestedPartner.name}</strong></div>}
           </div>
           <div className="space-y-1">
-            {m.dropReasons.slice(0, 4).map((r, i) => <p key={i} className="leading-snug">• {r}</p>)}
+            {m.dropReasons.slice(0, 3).map((r, i) => <p key={i} className="leading-snug">• {r}</p>)}
+            {m.hypeParts && m.hypeParts.length > 0 && (
+              <div className="pt-1.5">
+                <div className="text-[10px] font-black uppercase tracking-widest text-zinc-500 mb-1">Из чего хайп</div>
+                <div className="flex flex-wrap gap-1">
+                  {m.hypeParts.map(([l, v]) => <span key={l} className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${v >= 0 ? 'bg-emerald-400/10 text-emerald-300' : 'bg-rose-400/10 text-rose-300'}`}>{l} {v > 0 ? `+${v}` : v}</span>)}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

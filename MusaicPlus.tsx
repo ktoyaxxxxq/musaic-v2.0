@@ -18,7 +18,7 @@ import { CoverArt, resolveMedia, formatNumber } from './App';
 import { setArtistAwardsSource as setHeroAwardsSource, splitNames } from './profile/ArtistHero';
 import type { ArtistEra, EraRelease } from './profile/ArtistHero';
 import { generateModernTitle, analyzeArtistNamingStyle } from './titleGen';
-import { computeAllArtistMetrics, forecastReleasePlays, generateAlbumTracksWithFeats, getPromoStrategyConfig } from './SimulationMode';
+import { computeAllArtistMetrics, forecastReleasePlays, generateAlbumTracksWithFeats, getPromoStrategyConfig, computeFanExpectation } from './SimulationMode';
 
 // ---------------------------------------------------------------------------
 // shared helpers
@@ -101,6 +101,7 @@ const PLUS_CSS = `
 .mp-cv{content-visibility:auto;contain-intrinsic-size:auto 68px}
 .mp-row{transition:background-color .2s ease}
 @keyframes mp-aurora{0%{transform:translate3d(-6%,-4%,0) rotate(0deg) scale(1)}50%{transform:translate3d(5%,3%,0) rotate(8deg) scale(1.08)}100%{transform:translate3d(-6%,-4%,0) rotate(0deg) scale(1)}}
+@keyframes mp-aurora2{0%{transform:translate3d(6%,4%,0) rotate(0deg) scale(1.05)}50%{transform:translate3d(-5%,-2%,0) rotate(-10deg) scale(.96)}100%{transform:translate3d(6%,4%,0) rotate(0deg) scale(1.05)}}
 @keyframes mp-rise{0%{transform:translate3d(0,0,0) scale(.6);opacity:0}12%{opacity:.9}100%{transform:translate3d(var(--dx,0px),-105vh,0) scale(1);opacity:0}}
 @keyframes mp-fall{0%{transform:translate3d(0,-10vh,0);opacity:0}10%{opacity:.85}100%{transform:translate3d(var(--dx,0px),105vh,0);opacity:0}}
 @keyframes mp-twinkle{0%,100%{opacity:.15;transform:scale(.7)}50%{opacity:1;transform:scale(1)}}
@@ -324,11 +325,19 @@ export const CoverPeek: React.FC<{
               onMouseMove={onMove}
             >
               {src && !failed ? (
-                <img src={src} alt={media.title} draggable={false} onError={() => setFailed(true)}
-                  className="block max-w-[92vw] max-h-[82vh] object-contain transition-transform duration-300 ease-out"
-                  style={{ transform: `scale(${zoom})`, transformOrigin: origin, minWidth: 'min(420px, 80vw)' }} />
+                isArtist ? (
+                  <img src={src} alt={media.title} draggable={false} onError={() => setFailed(true)}
+                    className="block max-w-[92vw] max-h-[82vh] w-auto h-auto transition-transform duration-300 ease-out"
+                    style={{ transform: `scale(${zoom})`, transformOrigin: origin }} />
+                ) : (
+                  <div className="w-[min(80vh,92vw)] aspect-square">
+                    <img src={src} alt={media.title} draggable={false} onError={() => setFailed(true)}
+                      className="block w-full h-full object-cover transition-transform duration-300 ease-out"
+                      style={{ transform: `scale(${zoom})`, transformOrigin: origin }} />
+                  </div>
+                )
               ) : (
-                <CoverArt url={media.url} title={media.title} isArtist={isArtist} className="w-[min(82vh,92vw)] h-[min(82vh,92vw)]" innerClassName="w-full h-full object-cover" />
+                <CoverArt url={media.url} title={media.title} isArtist={isArtist} className="w-[min(80vh,92vw)] aspect-square" innerClassName="w-full h-full object-cover" />
               )}
             </motion.div>
             <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}
@@ -801,7 +810,7 @@ const ChartRowView: React.FC<{
             {kind === 'artists' ? (
               <>{fmtN(e.ref.followers || 0)} слушателей{extra ? ` · ${extra.entries} в топ-100` : ''}{extra?.hit ? ` · хит: ${extra.hit.e.title}` : ''}</>
             ) : (
-              <span onClick={ev => { ev.stopPropagation(); onArtist(leadName); }} className="hover:text-white hover:underline">{e.sub}</span>
+              <ArtistLinks lead={e.ref.artistName} extra={kind === 'tracks' ? e.ref.featuredArtist : e.ref.coArtist} sep={kind === 'tracks' ? ' feat. ' : ' & '} onArtist={onArtist} />
             )}
           </div>
         </div>
@@ -824,6 +833,21 @@ const ChartRowView: React.FC<{
     </div>
   );
 });
+
+/** every artist name is its own link: lead, feat and co-artists */
+const ArtistLinks: React.FC<{ lead?: string; extra?: string; sep: string; onArtist: (name?: string) => void }> = ({ lead, extra, sep, onArtist }) => {
+  const leads = splitNames(lead); const feats = splitNames(extra).filter(n => !leads.some(l => norm(l) === norm(n)));
+  const link = (n: string, i: number) => (
+    <span key={`${n}-${i}`} onClick={ev => { ev.stopPropagation(); onArtist(n); }} className="hover:text-white hover:underline cursor-pointer">{n}</span>
+  );
+  return (
+    <>
+      {leads.map((n, i) => <React.Fragment key={`l${i}`}>{i > 0 && ', '}{link(n, i)}</React.Fragment>)}
+      {feats.length > 0 && <span className="text-zinc-600">{sep}</span>}
+      {feats.map((n, i) => <React.Fragment key={`f${i}`}>{i > 0 && ', '}{link(n, i + 100)}</React.Fragment>)}
+    </>
+  );
+};
 
 const ChartHistoryModal: React.FC<{ e: ChartEnt; kind: ChartKind; weeks: Array<Map<string, number>>; T: number; limit: number; onClose: () => void; onOpen: () => void }> = ({ e, kind, weeks, T, limit, onClose, onOpen }) => {
   useEsc(true, onClose);
@@ -919,7 +943,8 @@ const ChartHistoryModal: React.FC<{ e: ChartEnt; kind: ChartKind; weeks: Array<M
 type StageMood = 'night' | 'fire' | 'ice' | 'love' | 'dark' | 'bright' | 'haze' | 'rain';
 const MOOD_LABEL: Record<StageMood, string> = { night: 'Ночь', fire: 'Огонь', ice: 'Холод', love: 'Нежность', dark: 'Тьма', bright: 'Свет', haze: 'Дымка', rain: 'Дождь' };
 const stageStore = createStore<'on' | 'off'>(typeof localStorage !== 'undefined' ? (localStorage.getItem('musaic.stage') === 'off' ? 'off' : 'on') : 'on');
-const setStage = (v: 'on' | 'off') => { try { localStorage.setItem('musaic.stage', v); } catch { /* */ } stageStore.set(v); };
+const stageArtistStore = createStore<'on' | 'off'>(typeof localStorage !== 'undefined' ? (localStorage.getItem('musaic.stage.artist') === 'off' ? 'off' : 'on') : 'on');
+const setStage = (v: 'on' | 'off', artist = false) => { try { localStorage.setItem(artist ? 'musaic.stage.artist' : 'musaic.stage', v); } catch { /* */ } (artist ? stageArtistStore : stageStore).set(v); };
 
 interface PaletteInfo { colors: string[]; lum: number; sat: number }
 const paletteCache = new Map<string, PaletteInfo>();
@@ -995,31 +1020,36 @@ const Particles: React.FC<{ mood: StageMood; color: string }> = memo(({ mood, co
 
 const GRAIN = "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='.5'/></svg>\")";
 
+const STAGE_MASK = 'linear-gradient(to bottom, #000 0%, #000 34%, rgba(0,0,0,.86) 48%, rgba(0,0,0,.6) 62%, rgba(0,0,0,.32) 76%, rgba(0,0,0,.12) 88%, transparent 100%)';
 export const ReleaseStage: React.FC<{
-  kind: 'track' | 'album'; id: string; cover?: string; title: string; artistName?: string; genre?: string;
+  kind: 'track' | 'album' | 'artist'; id: string; cover?: string; title: string; artistName?: string; genre?: string;
   releaseDate?: string; plays?: number; referenceDate?: string;
 }> = ({ kind, id, cover, title, artistName, genre, releaseDate, plays = 0, referenceDate }) => {
   usePlusCss();
-  const on = useStore(stageStore) === 'on';
-  const src = resolveMedia(cover, { id, title, artistName });
+  const isArtistPage = kind === 'artist';
+  const on = useStore(isArtistPage ? stageArtistStore : stageStore) === 'on';
+  const src = resolveMedia(cover, isArtistPage ? { title, isArtist: true } : { id, title, artistName });
   const [pal, setPal] = useState<PaletteInfo | null>(() => (src ? paletteCache.get(src) || null : null));
+  const [ready, setReady] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let alive = true;
-    if (!src) { setPal(null); return; }
-    readPalette(src).then(p => { if (alive) setPal(p); });
-    return () => { alive = false; };
+    setReady(false);
+    const t = setTimeout(() => alive && setReady(true), 420); // never wait forever
+    if (!src) { setPal(null); setReady(true); return () => { alive = false; clearTimeout(t); }; }
+    readPalette(src).then(p => { if (alive) { setPal(p); setReady(true); } });
+    return () => { alive = false; clearTimeout(t); };
   }, [src]);
-  const mood = useMemo(() => detectMood(title, genre || '', pal), [title, genre, pal]);
+  const mood = useMemo(() => detectMood(isArtistPage ? '' : title, genre || '', pal), [title, genre, pal, isArtistPage]);
   const c0 = pal?.colors[0] || `hsl(${hueOf(title)} 55% 45%)`;
   const c1 = pal?.colors[1] || `hsl(${(hueOf(title) + 50) % 360} 50% 30%)`;
   const c2 = pal?.colors[2] || c1;
+  const c3 = pal?.colors[3] || c0;
 
-  // page accent = cover colour (buttons, links on the page follow the release)
+  // page accent = cover colour (buttons and links on the page follow the release)
   useEffect(() => {
     const host = hostRef.current?.parentElement;
-    if (!host) return;
-    if (!on) return;
+    if (!host || !on) return;
     const had = host.classList.contains('page-accent-scope');
     const prev = host.style.getPropertyValue('--page-accent');
     host.classList.add('page-accent-scope');
@@ -1028,32 +1058,34 @@ export const ReleaseStage: React.FC<{
   }, [on, c0]);
 
   const age = useMemo(() => { const r = parseDayMs(releaseDate); return r === null ? null : Math.floor((refToMs(referenceDate) - r) / DAY); }, [releaseDate, referenceDate]);
-  const tag = age !== null && age >= 0 && age <= 14 ? (age === 0 ? 'Вышел сегодня' : `Новый релиз · ${age} дн.`) : age !== null && age < 0 ? `Выйдет через ${-age} дн.` : null;
-  const milestone = plays >= 1e9 ? '💎 Миллиард' : plays >= 5e8 ? '500M+' : plays >= 1e8 ? '100M+' : plays >= 5e7 ? '50M+' : plays >= 1e7 ? '10M+' : null;
-  const dim = pal ? clamp(0.35 + (pal.lum - 0.4) * 0.6, 0.25, 0.6) : 0.45;
+  const tag = isArtistPage ? null : age !== null && age >= 0 && age <= 14 ? (age === 0 ? 'Вышел сегодня' : `Новый релиз · ${age} дн.`) : age !== null && age < 0 ? `Выйдет через ${-age} дн.` : null;
+  const milestone = isArtistPage ? null : plays >= 1e9 ? '💎 Миллиард' : plays >= 5e8 ? '500M+' : plays >= 1e8 ? '100M+' : plays >= 5e7 ? '50M+' : plays >= 1e7 ? '10M+' : null;
+  const dim = pal ? clamp(0.3 + (pal.lum - 0.4) * 0.55, 0.22, 0.55) : 0.42;
+  const strength = isArtistPage ? 0.8 : 1;
 
   return (
     <div ref={hostRef} className="contents">
       {on && (
         <div aria-hidden className="mp-anim absolute inset-0 pointer-events-none overflow-hidden" style={{ zIndex: -1 }}>
-          <div className="sticky top-0 h-[100vh] w-full overflow-hidden">
-            {src && <img src={src} alt="" className="absolute inset-0 w-full h-full object-cover scale-[1.35] blur-[80px] opacity-55" />}
-            <div className="absolute -inset-[20%]" style={{ background: `radial-gradient(40% 45% at 25% 30%, ${c0} 0%, transparent 70%), radial-gradient(45% 50% at 78% 25%, ${c1} 0%, transparent 70%), radial-gradient(50% 40% at 55% 85%, ${c2} 0%, transparent 70%)`, opacity: mood === 'dark' ? 0.35 : 0.55, animation: 'mp-aurora 26s ease-in-out infinite', filter: 'blur(30px)' }} />
+          <div className="sticky top-0 w-full overflow-hidden h-[min(100vh,100%)]"
+            style={{ opacity: ready ? strength : 0, transition: 'opacity 1.1s cubic-bezier(.22,1,.36,1)', maskImage: STAGE_MASK, WebkitMaskImage: STAGE_MASK }}>
+            {src && <img src={src} alt="" className="absolute inset-0 w-full h-full object-cover scale-[1.4] blur-[90px] opacity-50" style={{ transform: 'translateZ(0) scale(1.4)' }} />}
+            <div className="absolute -inset-[25%]" style={{ background: `radial-gradient(38% 42% at 24% 28%, ${c0} 0%, transparent 72%), radial-gradient(42% 46% at 78% 22%, ${c1} 0%, transparent 72%), radial-gradient(48% 40% at 52% 82%, ${c2} 0%, transparent 72%)`, opacity: mood === 'dark' ? 0.32 : 0.5, animation: 'mp-aurora 32s ease-in-out infinite', filter: 'blur(40px)', willChange: 'transform' }} />
+            <div className="absolute -inset-[25%]" style={{ background: `radial-gradient(30% 36% at 70% 60%, ${c3} 0%, transparent 70%), radial-gradient(34% 30% at 18% 70%, ${c1} 0%, transparent 70%)`, opacity: 0.28, mixBlendMode: 'screen', animation: 'mp-aurora2 44s ease-in-out infinite', filter: 'blur(50px)', willChange: 'transform' }} />
             <Particles mood={mood} color={c0} />
-            {mood === 'dark' && <div className="absolute inset-0 mix-blend-overlay opacity-40" style={{ backgroundImage: GRAIN, animation: 'mp-pulse 6s ease-in-out infinite' }} />}
-            {mood === 'night' && <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(5,8,25,.55), transparent 60%)' }} />}
+            <div className="absolute inset-0 mix-blend-overlay" style={{ backgroundImage: GRAIN, opacity: mood === 'dark' ? 0.4 : 0.07, animation: mood === 'dark' ? 'mp-pulse 6s ease-in-out infinite' : undefined }} />
+            {mood === 'night' && <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(5,8,25,.5), transparent 65%)' }} />}
             <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${dim})` }} />
-            <div className="absolute inset-0" style={{ background: 'radial-gradient(120% 90% at 50% 30%, transparent 45%, rgba(0,0,0,.55) 100%)' }} />
-            <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-[var(--bg-color,#09090b)] to-transparent" />
+            <div className="absolute inset-0" style={{ background: 'radial-gradient(130% 95% at 50% 25%, transparent 45%, rgba(0,0,0,.5) 100%)' }} />
           </div>
         </div>
       )}
-      <div className="absolute top-3 right-3 md:top-4 md:right-6 z-30 flex items-center gap-1.5">
+      <div className={`absolute z-30 flex items-center gap-1.5 ${isArtistPage ? 'top-4 left-4 md:left-6' : 'top-3 right-3 md:top-4 md:right-6'}`}>
         {on && tag && <span className="hidden sm:inline px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider text-black" style={{ background: c0 }}>{tag}</span>}
         {on && milestone && <span className="hidden sm:inline px-2.5 py-1 rounded-full text-[10px] font-black bg-black/40 backdrop-blur-md border border-white/15 text-white">{milestone}</span>}
-        <button type="button" onClick={() => setStage(on ? 'off' : 'on')} title={on ? 'Выключить атмосферу релиза' : 'Включить атмосферу релиза'}
+        <button type="button" onClick={() => setStage(on ? 'off' : 'on', isArtistPage)} title={on ? 'Выключить атмосферу' : 'Включить атмосферу'}
           className={`px-3 py-1.5 rounded-full text-[11px] font-bold backdrop-blur-md border transition-colors ${on ? 'bg-white/[0.12] border-white/20 text-white' : 'bg-black/40 border-white/10 text-zinc-400 hover:text-white'}`}>
-          ✦ {on ? `${MOOD_LABEL[mood]} · ${kind === 'album' ? 'альбом' : 'трек'}` : 'Атмосфера'}
+          ✦ {on ? `${MOOD_LABEL[mood]} · ${isArtistPage ? 'артист' : kind === 'album' ? 'альбом' : 'трек'}` : 'Атмосфера'}
         </button>
       </div>
     </div>
@@ -1424,7 +1456,7 @@ function genRumors(artists: Artist[], tracks: Track[], albums: Album[], today: s
 }
 
 type CalKind = 'single' | 'album' | 'ep' | 'snippet' | 'clip';
-interface CalItem { key: string; title: string; artist: string; date: string; time?: string; cover?: string; kind: CalKind; source: 'catalog' | 'ann'; refId?: string; refType?: 'track' | 'album'; ann?: Announcement }
+interface CalItem { key: string; title: string; artist: string; date: string; time?: string; cover?: string; teaser?: string; kind: CalKind; source: 'catalog' | 'ann'; refId?: string; refType?: 'track' | 'album'; ann?: Announcement }
 const DOT: Record<string, string> = { catalog: 'bg-emerald-400', ann: 'bg-amber-400', snippet: 'bg-sky-400' };
 
 export const ReleaseCalendarPro: React.FC<{
@@ -1459,6 +1491,9 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
   const [selDay, setSelDay] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'out' | 'soon' | 'snippet' | 'ann'>('all');
   const [form, setForm] = useState<any | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t); }, [toast]);
+  const onSaved = useCallback((date: string, text: string) => { setMonth(date.slice(0, 7)); setSelDay(date); setFilter('all'); setToast(text); }, []);
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   const artistOf = useCallback((name: string) => artists.find(a => norm(a.name) === norm(name)), [artists]);
@@ -1472,7 +1507,7 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
       const ms = parseDayMs(t.releaseDate); if (ms === null) continue;
       const inAlbum = t.albumId && t.albumId !== 'single' && albumById.has(t.albumId);
       if (inAlbum && !t.isSnippet) continue;
-      out.push({ key: `t-${t.id}`, title: t.title, artist: t.featuredArtist ? `${t.artistName} feat. ${t.featuredArtist}` : t.artistName, date: toISO(ms), cover: t.coverUrl, kind: t.isSnippet ? 'snippet' : 'single', source: 'catalog', refId: t.id, refType: 'track' });
+      out.push({ key: `t-${t.id}`, title: t.title, artist: t.featuredArtist ? `${t.artistName} feat. ${t.featuredArtist}` : t.artistName, date: toISO(ms), cover: t.coverUrl, teaser: t.snippetTeaser, kind: t.isSnippet ? 'snippet' : 'single', source: 'catalog', refId: t.id, refType: 'track' });
     }
     for (const a of albums) {
       const ms = parseDayMs(a.releaseDate); if (ms === null) continue;
@@ -1599,6 +1634,17 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
                 <CalSection title={fmtDay(refToMs(selDay!))} items={list} empty="В этот день ничего. Нажми «+ Добавить»." now={now} today={today} artistOf={artistOf} setAnn={setAnn} setForm={setForm} onReleaseAnn={releaseAnn} onOpen={onOpen ? (t, id) => { onClose(); onOpen(t, id); } : undefined} />
               ) : (
                 <>
+                  <IdeaDeck artists={artists} tracks={tracks} albums={albums} today={today}
+                    onEdit={i => setForm({ mode: i.kind === 'snippet' ? (onAddTrack ? 'snippet' : 'announce') : 'announce', type: i.kind, artistName: i.artist.name, title: i.title, date: i.date, featuredArtist: i.feat || '', note: i.teaser })}
+                    onAccept={i => {
+                      if (i.kind === 'snippet' && onAddTrack) {
+                        onAddTrack({ id: uid('snip'), title: i.title, artistId: i.artist.id, artistName: i.artist.name, albumId: 'single', albumTitle: 'Single', duration: '0:45', plays: Math.round((i.artist.followers || 100000) * rnd(0.02, 0.07)), likes: 0, isLiked: false, releaseDate: i.date, coverUrl: '', isSnippet: true, snippetTeaser: i.teaser, featuredArtist: i.feat, genre: i.artist.genre } as Track);
+                        onSaved(i.date, `Сниппет «${i.title}» добавлен с тизером`);
+                      } else {
+                        setAnn(p => [...p, { id: uid('ann'), title: i.title, artistName: i.artist.name, artistId: i.artist.id, type: i.kind === 'snippet' ? 'snippet' : i.kind, date: i.date, note: i.teaser, presaves: 0, createdAt: Date.now(), featuredArtist: i.feat }]);
+                        onSaved(i.date, `Анонс «${i.title}» добавлен`);
+                      }
+                    }} />
                   <CalSection title="Скоро" items={upcoming} empty="Пока ничего не запланировано." now={now} today={today} artistOf={artistOf} setAnn={setAnn} setForm={setForm} onReleaseAnn={releaseAnn} onOpen={onOpen ? (t, id) => { onClose(); onOpen(t, id); } : undefined} />
                   <div>
                     <div className="flex items-center justify-between mb-2">
@@ -1634,7 +1680,13 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
           <AnimatePresence>
             {form && <CalForm key="form" form={form} setForm={setForm} artists={artists} tracks={tracks} albums={albums} today={today}
               canPast={!!onAddTrack} onSaveAnn={a => setAnn(p => [...p.filter(x => x.id !== a.id), a])}
-              onAddTrack={onAddTrack} onAddAlbum={onAddAlbum} />}
+              onAddTrack={onAddTrack} onAddAlbum={onAddAlbum} onSaved={onSaved} />}
+          </AnimatePresence>
+          <AnimatePresence>
+            {toast && (
+              <motion.div key={toast} initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10 }}
+                className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 px-4 py-2.5 rounded-2xl bg-white text-black text-xs font-black shadow-2xl">✓ {toast}</motion.div>
+            )}
           </AnimatePresence>
         </motion.div>
       </div>
@@ -1665,7 +1717,8 @@ const CalSection: React.FC<{
                 <span className="text-[10px] text-zinc-500">{fmtDay(refToMs(it.date))}{it.time ? ` · ${it.time}` : ''}</span>
               </div>
               <div className="text-[14px] font-black text-white truncate mt-0.5">{it.title}</div>
-              <div className="text-[11px] text-zinc-400 truncate">{it.artist}{a?.note ? ` · ${a.note}` : ''}</div>
+              <div className="text-[11px] text-zinc-400 truncate">{it.artist}</div>
+              {(a?.note || it.teaser) && <div className="text-[11px] text-zinc-300/80 italic line-clamp-2 mt-0.5">«{a?.note || it.teaser}»</div>}
               <div className="flex flex-wrap items-center gap-2 mt-1">
                 {!isPast ? <span className="text-[11px] font-black text-emerald-300 tabular-nums">через {leftStr(target, now)}</span>
                   : <span className="text-[11px] font-bold text-zinc-500">{a ? (a.released ? 'вышел' : 'дата наступила') : 'вышел'}</span>}
@@ -1686,74 +1739,277 @@ const CalSection: React.FC<{
   </div>
 );
 
+// ---- artist picker: search with avatars, keyboard, popular first ----
+const ArtistPicker: React.FC<{ value: string; onChange: (name: string) => void; artists: Artist[]; placeholder: string; exclude?: string }> = ({ value, onChange, artists, placeholder, exclude }) => {
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const q = norm(value);
+  const list = useMemo(() => {
+    const ok = (a: Artist) => !exclude || norm(a.name) !== norm(exclude);
+    const byFans = (x: Artist, y: Artist) => (y.followers || 0) - (x.followers || 0);
+    if (!q) return artists.filter(ok).sort(byFans).slice(0, 8);
+    const starts: Artist[] = [], incl: Artist[] = [];
+    for (const a of artists) { if (!ok(a)) continue; const n = norm(a.name); if (n.startsWith(q)) starts.push(a); else if (n.includes(q)) incl.push(a); }
+    return [...starts.sort(byFans), ...incl.sort(byFans)].slice(0, 8);
+  }, [artists, q, exclude]);
+  useEffect(() => { setHi(0); }, [q]);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  const exact = artists.find(a => norm(a.name) === q);
+  const pick = (a: Artist) => { onChange(a.name); setOpen(false); };
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHi(h => Math.min(list.length - 1, h + 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(0, h - 1)); }
+    else if (e.key === 'Enter' && open && list[hi]) { e.preventDefault(); pick(list[hi]); }
+    else if (e.key === 'Escape' && open) { e.nativeEvent.stopPropagation(); setOpen(false); }
+  };
+  const showList = open && list.length > 0 && !(exact && list.length === 1 && norm(list[0].name) === q);
+  return (
+    <div ref={boxRef} className="relative">
+      <div className="flex items-center gap-2 bg-black/40 border border-white/10 focus-within:border-white/30 rounded-xl pl-2 pr-1.5 py-1.5 transition-colors">
+        {exact ? <CoverArt url={exact.imageUrl} title={exact.name} isArtist className="w-7 h-7 rounded-full overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
+          : <span className="w-7 h-7 rounded-full bg-white/[0.06] flex items-center justify-center text-[12px] text-zinc-500 shrink-0">@</span>}
+        <input value={value} placeholder={placeholder} onChange={e => { onChange(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onKeyDown={onKey}
+          className="flex-1 min-w-0 bg-transparent text-sm text-white outline-none py-0.5 placeholder:text-zinc-500" />
+        {exact && <span className="hidden sm:inline text-[10px] text-zinc-500 shrink-0">{fmtN(exact.followers || 0)} слуш.</span>}
+        {value && <button type="button" onClick={() => { onChange(''); setOpen(true); }} className="w-6 h-6 rounded-full text-zinc-500 hover:text-white hover:bg-white/10 shrink-0">×</button>}
+      </div>
+      <AnimatePresence>
+        {showList && (
+          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.14 }}
+            className="absolute z-40 left-0 right-0 mt-1 rounded-2xl border border-white/10 bg-[#17181e] shadow-[0_20px_60px_rgba(0,0,0,.6)] p-1 max-h-72 overflow-y-auto custom-scrollbar">
+            {!q && <div className="px-2.5 pt-1.5 pb-1 text-[10px] uppercase tracking-widest text-zinc-500 font-black">Популярные</div>}
+            {list.map((a, i) => (
+              <button type="button" key={a.id} onMouseDown={e => { e.preventDefault(); pick(a); }} onMouseEnter={() => setHi(i)}
+                className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-left transition-colors ${hi === i ? 'bg-white/[0.08]' : ''}`}>
+                <CoverArt url={a.imageUrl} title={a.name} isArtist className="w-8 h-8 rounded-full overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-bold text-white truncate">{a.name}</span>
+                  <span className="block text-[10px] text-zinc-500 truncate">{fmtN(a.followers || 0)} слушателей{a.genre ? ` · ${a.genre}` : ''}</span>
+                </span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// ---- smart ideas: who should drop what, when, with a teaser ----
+type IdeaKind = 'snippet' | 'single' | 'ep' | 'album' | 'clip';
+interface Idea { id: string; kind: IdeaKind; artist: Artist; title: string; date: string; teaser: string; reason: string; feat?: string; score: number }
+const IDEAS_LS = 'musaic.ideas.v1';
+const T_MOODS = ['тёмный и медленный', 'летний вайб', 'жёсткий бит и злые панчи', 'грустно, но красиво', 'клубный разгон', 'очень личный текст', 'новое звучание', 'возвращение к корням', 'мелодия, которая не отпускает', 'ночной вайб'];
+const T_HOOKS = ['Фанаты уже разбирают строчки', 'Комменты в огне', 'Похоже на будущий хит', 'Звучит как заявка на чарт', 'Вайб узнаётся с первых секунд', 'Пресейв уже открыт', 'В сети спорят, кто на фите', 'Это совсем другой {a}'];
+const TEASE: Record<IdeaKind, string[]> = {
+  snippet: ['{a} показал кусок нового трека «{t}»{f}', 'Сниппет «{t}»: {mood}', '{a}{f}: 30 секунд, после которых ждать невозможно', '«{t}» засветился в сторис {a}. {hook}', '{a} тизерит «{t}». {hook}', 'Новый сниппет {a}: {mood}'],
+  single: ['{a}{f} — «{t}». Выходит {when}', 'Новый сингл {a}: «{t}». {hook}', '«{t}» уже на пресейве. Релиз {when}', '{a} возвращается с «{t}»{f}', '{when}: {a} — «{t}». {mood}'],
+  album: ['{a} анонсировал альбом «{t}». Релиз {when}', 'Альбом «{t}»: {mood}. {hook}', '{a}: «{t}» — самый личный релиз. Выходит {when}', 'Обратный отсчёт: альбом {a} «{t}» {when}'],
+  ep: ['EP «{t}» от {a} выйдет {when}', '{a} готовит EP «{t}»: {mood}', 'Короткий, но плотный: EP {a} «{t}» {when}'],
+  clip: ['{a} снял клип на «{t}». Премьера {when}', 'Премьера клипа {a} «{t}» {when}', 'Съёмки закончены: клип {a} на «{t}». {hook}']
+};
+function whenPhrase(dateMs: number, todayMs: number) {
+  const d = Math.round((dateMs - todayMs) / DAY);
+  if (d <= 0) return 'сегодня';
+  if (d === 1) return 'завтра';
+  if (new Date(dateMs).getUTCDay() === 5 && d <= 7) return 'в эту пятницу';
+  if (d <= 6) return 'на этой неделе';
+  return fmtDayShort(dateMs);
+}
+function makeTeaser(kind: IdeaKind, title: string, artist: string, feat: string | undefined, dateMs: number, todayMs: number, r: () => number) {
+  const pick = <T,>(arr: T[]) => arr[Math.floor(r() * arr.length)];
+  return pick(TEASE[kind]).replace('{hook}', pick(T_HOOKS)).replace('{mood}', pick(T_MOODS)).replace(/\{a\}/g, artist).replace(/\{t\}/g, title)
+    .replace('{f}', feat ? ` и ${feat}` : '').replace('{when}', whenPhrase(dateMs, todayMs));
+}
+function nextFriday(fromMs: number, minDays: number) { let d = fromMs + minDays * DAY; for (let i = 0; i < 7 && new Date(d).getUTCDay() !== 5; i++) d += DAY; return d; }
+
+function genIdeas(artists: Artist[], tracks: Track[], albums: Album[], today: string, seed: number, skip: Set<string>): Idea[] {
+  const pool = [...artists].sort((a, b) => (b.followers || 0) - (a.followers || 0)).slice(0, 140);
+  let metrics: any[] = [];
+  try { metrics = computeAllArtistMetrics(pool, tracks, albums, today); } catch { metrics = []; }
+  const r = seeded(seed * 104729 + 31);
+  const t0 = refToMs(today);
+  const cands: Array<{ m: any; kind: IdeaKind; score: number; reason: string; snippetTitle?: string }> = [];
+  for (const m of metrics) {
+    let exp = { score: m.hype, what: 'новый сингл', label: '' } as any;
+    try { exp = computeFanExpectation(m); } catch { /* */ }
+    const roll = r();
+    let kind: IdeaKind | null = null; let reason = '';
+    if (m.activeSnippet && roll < 0.85) { kind = 'single'; reason = `Сниппет «${m.activeSnippet.title}» прогрет, пора полную версию`; }
+    else if (exp.what === 'альбом' && m.hype >= 48) { kind = roll < 0.5 ? 'album' : 'snippet'; reason = `Без альбома ${m.daysSinceAlbum ?? 'давно'} дн. · ожидание ${exp.score}`; if (!m.hasReleasedAlbum && m.tracksCount < 8) kind = 'ep'; }
+    else if (m.daysSilent >= 28) { kind = roll < 0.45 ? 'snippet' : 'single'; reason = `Не выпускал ${m.daysSilent} дн. · ${exp.label || 'ждут'}`; }
+    else if (m.hype >= 74) { kind = roll < 0.35 ? 'clip' : 'snippet'; reason = `Хайп ${m.hype}: самое время подогреть`; }
+    else if (roll < 0.12) { kind = 'snippet'; reason = 'Неожиданный тизер, чтобы напомнить о себе'; }
+    if (!kind) continue;
+    cands.push({ m, kind, reason, score: (exp.score || 40) + r() * 28, snippetTitle: kind === 'single' && m.activeSnippet ? m.activeSnippet.title : undefined });
+  }
+  cands.sort((a, b) => b.score - a.score);
+  const out: Idea[] = [];
+  for (const c of cands) {
+    if (out.length >= 6) break;
+    const art: Artist = c.m.artist;
+    const id = `i${hashStr(`${art.id}|${c.kind}|${seed}`)}`;
+    if (skip.has(id)) continue;
+    const isBig = c.kind === 'album' || c.kind === 'ep';
+    const title = c.snippetTitle || smartTitle(art, tracks, albums, isBig);
+    const dateMs = c.kind === 'snippet' ? t0 + Math.round(1 + r() * 5) * DAY : c.kind === 'clip' ? t0 + Math.round(3 + r() * 7) * DAY
+      : c.kind === 'single' ? nextFriday(t0, Math.round(4 + r() * 10)) : c.kind === 'ep' ? nextFriday(t0, Math.round(14 + r() * 20)) : nextFriday(t0, Math.round(21 + r() * 40));
+    const feat = (c.kind === 'single' || c.kind === 'snippet') && r() < 0.3 ? suggestFeat(art, artists, c.m)?.name : undefined;
+    out.push({ id, kind: c.kind, artist: art, title, date: toISO(dateMs), feat, reason: c.reason, score: c.score, teaser: makeTeaser(c.kind, title, art.name, feat, dateMs, t0, r) });
+  }
+  return out;
+}
+
+const KIND_RU: Record<IdeaKind, string> = { snippet: 'Сниппет', single: 'Сингл', ep: 'EP', album: 'Альбом', clip: 'Клип' };
+const IdeaDeck: React.FC<{ artists: Artist[]; tracks: Track[]; albums: Album[]; today: string; onAccept: (i: Idea) => void; onEdit: (i: Idea) => void }> = ({ artists, tracks, albums, today, onAccept, onEdit }) => {
+  const [st, setSt] = useState(() => lsGet<{ seed: number; skip: string[] }>(IDEAS_LS, { seed: 1, skip: [] }));
+  useEffect(() => lsSet(IDEAS_LS, st), [st]);
+  const ideas = useMemo(() => genIdeas(artists, tracks, albums, today, st.seed, new Set(st.skip)), [artists, tracks, albums, today, st]);
+  const drop = (id: string) => setSt(p => ({ ...p, skip: [...p.skip, id].slice(-500) }));
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Умные идеи</div>
+        <button type="button" onClick={() => setSt(p => ({ ...p, seed: p.seed + 1 }))} className="text-[11px] font-bold text-zinc-400 hover:text-white">🎲 Ещё варианты</button>
+      </div>
+      {ideas.length === 0 && <div className="text-xs text-zinc-500 py-3">Идей пока нет. Нажми «Ещё варианты».</div>}
+      <div className="space-y-1.5">
+        <AnimatePresence initial={false}>
+          {ideas.map(i => (
+            <motion.div key={i.id} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 30 }} transition={{ duration: 0.22 }}
+              className="flex gap-3 rounded-2xl bg-gradient-to-r from-emerald-500/[0.07] to-transparent border border-white/[0.06] p-3">
+              <CoverArt url={i.artist.imageUrl} title={i.artist.name} isArtist className="w-11 h-11 rounded-full overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-white/[0.08] text-zinc-200">{KIND_RU[i.kind]}</span>
+                  <span className="text-[10px] text-zinc-500">{fmtDayShort(refToMs(i.date))} · {i.reason}</span>
+                </div>
+                <div className="text-[12.5px] font-bold text-white leading-snug mt-1">{i.teaser}</div>
+                <div className="flex items-center gap-2 mt-1.5">
+                  <button type="button" onClick={() => { onAccept(i); drop(i.id); }} className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-white text-black">Принять</button>
+                  <button type="button" onClick={() => onEdit(i)} className="text-[10px] font-bold text-zinc-400 hover:text-white">изменить</button>
+                  <button type="button" onClick={() => drop(i.id)} className="text-[10px] text-zinc-600 hover:text-rose-400">отклонить</button>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+};
+
 const CalForm: React.FC<{
   form: any; setForm: (f: any) => void; artists: Artist[]; tracks: Track[]; albums: Album[]; today: string; canPast: boolean;
-  onSaveAnn: (a: Announcement) => void; onAddTrack?: (t: Track) => void; onAddAlbum?: (a: Album, t: Track[]) => void;
-}> = ({ form, setForm, artists, tracks, albums, today, canPast, onSaveAnn, onAddTrack, onAddAlbum }) => {
+  onSaveAnn: (a: Announcement) => void; onAddTrack?: (t: Track) => void; onAddAlbum?: (a: Album, t: Track[]) => void; onSaved: (date: string, text: string) => void;
+}> = ({ form, setForm, artists, tracks, albums, today, canPast, onSaveAnn, onAddTrack, onAddAlbum, onSaved }) => {
   const art = artists.find(a => norm(a.name) === norm(form.artistName));
   const set = (p: any) => setForm({ ...form, ...p });
   const isAlbum = form.type === 'album' || form.type === 'ep';
   const [hint, setHint] = useState('');
+  const t0 = refToMs(today);
   const genTitle = () => set({ title: smartTitle(art, tracks, albums, isAlbum) });
+  const genTeaser = () => {
+    const kind: IdeaKind = form.mode === 'snippet' ? 'snippet' : (form.type as IdeaKind) || 'single';
+    set({ note: makeTeaser(kind, form.title || 'новый трек', art?.name || form.artistName || 'Артист', form.featuredArtist || undefined, refToMs(form.date || today), t0, Math.random) });
+  };
   const genPlays = () => {
     if (!art) { setHint('Выбери артиста из базы для прогноза'); return; }
-    const age = Math.max(0, Math.floor((refToMs(today) - refToMs(form.date || today)) / DAY));
+    const age = Math.max(0, Math.floor((t0 - refToMs(form.date || today)) / DAY));
     const r = smartPlays(art, artists, tracks, albums, form.date || today, isAlbum ? 'album' : 'track', { ageDays: age });
     set({ plays: formatNumber(r.plays) });
     setHint(`Хайп ${r.m?.hype ?? '—'} · релизу ${age} дн. → ${fmtN(r.plays)}`);
   };
-  const genTracklist = () => {
-    if (!art) { setHint('Выбери артиста из базы'); return; }
-    const count = form.type === 'ep' ? Math.round(rnd(4, 6)) : Math.round(rnd(10, 14));
-    const est = smartPlays(art, artists, tracks, albums, form.date || today, 'album', { albumTracks: count });
+  const genTracklist = (base = form) => {
+    const a = artists.find(x => norm(x.name) === norm(base.artistName));
+    if (!a) { setHint('Выбери артиста из базы'); return base; }
+    const count = base.type === 'ep' ? Math.round(rnd(4, 6)) : Math.round(rnd(10, 14));
+    const est = smartPlays(a, artists, tracks, albums, base.date || today, 'album', { albumTracks: count });
     try {
-      const list = generateAlbumTracksWithFeats({ artist: art, allArtists: artists, count, estimatedAlbumPlays: est.plays, existingTitles: new Set(tracks.map(t => t.title.toLowerCase())), namingProfile: est.m?.namingProfile || false });
-      set({ tracklist: list.map(t => (t.featuredArtist ? `${t.title} (feat. ${t.featuredArtist})` : t.title)).join('\n') });
-    } catch { setHint('Не получилось сгенерировать'); }
+      const list = generateAlbumTracksWithFeats({ artist: a, allArtists: artists, count, estimatedAlbumPlays: est.plays, existingTitles: new Set(tracks.map(t => t.title.toLowerCase())), namingProfile: est.m?.namingProfile || false });
+      return { ...base, tracklist: list.map(t => (t.featuredArtist ? `${t.title} (feat. ${t.featuredArtist})` : t.title)).join('\n') };
+    } catch { setHint('Не получилось сгенерировать'); return base; }
+  };
+  /** random, but logical: who, what and when follows the artists' state */
+  const randomLogical = () => {
+    if (form.mode === 'past') {
+      const pool = [...artists].sort((a, b) => (b.followers || 0) - (a.followers || 0)).slice(0, 60);
+      const a = pool[Math.floor(Math.pow(Math.random(), 1.6) * pool.length)];
+      if (!a) return;
+      const type = Math.random() < 0.72 ? 'single' : Math.random() < 0.5 ? 'ep' : 'album';
+      const date = toISO(t0 - Math.round(rnd(7, 540)) * DAY);
+      const age = Math.max(0, (t0 - refToMs(date)) / DAY);
+      const feat = type === 'single' && Math.random() < 0.3 ? suggestFeat(a, artists, null)?.name : undefined;
+      const r = smartPlays(a, artists, tracks, albums, date, type === 'single' ? 'track' : 'album', { ageDays: age });
+      let next: any = { ...form, artistName: a.name, type, date, featuredArtist: feat || '', title: smartTitle(a, tracks, albums, type !== 'single'), plays: formatNumber(r.plays) };
+      if (type !== 'single') next = genTracklist(next);
+      setForm(next); setHint(`Случайно, но по логике: ${a.name} · ${KIND_RU[type as IdeaKind]} · ${fmtDay(refToMs(date))}`);
+      return;
+    }
+    const ideas = genIdeas(artists, tracks, albums, today, Math.floor(Math.random() * 1e6), new Set());
+    const i = ideas.filter(x => (form.mode === 'snippet' ? x.kind === 'snippet' : x.kind !== 'snippet'))[0] || ideas[0];
+    if (!i) { setHint('Не хватает данных для идеи'); return; }
+    setForm({ ...form, artistName: i.artist.name, title: i.title, date: i.date, type: form.mode === 'snippet' ? 'snippet' : i.kind === 'snippet' ? 'single' : i.kind, featuredArtist: i.feat || '', note: i.teaser });
+    setHint(i.reason);
   };
   const save = () => {
     if (!form.title?.trim() || !form.date) return;
     const name = (form.artistName || '').trim() || 'Без артиста';
     const artistId = art?.id || `guest_${name}`;
     const plays = Math.max(0, parseInt(String(form.plays || '0').replace(/\D/g, ''), 10) || 0);
+    const title = form.title.trim();
     if (form.mode === 'announce') {
-      onSaveAnn({ id: form.id || uid('ann'), title: form.title.trim(), artistName: name, artistId: art?.id, type: form.type || 'single', date: form.date, time: form.time || undefined, coverUrl: form.coverUrl, note: form.note?.trim() || undefined, presaves: form.presaves || 0, released: form.released, createdAt: form.createdAt || Date.now(), featuredArtist: form.featuredArtist });
+      onSaveAnn({ id: form.id || uid('ann'), title, artistName: art?.name || name, artistId: art?.id, type: form.type || 'single', date: form.date, time: form.time || undefined, coverUrl: form.coverUrl, note: form.note?.trim() || undefined, presaves: form.presaves || 0, released: form.released, createdAt: form.createdAt || Date.now(), featuredArtist: form.featuredArtist?.trim() || undefined });
+      onSaved(form.date, `Анонс «${title}» сохранён`);
     } else if (form.mode === 'snippet' && onAddTrack) {
-      onAddTrack({ id: uid('snip'), title: form.title.trim(), artistId, artistName: art?.name || name, albumId: 'single', albumTitle: 'Single', duration: '0:45', plays: plays || Math.round((art?.followers || 100000) * rnd(0.02, 0.08)), likes: 0, isLiked: false, releaseDate: form.date, coverUrl: form.coverUrl || '', isSnippet: true, snippetTeaser: form.note?.trim() || undefined, genre: art?.genre } as Track);
+      const fol = art?.followers || 100000;
+      onAddTrack({ id: uid('snip'), title, artistId, artistName: art?.name || name, albumId: 'single', albumTitle: 'Single', duration: '0:45', plays: plays || Math.round(fol * rnd(0.02, 0.07)), likes: 0, isLiked: false, releaseDate: form.date, coverUrl: form.coverUrl || '', isSnippet: true, snippetTeaser: form.note?.trim() || undefined, featuredArtist: form.featuredArtist?.trim() || undefined, genre: art?.genre } as Track);
+      onSaved(form.date, `Сниппет «${title}» добавлен${form.note?.trim() ? ' с тизером' : ''}`);
     } else if (form.mode === 'past') {
+      const ageDays = Math.max(0, (t0 - refToMs(form.date)) / DAY);
       if (isAlbum && onAddAlbum) {
         const lines: string[] = String(form.tracklist || '').split('\n').map((l: string) => l.trim()).filter(Boolean);
-        const total = plays || (art ? smartPlays(art, artists, tracks, albums, form.date, 'album', { ageDays: Math.max(0, (refToMs(today) - refToMs(form.date)) / DAY) }).plays : 1_000_000);
+        const total = plays || (art ? smartPlays(art, artists, tracks, albums, form.date, 'album', { ageDays }).plays : 1_000_000);
         const albumId = uid('alb');
-        const w = lines.map((_, i) => 1 / Math.pow(i + 1.6, 0.55) * rnd(0.7, 1.3)); const ws = w.reduce((a, b) => a + b, 0) || 1;
+        const w = lines.map((_, i) => (1 / Math.pow(i + 1.6, 0.55)) * rnd(0.7, 1.3)); const ws = w.reduce((x, y) => x + y, 0) || 1;
         const ts: Track[] = lines.map((l, i) => {
           const fm = /\((?:feat\.?|ft\.?)\s*([^)]+)\)\s*$/i.exec(l);
-          return { id: uid('trk'), title: fm ? l.slice(0, fm.index).trim() : l, artistId, artistName: art?.name || name, albumId, albumTitle: form.title.trim(), duration: randDuration(), plays: Math.round(total * w[i] / ws), likes: Math.round(total * w[i] / ws * 0.03), isLiked: false, releaseDate: form.date, coverUrl: form.coverUrl || '', featuredArtist: fm ? fm[1].trim() : undefined, genre: art?.genre } as Track;
+          const p = Math.round((total * w[i]) / ws);
+          return { id: uid('trk'), title: fm ? l.slice(0, fm.index).trim() : l, artistId, artistName: art?.name || name, albumId, albumTitle: title, duration: randDuration(), plays: p, likes: Math.round(p * 0.03), isLiked: false, releaseDate: form.date, coverUrl: form.coverUrl || '', featuredArtist: fm ? fm[1].trim() : undefined, genre: art?.genre } as Track;
         });
-        onAddAlbum({ id: albumId, title: form.title.trim(), artistId, artistName: art?.name || name, coverUrl: form.coverUrl || '', releaseYear: +form.date.slice(0, 4), releaseDate: form.date, genre: art?.genre || '', isLiked: false, totalPlays: total } as Album, ts);
+        onAddAlbum({ id: albumId, title, artistId, artistName: art?.name || name, coverUrl: form.coverUrl || '', releaseYear: +form.date.slice(0, 4), releaseDate: form.date, genre: art?.genre || '', isLiked: false, totalPlays: total } as Album, ts);
+        onSaved(form.date, `${form.type === 'ep' ? 'EP' : 'Альбом'} «${title}» добавлен · ${ts.length} треков`);
       } else if (onAddTrack) {
-        const p = plays || (art ? smartPlays(art, artists, tracks, albums, form.date, 'track', { ageDays: Math.max(0, (refToMs(today) - refToMs(form.date)) / DAY) }).plays : 100000);
-        onAddTrack({ id: uid('trk'), title: form.title.trim(), artistId, artistName: art?.name || name, albumId: 'single', albumTitle: 'Single', duration: randDuration(), plays: p, likes: Math.round(p * 0.03), isLiked: false, releaseDate: form.date, coverUrl: form.coverUrl || '', featuredArtist: form.featuredArtist?.trim() || undefined, genre: art?.genre } as Track);
+        const p = plays || (art ? smartPlays(art, artists, tracks, albums, form.date, 'track', { ageDays }).plays : 100000);
+        onAddTrack({ id: uid('trk'), title, artistId, artistName: art?.name || name, albumId: 'single', albumTitle: 'Single', duration: randDuration(), plays: p, likes: Math.round(p * 0.03), isLiked: false, releaseDate: form.date, coverUrl: form.coverUrl || '', featuredArtist: form.featuredArtist?.trim() || undefined, genre: art?.genre } as Track);
+        onSaved(form.date, `Сингл «${title}» добавлен в каталог`);
       }
     }
     setForm(null);
   };
   const inp = 'w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-white/30';
+  const mini = 'px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-sm shrink-0';
   const types: Array<[string, string]> = form.mode === 'snippet' ? [] : form.mode === 'past' ? [['single', 'Сингл'], ['ep', 'EP'], ['album', 'Альбом']] : [['single', 'Сингл'], ['ep', 'EP'], ['album', 'Альбом'], ['snippet', 'Сниппет'], ['clip', 'Клип']];
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-20 bg-black/60 flex items-center justify-center p-3">
-      <motion.div initial={{ y: 14, scale: 0.98 }} animate={{ y: 0, scale: 1 }} className="w-full max-w-lg max-h-[86vh] overflow-y-auto custom-scrollbar rounded-3xl border border-white/10 bg-[#121318] p-5 space-y-3">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-20 bg-black/60 backdrop-blur-[2px] flex items-center justify-center p-3" onMouseDown={e => { if (e.target === e.currentTarget) setForm(null); }}>
+      <motion.div initial={{ y: 14, scale: 0.98 }} animate={{ y: 0, scale: 1 }} transition={{ type: 'spring', stiffness: 320, damping: 30 }} className="w-full max-w-lg max-h-[86vh] overflow-y-auto custom-scrollbar rounded-3xl border border-white/10 bg-[#121318] p-5 space-y-3">
         <div className="flex gap-1 p-1 rounded-xl bg-white/[0.04]">
           {([['past', 'Вышедший релиз'], ['announce', 'Анонс / пре-сейв'], ['snippet', 'Сниппет']] as const).filter(([v]) => v === 'announce' || canPast).map(([v, l]) => (
-            <button key={v} type="button" onClick={() => set({ mode: v, type: v === 'snippet' ? 'snippet' : form.type === 'snippet' || form.type === 'clip' ? 'single' : form.type })} className={`flex-1 py-1.5 rounded-lg text-[11px] font-black ${form.mode === v ? 'bg-white text-black' : 'text-zinc-400'}`}>{l}</button>
+            <button key={v} type="button" onClick={() => set({ mode: v, type: v === 'snippet' ? 'snippet' : form.type === 'snippet' || form.type === 'clip' ? 'single' : form.type })} className={`flex-1 py-1.5 rounded-lg text-[11px] font-black transition-colors ${form.mode === v ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}>{l}</button>
           ))}
         </div>
+        <button type="button" onClick={randomLogical} className="w-full py-2 rounded-xl border border-dashed border-white/15 hover:border-white/30 text-[12px] font-bold text-zinc-300 hover:text-white transition-colors">🎲 Случайно, но логично</button>
+        <ArtistPicker value={form.artistName || ''} onChange={v => set({ artistName: v })} artists={artists} placeholder="Исполнитель: начни вводить имя" />
         <div className="flex gap-2">
           <input placeholder="Название" value={form.title || ''} onChange={e => set({ title: e.target.value })} className={inp} />
-          <button type="button" onClick={genTitle} title="Название в стиле артиста" className="px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-sm">✨</button>
+          <button type="button" onClick={genTitle} title="Название в стиле артиста" className={mini}>✨</button>
         </div>
-        <input list="mp-cal-artists" placeholder="Исполнитель" value={form.artistName || ''} onChange={e => set({ artistName: e.target.value })} className={inp} />
-        <datalist id="mp-cal-artists">{artists.slice(0, 400).map(a => <option key={a.id} value={a.name} />)}</datalist>
         {types.length > 0 && (
           <div className="flex flex-wrap gap-1">{types.map(([t, l]) => <button key={t} type="button" onClick={() => set({ type: t })} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${form.type === t ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-400'}`}>{l}</button>)}</div>
         )}
@@ -1761,16 +2017,21 @@ const CalForm: React.FC<{
           <input type="date" value={form.date || ''} max={form.mode === 'past' ? today : undefined} onChange={e => set({ date: e.target.value })} className={`${inp} [color-scheme:dark]`} />
           {form.mode === 'announce'
             ? <input type="time" value={form.time || ''} onChange={e => set({ time: e.target.value })} className={`${inp} [color-scheme:dark]`} />
-            : <div className="flex gap-1"><input placeholder="Прослушивания" value={form.plays || ''} onChange={e => set({ plays: e.target.value })} className={inp} /><button type="button" onClick={genPlays} title="Реалистично по артисту" className="px-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-sm">🎯</button></div>}
+            : <div className="flex gap-1"><input placeholder="Прослушивания" value={form.plays || ''} onChange={e => set({ plays: e.target.value })} className={inp} /><button type="button" onClick={genPlays} title="Реалистично по артисту" className={mini}>🎯</button></div>}
         </div>
-        {form.mode !== 'snippet' && !isAlbum && <input placeholder="Фит (необязательно)" value={form.featuredArtist || ''} onChange={e => set({ featuredArtist: e.target.value })} className={inp} />}
+        {!isAlbum && <ArtistPicker value={form.featuredArtist || ''} onChange={v => set({ featuredArtist: v })} artists={artists} exclude={form.artistName} placeholder="Фит (необязательно)" />}
         {form.mode === 'past' && isAlbum && (
           <div className="space-y-1">
-            <div className="flex items-center justify-between"><span className="text-[11px] text-zinc-500">Треклист: по строке на трек, фит как «(feat. Имя)»</span><button type="button" onClick={genTracklist} className="text-[11px] font-bold text-zinc-300 hover:text-white">🎲 Сгенерировать</button></div>
+            <div className="flex items-center justify-between"><span className="text-[11px] text-zinc-500">Треклист: по строке на трек, фит как «(feat. Имя)»</span><button type="button" onClick={() => setForm(genTracklist())} className="text-[11px] font-bold text-zinc-300 hover:text-white">🎲 Сгенерировать</button></div>
             <textarea rows={6} value={form.tracklist || ''} onChange={e => set({ tracklist: e.target.value })} className={`${inp} font-mono text-[12px]`} />
           </div>
         )}
-        <input placeholder={form.mode === 'snippet' ? 'Тизер сниппета' : 'Заметка (тизер, клип, фит...)'} value={form.note || ''} onChange={e => set({ note: e.target.value })} className={inp} />
+        {form.mode !== 'past' && (
+          <div className="flex gap-2">
+            <textarea rows={2} placeholder={form.mode === 'snippet' ? 'Тизер: текст под сниппетом' : 'Тизер анонса или заметка'} value={form.note || ''} onChange={e => set({ note: e.target.value })} className={`${inp} resize-none`} />
+            <button type="button" onClick={genTeaser} title="Сгенерировать тизер" className={mini}>🎲</button>
+          </div>
+        )}
         <label className="flex items-center gap-3 text-xs text-zinc-400 cursor-pointer">
           <div className="w-12 h-12 rounded-xl bg-zinc-800 overflow-hidden">{form.coverUrl && <img src={form.coverUrl} alt="" className="w-full h-full object-cover" />}</div>
           <span>Обложка (необязательно)</span>
@@ -1785,5 +2046,305 @@ const CalForm: React.FC<{
         </div>
       </motion.div>
     </motion.div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// 5. SCORE RING — prettier rating circles (same sizes and props as the old ScoreBadge)
+// ---------------------------------------------------------------------------
+const scoreTier = (sc: number) =>
+  sc >= 81 ? { c1: '#fde68a', c2: '#f59e0b', label: 'Шедевр' } : sc >= 72 ? { c1: '#6ee7b7', c2: '#10b981', label: 'Отлично' }
+    : sc >= 62 ? { c1: '#67e8f9', c2: '#06b6d4', label: 'Хорошо' } : sc >= 50 ? { c1: '#c4b5fd', c2: '#8b5cf6', label: 'Нормально' }
+      : sc >= 38 ? { c1: '#fdba74', c2: '#f97316', label: 'Слабо' } : { c1: '#fca5a5', c2: '#ef4444', label: 'Провал' };
+const CRIT: Array<[string, string]> = [['rhymes', 'Рифмы'], ['structure', 'Структура'], ['style', 'Стиль'], ['charisma', 'Харизма'], ['vibe', 'Вайб']];
+const RING: Record<string, { s: number; w: number; f: number }> = { sm: { s: 30, w: 2.6, f: 11 }, md: { s: 40, w: 3, f: 13 }, lg: { s: 50, w: 3.4, f: 16 } };
+
+export const ScoreRing: React.FC<{ rating?: any; size?: 'sm' | 'md' | 'lg'; showDetailsOnHover?: boolean; className?: string }> = memo(({ rating, size = 'md', showDetailsOnHover = true, className = '' }) => {
+  const gid = React.useId().replace(/:/g, '');
+  const ref = useRef<HTMLSpanElement>(null);
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
+  const sc = typeof rating?.totalScore === 'number' ? Math.round(rating.totalScore) : null;
+  if (sc === null) return null;
+  const { s, w, f } = RING[size] || RING.md;
+  const t = scoreTier(sc);
+  const r = (s - w) / 2; const C = 2 * Math.PI * r; const pct = clamp(sc / 90, 0, 1);
+  const show = () => { if (!showDetailsOnHover || !ref.current) return; const b = ref.current.getBoundingClientRect(); setTip({ x: b.left + b.width / 2, y: b.bottom + 8 }); };
+  const hasCrit = CRIT.some(([k]) => typeof rating?.[k] === 'number');
+  return (
+    <span ref={ref} className={`relative inline-flex shrink-0 items-center justify-center select-none ${className}`} style={{ width: s, height: s }} onMouseEnter={show} onMouseLeave={() => setTip(null)}>
+      <svg width={s} height={s} className="absolute inset-0 -rotate-90" style={{ filter: `drop-shadow(0 0 ${size === 'lg' ? 10 : 6}px ${t.c2}55)` }}>
+        <defs><linearGradient id={gid} x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor={t.c1} /><stop offset="100%" stopColor={t.c2} /></linearGradient></defs>
+        <circle cx={s / 2} cy={s / 2} r={r} fill="rgba(0,0,0,0.38)" stroke="rgba(255,255,255,0.08)" strokeWidth={w} />
+        <motion.circle cx={s / 2} cy={s / 2} r={r} fill="none" stroke={`url(#${gid})`} strokeWidth={w} strokeLinecap="round"
+          strokeDasharray={C} initial={{ strokeDashoffset: C }} animate={{ strokeDashoffset: C * (1 - pct) }} transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }} />
+      </svg>
+      <span className="relative font-black tabular-nums leading-none text-white" style={{ fontSize: f, textShadow: `0 0 12px ${t.c2}66` }}>{sc}</span>
+      {tip && typeof document !== 'undefined' && createPortal(
+        <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} className="fixed z-[2000] -translate-x-1/2 w-56 rounded-2xl border border-white/10 bg-[#141519]/95 backdrop-blur-xl p-3 shadow-2xl pointer-events-none"
+          style={{ left: tip.x, top: tip.y }}>
+          <div className="flex items-baseline justify-between"><span className="text-[11px] font-black uppercase tracking-widest" style={{ color: t.c1 }}>{t.label}</span><span className="text-[13px] font-black text-white tabular-nums">{sc}<span className="text-zinc-500 text-[11px]">/90</span></span></div>
+          {hasCrit && <div className="mt-2 space-y-1">{CRIT.filter(([k]) => typeof rating?.[k] === 'number').map(([k, l]) => (
+            <div key={k} className="flex items-center gap-2 text-[11px]"><span className="w-16 text-zinc-400">{l}</span><span className="flex-1 h-1 rounded-full bg-white/[0.08] overflow-hidden"><span className="block h-full rounded-full" style={{ width: `${rating[k] * 10}%`, background: `linear-gradient(90deg, ${t.c1}, ${t.c2})` }} /></span><span className="w-5 text-right font-bold text-white tabular-nums">{rating[k]}</span></div>
+          ))}</div>}
+          {rating?.nominations?.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{rating.nominations.slice(0, 4).map((n: string) => <span key={n} className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-400/10 text-amber-300">🏆 {n}</span>)}</div>}
+        </motion.div>, document.body)}
+    </span>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 7. REVIEWS & METASCORE (small button on the album page)
+// ---------------------------------------------------------------------------
+const OUTLETS = [
+  { n: 'Звук.Журнал', scale: '100', bias: 0 }, { n: 'Пульс', scale: '10', bias: -3 }, { n: 'Рэп-Обзор', scale: '100', bias: 3 }, { n: 'Сабвуфер', scale: '5', bias: -1 },
+  { n: 'Волна', scale: '10', bias: 1 }, { n: 'NOISE', scale: '100', bias: -6 }, { n: 'Бит & Слово', scale: '10', bias: 0 }, { n: 'Ночной эфир', scale: '5', bias: 2 }
+];
+const RV = {
+  open: {
+    hi: ['«{t}» — самый цельный релиз {a} на сегодня.', '{a} звучит уверенно как никогда.', 'Редкий случай, когда альбом слушается от первого до последнего трека.', 'На «{t}» {a} наконец нашёл своё звучание.', 'Это тот альбом, который будут вспоминать в итогах года.'],
+    mid: ['«{t}» держится на нескольких сильных треках.', 'Добротный альбом без больших сюрпризов.', '{a} играет на своём поле: уверенно, но предсказуемо.', 'Хорошие идеи соседствуют с проходными треками.', 'Ровный релиз, которому не хватает одного смелого шага.'],
+    lo: ['«{t}» звучит как черновик большого альбома.', 'Слишком много самоповторов.', '{a} явно торопился с релизом.', 'Пара удачных моментов тонет в однообразии.', 'Звучит устало, будто на автопилоте.']
+  },
+  top: ['Главный момент: «{top}».', '«{top}» — тот трек, ради которого стоит включить альбом.', 'Лучше всего работает «{top}».'],
+  feats: { good: ['Фиты с {feats} добавляют красок.', 'Гости ({feats}) звучат органично.'], bad: ['Гости ({feats}) местами перетягивают одеяло.', 'Даже {feats} не спасают середину.'] },
+  long: ['{n} треков — многовато, середина проседает.'], short: ['{n} треков пролетают на одном дыхании.'],
+  crit: ['Сильнее всего здесь {strong}, слабее {weak}.'],
+  prev: { hi: ['После «{prev}» это заметный шаг вперёд.'], mid: ['Продолжает линию «{prev}», не больше и не меньше.'], lo: ['До уровня «{prev}» не дотягивает.'] },
+  close: { hi: ['Must listen.', 'Один из альбомов года.', 'Слушать целиком и на громкости.'], mid: ['Стоит послушать хотя бы ради «{top}».', 'Фанатам точно зайдёт.'], lo: ['Можно пропустить.', 'Ждём реванша.'] }
+};
+const CRIT_RU: Record<string, string> = { rhymes: 'рифмы', structure: 'структура', style: 'стиль', charisma: 'харизма', vibe: 'вайб' };
+const metaColor = (m: number) => (m >= 75 ? '#22c55e' : m >= 50 ? '#facc15' : '#ef4444');
+
+function genReviews(album: Album, albumTracks: Track[], prev: Album | undefined, followers: number, seed: number) {
+  const r = seeded(hashStr(album.id) + seed * 7777);
+  const pick = <T,>(a: T[]) => a[Math.floor(r() * a.length)];
+  const avg = albumTracks.length ? albumTracks.reduce((x, t) => x + (t.plays || 0), 0) / albumTracks.length : (album.totalPlays || 0) / 10;
+  const base = album.rating?.totalScore ? (album.rating.totalScore / 90) * 100 : 58 + clamp(Math.log10(Math.max(1, avg) / 1e6) * 8, -15, 15);
+  const top = [...albumTracks].sort((a, b) => (b.plays || 0) - (a.plays || 0))[0]?.title || album.title;
+  const feats = [...new Set(albumTracks.flatMap(t => splitNames(t.featuredArtist)))].slice(0, 2).join(' и ');
+  const crit = CRIT.filter(([k]) => typeof (album.rating as any)?.[k] === 'number').map(([k]) => [k, (album.rating as any)[k]] as [string, number]).sort((a, b) => b[1] - a[1]);
+  const n = clamp(Math.round(3 + Math.log10(followers + 10) - 3.5 + r() * 2), 4, 8);
+  const start = Math.floor(r() * OUTLETS.length);
+  const fill = (x: string) => x.replace(/\{t\}/g, album.title).replace(/\{a\}/g, album.artistName).replace(/\{top\}/g, top).replace('{feats}', feats).replace('{n}', String(albumTracks.length)).replace('{prev}', prev?.title || '').replace('{strong}', crit[0] ? CRIT_RU[crit[0][0]] : '').replace('{weak}', crit.length > 1 ? CRIT_RU[crit[crit.length - 1][0]] : '');
+  const reviews = Array.from({ length: n }, (_, i) => {
+    const o = OUTLETS[(start + i) % OUTLETS.length];
+    const sc = Math.round(clamp(base + (r() + r() + r() - 1.5) * 14 + o.bias, 18, 98));
+    const band = sc >= 75 ? 'hi' : sc >= 55 ? 'mid' : 'lo';
+    const parts = [pick(RV.open[band])];
+    const extra: string[] = [pick(RV.top)];
+    if (feats) extra.push(pick(band === 'lo' ? RV.feats.bad : RV.feats.good));
+    if (albumTracks.length >= 14) extra.push(pick(RV.long)); else if (albumTracks.length > 0 && albumTracks.length <= 8) extra.push(pick(RV.short));
+    if (crit.length > 1) extra.push(pick(RV.crit));
+    if (prev) extra.push(pick(RV.prev[band]));
+    for (let k = 0; k < 2 && extra.length; k++) parts.push(extra.splice(Math.floor(r() * extra.length), 1)[0]);
+    parts.push(pick(RV.close[band]));
+    const shown = o.scale === '100' ? String(sc) : o.scale === '10' ? (sc / 10).toFixed(1) : '★'.repeat(Math.max(1, Math.round(sc / 20))) + '☆'.repeat(5 - Math.max(1, Math.round(sc / 20)));
+    return { outlet: o.n, sc, shown, text: parts.map(fill).join(' ') };
+  });
+  const meta = Math.round(reviews.reduce((x, y) => x + y.sc, 0) / reviews.length);
+  const pos = reviews.filter(x => x.sc >= 75).length, neg = reviews.filter(x => x.sc < 50).length;
+  const consensus = meta >= 80 ? 'Всеобщее признание' : meta >= 70 ? 'В целом положительные отзывы' : meta >= 55 ? 'Смешанные или средние отзывы' : meta >= 40 ? 'В целом негативные отзывы' : 'Разгромные отзывы';
+  return { reviews: reviews.sort((a, b) => b.sc - a.sc), meta, pos, neg, mixed: reviews.length - pos - neg, consensus };
+}
+
+export const AlbumReviewsButton: React.FC<{ album: Album; tracks: Track[]; albums: Album[]; artists: Artist[] }> = ({ album, tracks, albums, artists }) => {
+  const [open, setOpen] = useState(false);
+  const [seed, setSeed] = useState(() => lsGet<number>(`musaic.reviews.${album.id}`, 0));
+  useEffect(() => { setSeed(lsGet<number>(`musaic.reviews.${album.id}`, 0)); }, [album.id]);
+  const data = useMemo(() => {
+    const at = tracks.filter(t => t.albumId === album.id);
+    const ts = parseDayMs(album.releaseDate, album.releaseYear) || 0;
+    const prev = albums.filter(a => a.id !== album.id && (a.artistId === album.artistId || norm(a.artistName) === norm(album.artistName)) && (parseDayMs(a.releaseDate, a.releaseYear) || 0) < ts)
+      .sort((a, b) => (parseDayMs(b.releaseDate, b.releaseYear) || 0) - (parseDayMs(a.releaseDate, a.releaseYear) || 0))[0];
+    const fol = artists.find(a => a.id === album.artistId)?.followers || 300000;
+    return genReviews(album, at, prev, fol, seed);
+  }, [album, tracks, albums, artists, seed]);
+  const reroll = () => { const n = seed + 1; setSeed(n); lsSet(`musaic.reviews.${album.id}`, n); };
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} title="Рецензии критиков"
+        className="inline-flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-white/10 hover:border-white/25 text-[11px] font-bold text-zinc-400 hover:text-white transition-colors cursor-pointer">
+        <span className="w-5 h-5 rounded-md text-[10px] font-black text-black flex items-center justify-center tabular-nums" style={{ background: metaColor(data.meta) }}>{data.meta}</span>
+        Рецензии
+      </button>
+      <AnimatePresence>
+        {open && (
+          <Portal key="rv">
+            <div className="fixed inset-0 z-[600] flex items-end sm:items-center justify-center sm:p-6">
+              <motion.div className="absolute inset-0 bg-black/80 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setOpen(false)} />
+              <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                className="relative w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto custom-scrollbar rounded-t-[28px] sm:rounded-[28px] border border-white/10 bg-[#0e0f13]">
+                <div className="relative overflow-hidden p-6">
+                  <img src={resolveMedia(album.coverUrl, { id: album.id, title: album.title, artistName: album.artistName })} alt="" className="absolute inset-0 w-full h-full object-cover opacity-25 blur-3xl scale-125" />
+                  <div className="relative flex items-center gap-4">
+                    <CoverArt url={album.coverUrl} title={album.title} className="w-20 h-20 rounded-2xl overflow-hidden shrink-0 shadow-2xl" innerClassName="w-full h-full object-cover" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Рецензии</div>
+                      <div className="text-2xl font-black text-white truncate">{album.title}</div>
+                      <div className="text-sm text-zinc-400 truncate">{album.artistName}</div>
+                    </div>
+                    <button type="button" onClick={() => setOpen(false)} className="self-start w-9 h-9 rounded-full bg-white/[0.06] hover:bg-white/[0.14] text-white/70 text-xl">×</button>
+                  </div>
+                  <div className="relative mt-5 flex items-center gap-4">
+                    <div className="w-[72px] h-[72px] rounded-2xl flex items-center justify-center text-3xl font-black text-black tabular-nums shadow-lg" style={{ background: metaColor(data.meta) }}>{data.meta}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[15px] font-black text-white">{data.consensus}</div>
+                      <div className="text-[12px] text-zinc-400">Метаскор на основе {data.reviews.length} рецензий</div>
+                      <div className="mt-2 flex h-1.5 rounded-full overflow-hidden gap-[2px]">
+                        <span style={{ flexGrow: data.pos || 0.001, background: '#22c55e' }} /><span style={{ flexGrow: data.mixed || 0.001, background: '#facc15' }} /><span style={{ flexGrow: data.neg || 0.001, background: '#ef4444' }} />
+                      </div>
+                      <div className="mt-1 text-[10px] text-zinc-500">{data.pos} хвалят · {data.mixed} средне · {data.neg} ругают</div>
+                    </div>
+                    {album.rating && <div className="text-center"><ScoreRing rating={album.rating} size="lg" showDetailsOnHover={false} /><div className="text-[9px] text-zinc-500 uppercase mt-1">твоя</div></div>}
+                  </div>
+                </div>
+                <div className="px-6 pb-6 space-y-2">
+                  {data.reviews.map((rv, i) => (
+                    <motion.div key={`${seed}-${i}`} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }} className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-3.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[12px] font-black text-white">{rv.outlet}</span>
+                        <span className="text-[12px] font-black tabular-nums px-2 py-0.5 rounded-lg" style={{ color: metaColor(rv.sc), background: `${metaColor(rv.sc)}1a` }}>{rv.shown}</span>
+                      </div>
+                      <p className="text-[12.5px] text-zinc-300 leading-relaxed mt-1.5">{rv.text}</p>
+                    </motion.div>
+                  ))}
+                  <button type="button" onClick={reroll} className="w-full py-2.5 rounded-2xl text-[12px] font-bold text-zinc-400 hover:text-white border border-white/[0.06] hover:border-white/20 transition-colors">🎲 Другие рецензии</button>
+                </div>
+              </motion.div>
+            </div>
+          </Portal>
+        )}
+      </AnimatePresence>
+    </>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// 8. WEEKLY NEWS FEED — music-public style headlines for the «События» page
+// ---------------------------------------------------------------------------
+type NewsCat = 'charts' | 'releases' | 'buzz' | 'awards';
+interface NewsItem { id: string; cat: NewsCat; emoji: string; kicker: string; color: string; title: string; sub?: string; cover?: string; round?: boolean; go?: () => void; w: number }
+const NEWS_FILTERS: Array<[NewsCat | 'all', string]> = [['all', 'Всё'], ['charts', 'Чарты'], ['releases', 'Релизы'], ['buzz', 'Слухи и анонсы'], ['awards', 'Премии']];
+
+export const WeeklyNewsFeed: React.FC<{
+  artists: Artist[]; albums: Album[]; tracks: Track[]; awards?: AwardItem[]; referenceDate?: string;
+  navigateTo: (view: ViewType, params?: any) => void;
+}> = ({ artists, albums, tracks, awards = [], referenceDate, navigateTo }) => {
+  usePlusCss();
+  const nowRef = useMemo(() => refToMs(referenceDate), [referenceDate]);
+  const [off, setOff] = useState(0);
+  const [filter, setFilter] = useState<NewsCat | 'all'>('all');
+  const T = nowRef - off * 7 * DAY; const A = T - 7 * DAY;
+  const ents = useMemo(() => buildEntities(artists, albums, tracks, nowRef), [artists, albums, tracks, nowRef]);
+  const news = useMemo<NewsItem[]>(() => {
+    const out: NewsItem[] = [];
+    const goT = (id: string) => () => navigateTo('track', { id });
+    const goA = (id: string) => () => navigateTo('album', { id });
+    const weeks = Array.from({ length: 10 }, (_, k) => rankChart(ents, 'tracks', 'now', T - k * 7 * DAY));
+    const maps = weeks.map(w => new Map(w.map((r, i) => [r.e.id, i + 1])));
+    const cur = weeks[0]; const prevMap = maps[1];
+    if (cur[0]) {
+      const e = cur[0].e; let streak = 0; for (const m of maps) { if (m.get(e.id) === 1) streak++; else break; }
+      out.push({ id: `n1-${e.id}`, cat: 'charts', emoji: '🥇', kicker: '№1 недели', color: '#fbbf24', w: 100, cover: e.cover, go: goT(e.id),
+        title: streak > 1 ? `«${e.title}» держится на вершине уже ${streak}-ю неделю` : prevMap.get(e.id) ? `«${e.title}» поднимается на №1` : `«${e.title}» дебютирует сразу на №1`, sub: `${e.sub} · ${fmtN(cur[0].v)} прослушиваний за неделю` });
+    }
+    const debuts = cur.map((r, i) => ({ r, rank: i + 1 })).filter(x => !prevMap.has(x.r.e.id) && !maps.slice(2).some(m => m.has(x.r.e.id)) && x.rank > 1 && x.rank <= 30).slice(0, 3);
+    debuts.forEach((d, i) => out.push({ id: `deb-${d.r.e.id}`, cat: 'charts', emoji: '🔥', kicker: 'Дебют', color: '#34d399', w: 80 - i * 6 - d.rank / 2, cover: d.r.e.cover, go: goT(d.r.e.id),
+      title: `${d.r.e.ref.artistName} врывается в чарт: «${d.r.e.title}» стартует с #${d.rank}`, sub: d.r.e.ref.featuredArtist ? `feat. ${d.r.e.ref.featuredArtist}` : undefined }));
+    const moves = cur.map((r, i) => ({ r, rank: i + 1, last: prevMap.get(r.e.id) })).filter(x => x.last !== undefined) as Array<{ r: ChartRow; rank: number; last: number }>;
+    const up = [...moves].sort((a, b) => (b.last - b.rank) - (a.last - a.rank))[0];
+    if (up && up.last - up.rank >= 5) out.push({ id: `up-${up.r.e.id}`, cat: 'charts', emoji: '🚀', kicker: 'Взлёт', color: '#60a5fa', w: 70, cover: up.r.e.cover, go: goT(up.r.e.id), title: `«${up.r.e.title}» взлетает на ${up.last - up.rank} позиций, до #${up.rank}`, sub: up.r.e.sub });
+    const fall = weeks[1].slice(0, 10).find(r => { const now = maps[0].get(r.e.id); return now === undefined || now > 20; });
+    if (fall) out.push({ id: `fall-${fall.e.id}`, cat: 'charts', emoji: '📉', kicker: 'Падение', color: '#f87171', w: 40, cover: fall.e.cover, go: goT(fall.e.id), title: `«${fall.e.title}» вылетает из десятки`, sub: maps[0].get(fall.e.id) ? `теперь #${maps[0].get(fall.e.id)}` : 'и покидает топ-100' });
+    // artist of the week
+    const credits = new Map<string, number>(); cur.forEach(r => r.e.credits!.forEach(([id]) => credits.set(id, (credits.get(id) || 0) + 1)));
+    const art = rankChart(ents, 'artists', 'now', T)[0];
+    if (art) out.push({ id: `art-${art.e.id}`, cat: 'charts', emoji: '👑', kicker: 'Артист недели', color: '#f472b6', w: 75, cover: art.e.cover, round: true, go: () => navigateTo('artist', { id: art.e.id, artistName: art.e.title }),
+      title: `${art.e.title} — артист недели`, sub: `${credits.get(art.e.id) || 0} треков в топ-100 · ${fmtN(art.e.ref.followers || 0)} слушателей` });
+    const alb = rankChart(ents, 'albums', 'now', T)[0]; const albPrev = rankChart(ents, 'albums', 'now', A)[0];
+    if (alb) out.push({ id: `alb-${alb.e.id}`, cat: 'charts', emoji: '💿', kicker: 'Альбомный чарт', color: '#a78bfa', w: 60, cover: alb.e.cover, go: goA(alb.e.id),
+      title: albPrev?.e.id === alb.e.id ? `«${alb.e.title}» снова лучший альбом недели` : `«${alb.e.title}» возглавляет альбомный чарт`, sub: alb.e.sub });
+    // records
+    const marks: Array<[number, string]> = [[1e9, 'миллиард'], [5e8, '500 миллионов'], [1e8, '100 миллионов']];
+    ents.trackEnts.forEach(e => { for (const [x, l] of marks) { if (playsAt(e, T) >= x && playsAt(e, A) < x) { out.push({ id: `rec-${e.id}-${x}`, cat: 'charts', emoji: '🏆', kicker: 'Рекорд', color: '#fde047', w: 55 + Math.log10(x), cover: e.cover, go: goT(e.id), title: `«${e.title}» пробивает отметку в ${l} прослушиваний`, sub: e.sub }); break; } } });
+    // releases of the week
+    const inWeek = (ms: number | null) => ms !== null && ms > A && ms <= T;
+    albums.filter(a => inWeek(parseDayMs(a.releaseDate))).sort((a, b) => (b.totalPlays || 0) - (a.totalPlays || 0)).slice(0, 4).forEach((a, i) => {
+      const n = tracks.filter(t => t.albumId === a.id).length;
+      out.push({ id: `ra-${a.id}`, cat: 'releases', emoji: '💿', kicker: n && n <= 6 ? 'Новый EP' : 'Новый альбом', color: '#a78bfa', w: 65 - i * 5, cover: a.coverUrl, go: goA(a.id), title: `${a.artistName} выпустил ${n && n <= 6 ? 'EP' : 'альбом'} «${a.title}»`, sub: n ? `${n} треков` : undefined });
+    });
+    const albumIds = new Set(albums.map(a => a.id));
+    const weekTracks = tracks.filter(t => inWeek(parseDayMs(t.releaseDate)) && !(t.albumId && albumIds.has(t.albumId) && !t.isSnippet));
+    weekTracks.filter(t => !t.isSnippet).sort((a, b) => b.plays - a.plays).slice(0, 4).forEach((t, i) => out.push({ id: `rt-${t.id}`, cat: 'releases', emoji: '🎤', kicker: 'Новый трек', color: '#e5e7eb', w: 50 - i * 4, cover: t.coverUrl, go: goT(t.id), title: `${t.artistName}${t.featuredArtist ? ` feat. ${t.featuredArtist}` : ''} — «${t.title}»`, sub: `${fmtN(t.plays)} прослушиваний` }));
+    weekTracks.filter(t => t.isSnippet).slice(0, 3).forEach((t, i) => out.push({ id: `rs-${t.id}`, cat: 'buzz', emoji: '✂️', kicker: 'Сниппет', color: '#38bdf8', w: 45 - i * 3, cover: t.coverUrl, go: goT(t.id), title: `${t.artistName} показал сниппет «${t.title}»`, sub: t.snippetTeaser }));
+    // announcements & rumors
+    const anns = lsGet<Announcement[]>(ANN_LS, []).filter(a => { const ms = refToMs(a.date); return ms > T && ms <= T + 21 * DAY && !a.released; }).slice(0, 3);
+    anns.forEach((a, i) => out.push({ id: `an-${a.id}`, cat: 'buzz', emoji: '📣', kicker: 'Анонс', color: '#fbbf24', w: 42 - i * 3, cover: a.coverUrl, title: `${a.artistName}: «${a.title}» выйдет ${whenPhrase(refToMs(a.date), T)}`, sub: a.note }));
+    if (off === 0) genRumors(artists, tracks, albums, toISO(T), Math.floor(T / (7 * DAY)), new Set()).slice(0, 2).forEach((r, i) => out.push({ id: `rum-${r.id}`, cat: 'buzz', emoji: '👀', kicker: 'Слухи', color: '#e879f9', w: 35 - i * 3, cover: artists.find(a => a.id === r.artistId)?.imageUrl, round: true, title: r.text, sub: `вероятность ${r.conf}%` }));
+    // awards of the month at the end of the month
+    const d = new Date(T); const month = pad2(d.getUTCMonth() + 1); const year = String(d.getUTCFullYear());
+    const lastWeek = new Date(T + 7 * DAY).getUTCMonth() !== d.getUTCMonth();
+    if (lastWeek) awards.filter(a => a.periodType === 'month' && a.year === year && a.month === month).slice(0, 3).forEach((a, i) => out.push({ id: `aw-${a.id}`, cat: 'awards', emoji: '🏅', kicker: a.nominationTitle, color: '#fbbf24', w: 58 - i * 4, cover: a.winner.coverUrl, round: a.winner.type === 'artist', title: `${a.winner.title}${a.winner.artistName && a.winner.type !== 'artist' ? ` (${a.winner.artistName})` : ''} забирает «${a.nominationTitle}»` }));
+    return out.sort((a, b) => b.w - a.w);
+  }, [ents, T, A, off, artists, albums, tracks, awards, navigateTo]);
+  const shown = filter === 'all' ? news : news.filter(n => n.cat === filter);
+  const hero = shown[0]; const rest = shown.slice(1, 15);
+  if (!news.length && off === 0) return null;
+  return (
+    <section className="max-w-7xl mx-auto px-6 md:px-8 pt-8">
+      <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
+        <div>
+          <div className="text-[11px] font-black uppercase tracking-[0.25em] text-zinc-500">Musaic Weekly</div>
+          <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight">Неделя в музыке</h2>
+          <div className="text-[12px] text-zinc-500 mt-0.5">{fmtDayShort(A + DAY)} – {fmtDay(T)}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+            {NEWS_FILTERS.map(([v, l]) => <button key={v} type="button" onClick={() => setFilter(v)} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${filter === v ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}>{l}</button>)}
+          </div>
+          <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.04] border border-white/[0.06]">
+            <button type="button" onClick={() => setOff(o => o + 1)} className="w-7 h-7 rounded-lg text-zinc-300 hover:bg-white/10" title="Прошлая неделя">‹</button>
+            <button type="button" onClick={() => setOff(0)} disabled={off === 0} className="px-2 h-7 rounded-lg text-[11px] font-bold text-zinc-300 disabled:opacity-40">{off === 0 ? 'Эта неделя' : `${off} нед. назад`}</button>
+            <button type="button" onClick={() => setOff(o => Math.max(0, o - 1))} disabled={off === 0} className="w-7 h-7 rounded-lg text-zinc-300 hover:bg-white/10 disabled:opacity-30" title="Следующая неделя">›</button>
+          </div>
+        </div>
+      </div>
+      <AnimatePresence mode="wait">
+        <motion.div key={`${off}-${filter}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.25 }}>
+          {!hero && <div className="py-12 text-center text-sm text-zinc-500 rounded-3xl border border-white/[0.06]">На этой неделе в этой рубрике тихо.</div>}
+          {hero && (
+            <motion.button type="button" onClick={hero.go} whileHover={{ y: -2 }} className="relative w-full overflow-hidden text-left rounded-3xl border border-white/[0.08] min-h-[180px] p-6 flex items-end">
+              <div className="absolute inset-0">
+                {hero.cover && <CoverArt url={hero.cover} title={hero.title} isArtist={hero.round} className="absolute inset-0 w-full h-full scale-125 blur-2xl opacity-60" innerClassName="w-full h-full object-cover" />}
+                <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/55 to-black/20" />
+              </div>
+              <div className="relative flex items-end gap-5 w-full">
+                <div className="min-w-0 flex-1">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full text-black" style={{ background: hero.color }}>{hero.emoji} {hero.kicker}</span>
+                  <div className="mt-3 text-xl md:text-3xl font-black text-white leading-tight">{hero.title}</div>
+                  {hero.sub && <div className="mt-1.5 text-[13px] text-white/60">{hero.sub}</div>}
+                </div>
+                {hero.cover && <CoverArt url={hero.cover} title={hero.title} isArtist={hero.round} className={`hidden sm:block w-32 h-32 shrink-0 overflow-hidden shadow-2xl ${hero.round ? 'rounded-full' : 'rounded-2xl'}`} innerClassName="w-full h-full object-cover" />}
+              </div>
+            </motion.button>
+          )}
+          {rest.length > 0 && (
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              {rest.map((n, i) => (
+                <motion.button key={n.id} type="button" onClick={n.go} disabled={!n.go} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.03 * i, duration: 0.3 }}
+                  className="mp-row group flex items-center gap-3 text-left rounded-2xl bg-white/[0.03] hover:bg-white/[0.06] disabled:hover:bg-white/[0.03] border border-white/[0.06] p-3">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider" style={{ color: n.color }}>{n.emoji} {n.kicker}</span>
+                    <div className="text-[13.5px] font-bold text-white leading-snug mt-0.5 line-clamp-2">{n.title}</div>
+                    {n.sub && <div className="text-[11px] text-zinc-500 mt-0.5 truncate">{n.sub}</div>}
+                  </div>
+                  {n.cover !== undefined && <CoverArt url={n.cover} title={n.title} isArtist={n.round} className={`w-14 h-14 shrink-0 overflow-hidden ${n.round ? 'rounded-full' : 'rounded-xl'}`} innerClassName="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />}
+                </motion.button>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </section>
   );
 };

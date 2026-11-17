@@ -113,7 +113,7 @@ import {
 } from './SimulationMode';
 import './fontsExtra';
 // --- Musaic v2.4: charts, release stage, calendar, awards, eras, cover viewer, batch generators ---
-import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource } from './MusaicPlus';
+import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource, ScoreRing, AlbumReviewsButton, WeeklyNewsFeed } from './MusaicPlus';
 
 // --- Types & Constants ---
 
@@ -7042,6 +7042,15 @@ export default function App() {
                 />
               )}
               {nav.view === 'news' && (
+                <div>
+                <WeeklyNewsFeed
+                  artists={viewArtists}
+                  albums={viewAlbums}
+                  tracks={viewTracks}
+                  awards={viewAwards}
+                  referenceDate={isSimMode ? simActiveDate : undefined}
+                  navigateTo={navigateTo}
+                />
                 <IndustryNewsView
                   artists={viewArtists}
                   albums={viewAlbums}
@@ -7053,6 +7062,7 @@ export default function App() {
                   onPlayTrack={playTrack}
                   onOpenActivityFeed={() => setIsActivityFeedOpen(true)}
                 />
+                </div>
               )}
             </motion.div>
           </AnimatePresence>
@@ -11359,9 +11369,10 @@ function ArtistView({
 
   return (
     <div
-      className={`relative min-h-full pb-20 ${coverColorsOn ? 'page-accent-scope' : ''}`}
+      className={`relative isolate min-h-full pb-20 ${coverColorsOn ? 'page-accent-scope' : ''}`}
       style={coverColorsOn ? ({ ['--page-accent' as any]: pageAccent } as React.CSSProperties) : undefined}
     >
+      <ReleaseStage kind="artist" id={artist.id} cover={artist.imageUrl} title={artist.name} genre={artist.genre} />
       {heroOn && (
         <ArtistHeroV2
           artistId={String(artist.id)}
@@ -16712,6 +16723,8 @@ function AlbumView({
               </motion.div>
             )}
 
+            <AlbumReviewsButton album={album} tracks={tracks} albums={albums} artists={artists} />
+
             <button 
               onClick={() => onMoreOptionsClick && onMoreOptionsClick(album)} 
               className="text-zinc-400 hover:text-white transition-colors cursor-pointer p-1"
@@ -17528,5 +17541,5 @@ function SearchView({
 
 // --- Musaic v2.3: new components under the old names ---
 const PlaceholderArt = AutoCover;
-const RatingScoreBadge = ScoreBadge;
+const RatingScoreBadge: any = ScoreRing; // Musaic v2.4: prettier rings (old ScoreBadge kept in rating/RatingPanel.tsx)
 const RatingInputCard = RatingPanel;
