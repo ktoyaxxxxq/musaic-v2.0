@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from "motion/react";
@@ -175,6 +174,11 @@ export interface ThemeConfig {
   contrast: number; // Global contrast
   borderIntensity: number; // Border opacity multiplier
   shadowDepth: number; // Shadow intensity
+  // Page appearance (can be switched off in Settings -> Страницы)
+  coverColorPages?: boolean; // page colors follow the cover (Apple Music style)
+  artistHero?: boolean; // big artist header
+  albumHero?: boolean; // big album header
+  smoothTransitions?: boolean; // animated page transitions
 }
 
 const DEFAULT_THEME: ThemeConfig = {
@@ -208,6 +212,10 @@ const DEFAULT_THEME: ThemeConfig = {
   contrast: 1,
   borderIntensity: 1,
   shadowDepth: 1,
+  coverColorPages: true,
+  artistHero: true,
+  albumHero: true,
+  smoothTransitions: true,
 };
 
 // --- Genre Catalog (Curated & Synchronized with Search & Creation) ---
@@ -3444,6 +3452,323 @@ const EditArtistModal: React.FC<{
 
 // --- Action Menu Modal (Triggered by 3-dots) ---
 
+// --- Remembered per-page UI state (sort, filters, view mode) so "Back" returns to the same state ---
+const viewUiMemory = new Map<string, any>();
+function useViewMemo<T>(key: string, initial: T): [T, React.Dispatch<React.SetStateAction<T>>] {
+  const [val, setVal] = useState<T>(() => (viewUiMemory.has(key) ? viewUiMemory.get(key) : initial));
+  useEffect(() => { viewUiMemory.set(key, val); }, [key, val]);
+  return [val, setVal];
+}
+
+// Keeps a cover color readable as an accent (not too dark, not too light)
+const readableAccent = (hex: string): string => {
+  try {
+    const h = (hex || '').replace('#', '');
+    const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h.slice(0, 6);
+    const n = parseInt(full, 16);
+    if (isNaN(n)) return hex;
+    let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    if (lum < 0.38) {
+      const k = Math.min(0.75, (0.5 - lum) / (1 - lum));
+      r = Math.round(r + (255 - r) * k); g = Math.round(g + (255 - g) * k); b = Math.round(b + (255 - b) * k);
+    } else if (lum > 0.86) {
+      const k = 0.82;
+      r = Math.round(r * k); g = Math.round(g * k); b = Math.round(b * k);
+    }
+    return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+  } catch {
+    return hex;
+  }
+};
+
+const PAGE_ENHANCE_CSS = `
+.page-accent-scope .theme-bg-accent.page-accent-bg { background-color: var(--page-accent) !important; transition: background-color .6s ease, transform .2s ease; }
+.page-accent-scope .page-accent-text { color: var(--page-accent) !important; }
+.artist-hero-img { transition: transform .08s linear; }
+html[data-design="classic"] .page-cover-blur { display: none !important; }
+html[data-design="classic"] .artist-hero-compact { box-shadow: inset 0 -1px 0 rgba(255,255,255,0.07); }
+html[data-design="classic"] .album-cover-glow { opacity: 0.25 !important; filter: blur(18px) !important; }
+@media (prefers-reduced-motion: reduce) { .artist-hero-img { transform: none !important; } }
+`;
+
+// --- Big artist header (Apple Music style) ---
+const ArtistHero: React.FC<{
+  artist: Artist;
+  coverUrl: string;
+  palette: [string, string, string, string];
+  useColors: boolean;
+  animate: boolean;
+  onPlay: () => void;
+  onZoom?: () => void;
+}> = ({ artist, coverUrl, palette, useColors, animate, onPlay, onZoom }) => {
+  const heroRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
+
+  useEffect(() => {
+    const el = heroRef.current;
+    if (!el) return;
+    const scroller = el.closest('.overflow-y-auto') as HTMLElement | null;
+    if (!scroller) return;
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const y = scroller.scrollTop;
+        const h = el.offsetHeight || 1;
+        if (animate && imgRef.current) {
+          imgRef.current.style.transform = `translate3d(0, ${Math.min(y * 0.35, 140)}px, 0) scale(${1 + Math.min(y / h, 1) * 0.06})`;
+        }
+        setCompact(y > h - 96);
+      });
+    };
+    onScroll();
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      scroller.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(raf);
+    };
+  }, [animate]);
+
+  const c0 = palette[0];
+  const c1 = palette[1];
+  const hasImage = Boolean(coverUrl) && !imgFailed;
+
+  return (
+    <>
+      {/* Compact sticky bar that appears after the hero scrolls away */}
+      <div className="sticky top-0 z-40 h-0">
+        <div
+          className={`artist-hero-compact absolute inset-x-0 top-0 h-14 px-6 md:px-8 flex items-center gap-3 transition-all duration-200 ${compact ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 -translate-y-2 pointer-events-none'}`}
+          style={{ background: useColors ? `linear-gradient(90deg, ${c0}40 0%, rgba(12,12,14,0.94) 60%)` : 'rgba(12,12,14,0.94)' }}
+        >
+          <button
+            type="button"
+            onClick={onPlay}
+            className="w-9 h-9 rounded-full theme-bg-accent page-accent-bg flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 transition-transform"
+            title="Воспроизвести"
+          >
+            <Play className="w-4 h-4 text-black fill-black ml-0.5" />
+          </button>
+          <span className="text-base font-bold text-white truncate">{artist.name}</span>
+          {artist.verified && <CheckCircle2 className="w-4 h-4 fill-sky-400 text-black shrink-0" />}
+        </div>
+      </div>
+
+      <div ref={heroRef} className="artist-hero relative h-[300px] sm:h-[380px] md:h-[440px] overflow-hidden">
+        <div ref={imgRef} className="artist-hero-img absolute inset-0 will-change-transform">
+          {hasImage ? (
+            <img
+              src={coverUrl}
+              alt={artist.name}
+              className="w-full h-full object-cover"
+              style={{ objectPosition: 'center 25%' }}
+              onError={() => setImgFailed(true)}
+            />
+          ) : (
+            <div className="w-full h-full" style={{ background: `linear-gradient(135deg, ${c0} 0%, ${c1} 100%)` }} />
+          )}
+        </div>
+        <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.05) 32%, rgba(0,0,0,0.35) 68%, var(--bg-color) 100%)' }} />
+        {useColors && (
+          <div className="absolute inset-0 pointer-events-none opacity-70 transition-all duration-700" style={{ background: `linear-gradient(to top, ${c0}55 0%, transparent 55%)` }} />
+        )}
+        {onZoom && hasImage && (
+          <button
+            type="button"
+            onClick={onZoom}
+            className="absolute top-4 right-4 p-2 rounded-full bg-black/40 hover:bg-black/60 text-white/80 hover:text-white cursor-pointer transition-colors"
+            title="Открыть фото"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+        )}
+        <motion.div
+          initial={animate ? { opacity: 0, y: 18 } : false}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="absolute inset-x-0 bottom-0 pb-6"
+        >
+          <div className="max-w-7xl mx-auto px-6 md:px-8">
+            {artist.verified && (
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-white/90 mb-2">
+                <CheckCircle2 className="w-4 h-4 fill-sky-400 text-black" />
+                <span>Подтвержденный исполнитель</span>
+              </div>
+            )}
+            <h1
+              className="font-black text-white leading-[0.95] break-words"
+              style={{ fontSize: 'clamp(40px, 7vw, 96px)', letterSpacing: '-0.035em', textShadow: '0 6px 32px rgba(0,0,0,0.45)' }}
+            >
+              {artist.name}
+            </h1>
+            <p className="mt-3 text-sm md:text-base font-medium text-white/85 tabular-nums">
+              {formatListeners(artist.followers)}{artist.genre ? ` · ${artist.genre}` : ''}
+            </p>
+          </div>
+        </motion.div>
+      </div>
+    </>
+  );
+};
+
+// --- Add an existing track into an album at a chosen position ---
+const AddToAlbumModal: React.FC<{
+  track: Track | null;
+  albums: Album[];
+  tracks: Track[];
+  onClose: () => void;
+  onConfirm: (albumId: string, beforeTrackId: string | null) => void;
+}> = ({ track, albums, tracks, onClose, onConfirm }) => {
+  const [search, setSearch] = useState('');
+  const [albumId, setAlbumId] = useState<string | null>(null);
+  const [beforeId, setBeforeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSearch('');
+    setAlbumId(null);
+    setBeforeId(null);
+  }, [track?.id]);
+
+  if (!track) return null;
+
+  const artistKey = (track.artistName || '').toLowerCase().trim();
+  const isOwn = (a: Album) =>
+    a.artistId === track.artistId ||
+    (a.artistName || '').toLowerCase().trim() === artistKey ||
+    (!!artistKey && (a.coArtist || '').toLowerCase().includes(artistKey));
+  const q = search.trim().toLowerCase();
+  const candidates = albums
+    .filter(a => a.id !== track.albumId)
+    .filter(a => !q || (a.title || '').toLowerCase().includes(q) || (a.artistName || '').toLowerCase().includes(q))
+    .sort((a, b) => {
+      const am = isOwn(a) ? 0 : 1;
+      const bm = isOwn(b) ? 0 : 1;
+      if (am !== bm) return am - bm;
+      return (Number(b.releaseYear) || 0) - (Number(a.releaseYear) || 0);
+    })
+    .slice(0, 80);
+  const chosen = albumId ? albums.find(a => a.id === albumId) || null : null;
+  const albumTracks = chosen ? tracks.filter(t => t.albumId === chosen.id && t.id !== track.id) : [];
+
+  const Slot: React.FC<{ before: string | null; label: string }> = ({ before, label }) => {
+    const active = beforeId === before;
+    return (
+      <button
+        type="button"
+        onClick={() => setBeforeId(before)}
+        className={`w-full my-0.5 px-3 py-1.5 rounded-lg text-[11px] font-bold text-left transition-all cursor-pointer border ${
+          active ? 'theme-border-accent theme-accent bg-white/[0.06]' : 'border-dashed border-white/10 text-zinc-500 hover:text-zinc-200 hover:border-white/25'
+        }`}
+      >
+        {active ? `«${track.title}» будет здесь` : label}
+      </button>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-[140] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+      <motion.div
+        initial={{ opacity: 0, y: 14, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+        className="relative w-full max-w-lg max-h-[85vh] flex flex-col bg-zinc-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden"
+      >
+        <div className="flex items-center gap-3 p-5 border-b border-white/10">
+          <CoverArt url={track.coverUrl} title={track.title} className="w-11 h-11 rounded-xl overflow-hidden bg-zinc-800 shrink-0 border border-white/10" />
+          <div className="min-w-0 flex-1">
+            <h4 className="text-sm font-bold text-white truncate">Добавить в альбом</h4>
+            <p className="text-xs text-zinc-400 truncate">{track.title} · {track.artistName}</p>
+          </div>
+          <span className="text-[10px] font-bold text-zinc-500">Шаг {chosen ? 2 : 1} из 2</span>
+          <button onClick={onClose} className="p-1.5 hover:bg-white/10 rounded-full text-zinc-400 hover:text-white cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+          {!chosen ? (
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Найти альбом…"
+                autoFocus
+                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-zinc-500 outline-none"
+              />
+              {candidates.length === 0 && <p className="text-xs text-zinc-500 text-center py-8">Альбомы не найдены</p>}
+              <div className="space-y-1">
+                {candidates.map(a => {
+                  const count = tracks.filter(t => t.albumId === a.id).length;
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => { setAlbumId(a.id); setBeforeId(null); }}
+                      className="w-full p-2.5 rounded-2xl flex items-center gap-3 text-left hover:bg-white/[0.06] border border-transparent hover:border-white/10 transition-all cursor-pointer"
+                    >
+                      <CoverArt url={a.coverUrl} title={a.title} className="w-12 h-12 rounded-xl overflow-hidden bg-zinc-800 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-white truncate">{a.title}</p>
+                        <p className="text-[11px] text-zinc-400 truncate">{a.artistName} · {a.releaseYear} · {count} {pluralizeTracks(count)}</p>
+                      </div>
+                      {isOwn(a) && <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full bg-white/10 text-zinc-300">Свой</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <button type="button" onClick={() => setAlbumId(null)} className="text-xs font-bold text-zinc-400 hover:text-white cursor-pointer flex items-center gap-1">
+                <ChevronLeft className="w-3.5 h-3.5" /> Другой альбом
+              </button>
+              <div className="flex items-center gap-3 p-3 rounded-2xl bg-white/[0.04] border border-white/10">
+                <CoverArt url={chosen.coverUrl} title={chosen.title} className="w-14 h-14 rounded-xl overflow-hidden bg-zinc-800 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-white truncate">{chosen.title}</p>
+                  <p className="text-[11px] text-zinc-400">Выберите место в треклисте. Обложка трека сменится на альбомную.</p>
+                </div>
+              </div>
+              <div>
+                {albumTracks.map((t, i) => (
+                  <div key={t.id}>
+                    <Slot before={t.id} label={`Перед треком ${i + 1}`} />
+                    <div className="flex items-center gap-3 px-3 py-2 rounded-lg">
+                      <span className="w-5 text-right text-xs text-zinc-500 tabular-nums">{i + 1}</span>
+                      <span className="text-sm text-zinc-200 truncate flex-1">{t.title}</span>
+                      <span className="text-xs text-zinc-500 tabular-nums">{t.duration}</span>
+                    </div>
+                  </div>
+                ))}
+                <Slot before={null} label="В конец альбома" />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 p-4 border-t border-white/10">
+          <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm font-bold cursor-pointer transition-colors">
+            Отмена
+          </button>
+          <button
+            type="button"
+            disabled={!chosen}
+            onClick={() => chosen && onConfirm(chosen.id, beforeId)}
+            className="flex-1 py-2.5 rounded-xl theme-bg-accent text-black text-sm font-extrabold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+          >
+            Добавить в альбом
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 const ActionMenuModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
@@ -3460,8 +3785,9 @@ const ActionMenuModal: React.FC<{
   onToggleLike?: () => void;
   isLiked?: boolean;
   onDelete?: () => void;
+  onAddToAlbum?: () => void;
   type: 'track' | 'album' | 'artist';
-}> = ({ isOpen, onClose, title, subtitle, featuredArtist, artists = [], navigateTo, coverUrl, onEdit, onCopyLink, onOpenStory, onGoToArtist, onToggleLike, isLiked, onDelete, type }) => {
+}> = ({ isOpen, onClose, title, subtitle, featuredArtist, artists = [], navigateTo, coverUrl, onEdit, onCopyLink, onOpenStory, onGoToArtist, onToggleLike, isLiked, onDelete, onAddToAlbum, type }) => {
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const labelType = type === 'album' ? 'альбом' : type === 'artist' ? 'артиста' : 'трек';
   const featNames = featuredArtist ? featuredArtist.split(/[,&]/).map(s => s.trim()).filter(Boolean) : [];
@@ -3498,6 +3824,17 @@ const ActionMenuModal: React.FC<{
             <Edit3 className="w-4 h-4 text-zinc-400 group-hover:theme-accent transition-colors" />
             <span>Редактировать {labelType}</span>
           </button>
+
+          {onAddToAlbum && (
+            <button
+              type="button"
+              onClick={() => { onClose(); onAddToAlbum(); }}
+              className="w-full px-3.5 py-2.5 rounded-xl text-left text-xs md:text-sm font-bold text-white hover:bg-white/10 transition-all flex items-center gap-3 cursor-pointer group"
+            >
+              <Disc className="w-4 h-4 text-zinc-400 group-hover:theme-accent transition-colors" />
+              <span>Добавить в альбом…</span>
+            </button>
+          )}
 
           {onOpenStory && (
             <button
@@ -4512,6 +4849,32 @@ const SettingsModal: React.FC<{
               )}
             </div>
 
+            {/* Pages appearance */}
+            <div className="pt-2">
+              <label className="text-xs font-bold text-zinc-300 block mb-2">Страницы</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {([
+                  { key: 'coverColorPages', title: 'Цвет из обложки', desc: 'Фон и акцент страниц подстраиваются под обложку' },
+                  { key: 'artistHero', title: 'Большая шапка артиста', desc: 'Фото на всю ширину, параллакс и компактная панель' },
+                  { key: 'albumHero', title: 'Большая шапка альбома', desc: 'Крупная обложка и размытый фон из неё' },
+                  { key: 'smoothTransitions', title: 'Плавные переходы', desc: 'Анимация при смене страниц и параллакс' },
+                ] as Array<{ key: keyof ThemeConfig; title: string; desc: string }>).map(opt => (
+                  <label key={opt.key} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 cursor-pointer transition-colors">
+                    <div className="pr-2">
+                      <p className="text-xs font-bold text-white">{opt.title}</p>
+                      <p className="text-[10px] text-zinc-400">{opt.desc}</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={theme[opt.key] !== false}
+                      onChange={(e) => update(opt.key, e.target.checked)}
+                      className="w-4 h-4 rounded accent-[var(--accent-color)] cursor-pointer"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
             {/* Card Surface Style */}
             <div className="pt-2">
               <label className="text-xs font-bold text-zinc-300 block mb-2">Стиль поверхностей</label>
@@ -5415,6 +5778,7 @@ export default function App() {
     type: 'track' | 'album' | 'artist';
     item: Track | Album | Artist;
   } | null>(null);
+  const [addToAlbumTrack, setAddToAlbumTrack] = useState<Track | null>(null);
   const [quickRatingTarget, setQuickRatingTarget] = useState<{
     type: 'track' | 'album';
     item: Track | Album;
@@ -5477,6 +5841,45 @@ export default function App() {
     } else if (type === 'artist') {
       activeSetArtists(prev => prev.filter(a => a.id !== id));
     }
+  };
+
+  // Move an existing track into an album at a chosen position (keeps the same track: plays, likes, rating, charts)
+  const handleAddTrackToAlbum = (trackId: string, albumId: string, beforeTrackId: string | null) => {
+    const targetAlbum = viewAlbums.find(a => a.id === albumId);
+    const moving = viewTracks.find(t => t.id === trackId);
+    if (!targetAlbum || !moving) return;
+    const cover = getAlbumCoverUrl(targetAlbum);
+    const prevAlbumId = moving.albumId;
+    const prevAlbumHasOthers = !!prevAlbumId && viewTracks.some(t => t.id !== trackId && t.albumId === prevAlbumId);
+    activeSetTracks(prev => {
+      const original = prev.find(t => t.id === trackId);
+      if (!original) return prev;
+      const without = prev.filter(t => t.id !== trackId);
+      const updated: Track = {
+        ...original,
+        albumId: targetAlbum.id,
+        albumTitle: targetAlbum.title,
+        coverUrl: cover || original.coverUrl,
+        ...({ previousAlbumId: original.albumId, previousCoverUrl: original.coverUrl } as any)
+      };
+      let insertAt = beforeTrackId ? without.findIndex(t => t.id === beforeTrackId) : -1;
+      if (insertAt < 0) {
+        let lastIdx = -1;
+        without.forEach((t, i) => { if (t.albumId === targetAlbum.id) lastIdx = i; });
+        insertAt = lastIdx >= 0 ? lastIdx + 1 : without.length;
+      }
+      const next = [...without];
+      next.splice(insertAt, 0, updated);
+      return next;
+    });
+    // The track no longer shows as a separate single release
+    if (prevAlbumId && prevAlbumId !== 'single' && prevAlbumId !== targetAlbum.id && !prevAlbumHasOthers) {
+      activeSetAlbums(prev => prev.filter(a => a.id !== prevAlbumId));
+    }
+    if (currentTrack?.id === trackId) {
+      setCurrentTrack(prev => prev ? { ...prev, albumId: targetAlbum.id, albumTitle: targetAlbum.title, coverUrl: cover || prev.coverUrl } : prev);
+    }
+    showToast(`«${moving.title}» теперь в альбоме «${targetAlbum.title}»`);
   };
 
   const handleSaveAward = (award: AwardItem) => {
@@ -6008,21 +6411,36 @@ export default function App() {
   }, []);
 
   const restoreScrollPosition = (targetY: number) => {
-    // Multi-phase restoration ensures position is restored even if DOM re-renders asynchronously
-    // Use requestAnimationFrame for smoother timing and higher priority
-    [0, 20, 60, 120, 220, 350, 550, 850].forEach(delay => {
-      setTimeout(() => {
-        if (contentScrollRef.current) {
-          contentScrollRef.current.scrollTo({ top: targetY || 0, behavior: 'instant' });
-        }
-      }, delay);
-    });
-    
-    requestAnimationFrame(() => {
-      if (contentScrollRef.current) {
-        contentScrollRef.current.scrollTo({ top: targetY || 0, behavior: 'instant' });
-      }
-    });
+    // Waits until the new page is rendered and tall enough, then keeps the exact position
+    // for a few frames (lists load progressively). Stops as soon as the user scrolls himself.
+    const target = Math.max(0, targetY || 0);
+    const startDelay = theme.smoothTransitions === false ? 0 : 170; // let the exit animation finish
+    let userMoved = false;
+    const stopOnUser = () => { userMoved = true; };
+    setTimeout(() => {
+      const el0 = contentScrollRef.current;
+      if (!el0) return;
+      el0.addEventListener('wheel', stopOnUser, { passive: true });
+      el0.addEventListener('touchstart', stopOnUser, { passive: true });
+      const started = performance.now();
+      let stableFrames = 0;
+      const cleanup = () => {
+        el0.removeEventListener('wheel', stopOnUser);
+        el0.removeEventListener('touchstart', stopOnUser);
+      };
+      const tick = () => {
+        const el = contentScrollRef.current;
+        if (!el || userMoved) { cleanup(); return; }
+        const maxY = el.scrollHeight - el.clientHeight;
+        const y = Math.min(target, Math.max(0, maxY));
+        el.scrollTo({ top: y, behavior: 'instant' as ScrollBehavior });
+        if (maxY >= target - 2 && Math.abs(el.scrollTop - target) < 3) stableFrames++;
+        else stableFrames = 0;
+        if (stableFrames < 10 && performance.now() - started < 2500) requestAnimationFrame(tick);
+        else cleanup();
+      };
+      requestAnimationFrame(tick);
+    }, startDelay);
   };
 
   const goBack = () => {
@@ -6056,6 +6474,20 @@ export default function App() {
       restoreScrollPosition(nextItem.scrollY || 0);
     }
   };
+
+  // Mouse side buttons (back / forward) use the same in-app history
+  const goBackRef = useRef(goBack);
+  goBackRef.current = goBack;
+  const goForwardRef = useRef(goForward);
+  goForwardRef.current = goForward;
+  useEffect(() => {
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button === 3) { e.preventDefault(); goBackRef.current(); }
+      else if (e.button === 4) { e.preventDefault(); goForwardRef.current(); }
+    };
+    window.addEventListener('mouseup', onMouseUp);
+    return () => window.removeEventListener('mouseup', onMouseUp);
+  }, []);
 
   const parseDurationSeconds = (dur?: string): number => {
     if (!dur) return 195;
@@ -6682,9 +7114,9 @@ export default function App() {
           <AnimatePresence mode="wait">
             <motion.div
               key={nav.view + (nav.params?.id || '')}
-              initial={{ opacity: 0, y: 10, scale: 0.995 }}
+              initial={theme.smoothTransitions === false ? false : { opacity: 0, y: 10, scale: 0.995 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -6, transition: { duration: 0.14, ease: [0.4, 0, 1, 1] } }}
+              exit={theme.smoothTransitions === false ? { opacity: 1, transition: { duration: 0 } } : { opacity: 0, y: -6, transition: { duration: 0.14, ease: [0.4, 0, 1, 1] } }}
               transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
               className="min-h-full"
             >
@@ -6755,6 +7187,7 @@ export default function App() {
               )}
               {nav.view === 'artist' && (
                 <ArtistView 
+                  uiPrefs={theme}
                   id={nav.params?.id || ''} 
                   artists={viewArtists} 
                   albums={viewAlbums} 
@@ -6786,6 +7219,7 @@ export default function App() {
               )}
               {nav.view === 'album' && (
                 <AlbumView 
+                  uiPrefs={theme}
                   id={nav.params?.id || ''} 
                   albums={viewAlbums} 
                   tracks={viewTracks} 
@@ -7085,8 +7519,21 @@ export default function App() {
             isLiked={actionMenuTarget.type === 'track' ? (actionMenuTarget.item as Track).isLiked : (actionMenuTarget.type === 'album' ? (actionMenuTarget.item as Album).isLiked : undefined)} 
             onOpenStory={() => setStoryTarget(actionMenuTarget)}
             onDelete={() => handleDeleteItem(actionMenuTarget.type, actionMenuTarget.item.id)} 
+            onAddToAlbum={actionMenuTarget.type === 'track' ? () => setAddToAlbumTrack(actionMenuTarget.item as Track) : undefined}
           />
         )}
+
+        <style>{PAGE_ENHANCE_CSS}</style>
+        <AddToAlbumModal
+          track={addToAlbumTrack}
+          albums={viewAlbums}
+          tracks={viewTracks}
+          onClose={() => setAddToAlbumTrack(null)}
+          onConfirm={(albumId, beforeId) => {
+            if (addToAlbumTrack) handleAddTrackToAlbum(addToAlbumTrack.id, albumId, beforeId);
+            setAddToAlbumTrack(null);
+          }}
+        />
 
         <StoryCardModal
           isOpen={Boolean(storyTarget)}
@@ -11750,8 +12197,10 @@ function ArtistView({
   currentTrackId,
   isPlaying,
   artistName,
-  onMoreOptionsClick
+  onMoreOptionsClick,
+  uiPrefs
 }: {
+  uiPrefs?: Partial<ThemeConfig>;
   id?: string;
   artists: Artist[];
   albums: Album[];
@@ -11883,10 +12332,10 @@ function ArtistView({
     ];
   }, [distinctYears]);
 
-  const [selectedEraId, setSelectedEraId] = useState<string>('all');
-  const [trackViewMode, setTrackViewMode] = useState<'list' | 'grid'>('list');
-  const [trackSortBy, setTrackSortBy] = useState<'popular' | 'newest' | 'oldest'>('popular');
-  const [albumSortBy, setAlbumSortBy] = useState<'newest' | 'oldest' | 'popular'>('newest');
+  const [selectedEraId, setSelectedEraId] = useViewMemo<string>(`artist:${artist.id}:era`, 'all');
+  const [trackViewMode, setTrackViewMode] = useViewMemo<'list' | 'grid'>(`artist:${artist.id}:view`, 'list');
+  const [trackSortBy, setTrackSortBy] = useViewMemo<'popular' | 'newest' | 'oldest'>(`artist:${artist.id}:trackSort`, 'popular');
+  const [albumSortBy, setAlbumSortBy] = useViewMemo<'newest' | 'oldest' | 'popular'>(`artist:${artist.id}:albumSort`, 'newest');
   const [isLatestDropExpanded, setIsLatestDropExpanded] = useState<boolean>(false);
 
   const parseReleaseTs = (dateStr?: string, fallbackYear?: number | string): { ts: number; year: number } => {
@@ -12137,8 +12586,28 @@ function ArtistView({
     ? filteredArtistTracks
     : (showAllTracks ? filteredArtistTracks.slice(0, visibleTracksCount) : filteredArtistTracks.slice(0, 5));
 
+  const heroOn = uiPrefs?.artistHero !== false;
+  const coverColorsOn = uiPrefs?.coverColorPages !== false;
+  const pageAccent = readableAccent(headerPalette[0]);
+
   return (
-    <div className="relative min-h-full pb-20">
+    <div
+      className={`relative min-h-full pb-20 ${coverColorsOn ? 'page-accent-scope' : ''}`}
+      style={coverColorsOn ? ({ ['--page-accent' as any]: pageAccent } as React.CSSProperties) : undefined}
+    >
+      {heroOn && (
+        <ArtistHero
+          artist={artist}
+          coverUrl={resolvedArtistCover}
+          palette={headerPalette}
+          useColors={coverColorsOn}
+          animate={uiPrefs?.smoothTransitions !== false}
+          onPlay={() => filteredArtistTracks[0] && (onPlayTrack ? onPlayTrack(filteredArtistTracks[0]) : navigateTo('track', { id: filteredArtistTracks[0].id }))}
+          onZoom={() => openLightbox && openLightbox({ url: artist.imageUrl, title: artist.name, subtitle: formatListeners(artist.followers), type: 'Исполнитель' })}
+        />
+      )}
+      {!heroOn && (
+        <>
       {/* Seamless Adaptive Multi-Tone Profile Header Backdrop (zero horizontal cuts) */}
       <div
         className="absolute inset-x-0 -top-20 h-[480px] pointer-events-none overflow-hidden transition-all duration-700"
@@ -12206,6 +12675,8 @@ function ArtistView({
           </div>
         </div>
       </div>
+        </>
+      )}
 
       {/* Main Content Area */}
       <div className="max-w-7xl mx-auto px-6 md:px-8 relative z-10">
@@ -12213,7 +12684,7 @@ function ArtistView({
         <div className="flex items-center gap-6 py-6">
           <button 
             onClick={() => filteredArtistTracks[0] && (onPlayTrack ? onPlayTrack(filteredArtistTracks[0]) : navigateTo('track', { id: filteredArtistTracks[0].id }))}
-            className="w-14 h-14 rounded-full theme-bg-accent hover:opacity-90 hover:scale-105 active:scale-95 transition-all shadow-xl flex items-center justify-center cursor-pointer group"
+            className="w-14 h-14 rounded-full theme-bg-accent page-accent-bg hover:opacity-90 hover:scale-105 active:scale-95 transition-all shadow-xl flex items-center justify-center cursor-pointer group"
             title="Воспроизвести"
           >
             <Play className="text-black fill-black ml-1 w-6 h-6" />
@@ -17271,8 +17742,10 @@ function AlbumView({
   isPlaying, 
   onMoreOptionsClick, 
   onRateClick,
-  onSaveAlbumValue
+  onSaveAlbumValue,
+  uiPrefs
 }: {
+  uiPrefs?: Partial<ThemeConfig>;
   id: string;
   albums: Album[];
   tracks: Track[];
@@ -17288,7 +17761,7 @@ function AlbumView({
   onRateClick?: (item: any) => void;
   onSaveAlbumValue?: (albumId: string, rating: AlbumValueRating) => void;
 }) {
-  const [sortMode, setSortMode] = useState<'relevance' | 'added' | 'alpha'>('added');
+  const [sortMode, setSortMode] = useViewMemo<'relevance' | 'added' | 'alpha'>(`album:${id}:sort`, 'added');
   const [isValueModalOpen, setIsValueModalOpen] = useState(false);
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
 
@@ -17319,10 +17792,47 @@ function AlbumView({
   // Total plays of album: either stored or sum of tracks
   const totalAlbumPlays = album.totalPlays || rawAlbumTracks.reduce((sum: number, t: any) => sum + (t.plays || 0), 0);
 
+  // Cover-driven colors and big header (can be switched off in Settings)
+  const coverColorsOn = uiPrefs?.coverColorPages !== false;
+  const albumHeroOn = uiPrefs?.albumHero !== false;
+  const albumCoverResolved = resolveMedia(album.coverUrl, { id: album.id, title: album.title, artistName: album.artistName });
+  const [albumPalette, setAlbumPalette] = useState<[string, string, string, string]>(() =>
+    generateSeedPalette(`${album.title}_${album.artistName}`, '#6366f1')
+  );
+  useEffect(() => {
+    let cancelled = false;
+    const fallback = generateSeedPalette(`${album.title}_${album.artistName}`, '#6366f1');
+    if (albumCoverResolved) {
+      extractPaletteFromImageUrl(albumCoverResolved, fallback).then((pal) => { if (!cancelled) setAlbumPalette(pal); });
+    } else {
+      setAlbumPalette(fallback);
+    }
+    return () => { cancelled = true; };
+  }, [album.id, albumCoverResolved]);
+  const pageAccent = readableAccent(albumPalette[0]);
+  const releaseKind = rawAlbumTracks.length <= 1 ? 'Сингл' : rawAlbumTracks.length <= 6 ? 'EP' : 'Альбом';
+
   return (
-    <div className="min-h-full pb-20">
+    <div
+      className={`min-h-full pb-20 ${coverColorsOn ? 'page-accent-scope' : ''}`}
+      style={coverColorsOn ? ({ ['--page-accent' as any]: pageAccent } as React.CSSProperties) : undefined}
+    >
       {/* Top Banner (Spotify style with rich gradient & larger cover) */}
-      <div className="bg-gradient-to-b from-indigo-950/35 via-zinc-900/65 to-[var(--bg-color)] backdrop-blur-xl px-6 md:px-8 pt-8 pb-8 relative overflow-hidden">
+      <div className={`${coverColorsOn ? '' : 'bg-gradient-to-b from-indigo-950/35 via-zinc-900/65 to-[var(--bg-color)] backdrop-blur-xl'} px-6 md:px-8 ${albumHeroOn ? 'pt-10 pb-10 md:pt-14 md:pb-12' : 'pt-8 pb-8'} relative overflow-hidden`}>
+        {coverColorsOn && (
+          <div className="absolute inset-0 pointer-events-none">
+            {albumHeroOn && albumCoverResolved && (
+              <div
+                className="page-cover-blur absolute -inset-16 bg-cover bg-center opacity-[0.38] blur-[80px] scale-110 transition-opacity duration-700"
+                style={{ backgroundImage: `url(${albumCoverResolved})` }}
+              />
+            )}
+            <div
+              className="absolute inset-0 transition-all duration-700"
+              style={{ background: `linear-gradient(to bottom, ${albumPalette[0]}5c 0%, ${albumPalette[1]}22 55%, var(--bg-color) 100%)` }}
+            />
+          </div>
+        )}
         <div className="flex flex-col sm:flex-row items-center sm:items-end gap-6 md:gap-8 max-w-7xl mx-auto relative z-10">
           {/* Larger Square Album Cover with Clickable Lightbox */}
           <motion.div
@@ -17331,10 +17841,16 @@ function AlbumView({
             transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
             className="relative flex-shrink-0"
           >
+            {albumHeroOn && coverColorsOn && (
+              <div
+                className="album-cover-glow absolute -inset-3 rounded-[28px] blur-2xl opacity-60 pointer-events-none transition-all duration-700"
+                style={{ background: albumPalette[0] }}
+              />
+            )}
             <CoverArt 
               url={album.coverUrl} 
               title={album.title}
-              className="w-48 h-48 sm:w-60 sm:h-60 md:w-68 md:h-68 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.85)] bg-zinc-800 overflow-hidden border border-white/15 relative cursor-pointer"
+              className={`${albumHeroOn ? 'w-56 h-56 sm:w-64 sm:h-64 md:w-[300px] md:h-[300px]' : 'w-48 h-48 sm:w-60 sm:h-60 md:w-68 md:h-68'} rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.85)] bg-zinc-800 overflow-hidden border border-white/15 relative cursor-pointer`}
               innerClassName="group-hover:scale-105"
               showZoomIcon={true}
               onZoom={() => openLightbox && openLightbox({ url: album.coverUrl, title: album.title, subtitle: album.artistName, type: 'Альбом' })}
@@ -17344,9 +17860,12 @@ function AlbumView({
           {/* Album Info */}
           <div className="flex flex-col items-center sm:items-start text-center sm:text-left min-w-0 flex-1">
             <span className="text-xs font-bold text-white/80 uppercase tracking-widest mb-1">
-              Альбом
+              {albumHeroOn ? releaseKind : 'Альбом'}
             </span>
-            <h1 className="text-3xl sm:text-5xl md:text-6xl font-extrabold text-white tracking-tight mb-3 leading-tight break-words">
+            <h1
+              className={`${albumHeroOn ? '' : 'text-3xl sm:text-5xl md:text-6xl'} font-extrabold text-white tracking-tight mb-3 leading-tight break-words`}
+              style={albumHeroOn ? { fontSize: 'clamp(34px, 5.6vw, 80px)', letterSpacing: '-0.035em', lineHeight: 1.02 } : undefined}
+            >
               {album.title}
             </h1>
 
@@ -17417,7 +17936,7 @@ function AlbumView({
           <div className="flex items-center gap-6">
             <button 
               onClick={() => sortedAlbumTracks[0] && (onPlayTrack ? onPlayTrack(sortedAlbumTracks[0]) : navigateTo('track', { id: sortedAlbumTracks[0].id }))}
-              className="w-14 h-14 rounded-full theme-bg-accent hover:opacity-90 hover:scale-105 active:scale-95 transition-all shadow-xl flex items-center justify-center cursor-pointer group"
+              className="w-14 h-14 rounded-full theme-bg-accent page-accent-bg hover:opacity-90 hover:scale-105 active:scale-95 transition-all shadow-xl flex items-center justify-center cursor-pointer group"
               title="Воспроизвести альбом"
             >
               <Play className="text-black fill-black ml-1 w-6 h-6" />
