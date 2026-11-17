@@ -82,7 +82,8 @@ import { AwardsView } from './AwardsView';
 // --- Musaic v2.2 modules ---
 import { AutoCover } from './covers/AutoCover';
 import { RatingPanel, ScoreBadge } from './rating/RatingPanel';
-import { ArtistHeroV2 } from './profile/ArtistHero';
+import { ArtistHeroV2, ArtistEras, computeArtistEras, eraHas, CoArtistLinks, setArtistAwardsSource, splitNames } from './profile/ArtistHero';
+import { ReleaseCalendarButton, AlbumFromTracksButton } from './tools/StudioTools';
 import { FONT_LIBRARY } from './fontsExtra';
 import { setTitleGenCatalog } from './titleGen/TitleGenAuto';
 import { CoverEditorModal } from './CoverEditorModal';
@@ -1286,171 +1287,6 @@ export const FeaturedArtistsLinks: React.FC<{
 
 // Minimalist Procedural Art Generator
 // Minimalist Procedural Art Generator - Optimized for all sizes using Container Queries
-const PlaceholderArt_OLD: React.FC<{
-  title?: string;
-  albumTitle?: string;
-  isArtist?: boolean;
-  innerClassName?: string;
-}> = ({ title = '', albumTitle = '', isArtist = false, innerClassName = '' }) => {
-  // Hash logic improved to favor album titles for consistency across tracks in an album
-  const hashSource = albumTitle ? (albumTitle.toLowerCase().trim()) : (title || '').toLowerCase().trim();
-  let hash = 0;
-  for (let i = 0; i < hashSource.length; i++) {
-    hash = hashSource.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  
-  const mainText = albumTitle || title || (isArtist ? 'Артист' : 'Музыка');
-  const trimmed = mainText.trim();
-  const words = trimmed.split(/\s+/);
-  
-  // Enhanced wrapping: handles both multi-word titles and long single words
-  let lines: string[] = [];
-  if (words.length > 1 && trimmed.length > 10) {
-    const mid = Math.ceil(words.length / 2);
-    lines.push(words.slice(0, mid).join(' '));
-    lines.push(words.slice(mid).join(' '));
-  } else if (trimmed.length > 9) {
-    // Split long single words roughly in half
-    const mid = Math.ceil(trimmed.length / 2);
-    lines.push(trimmed.slice(0, mid));
-    lines.push(trimmed.slice(mid));
-  } else {
-    lines.push(trimmed);
-  }
-
-  // Refined palette: Added more neutral, deep, and sophisticated gradients per user request
-  const backgrounds = [
-    'bg-zinc-950',
-    'bg-gradient-to-br from-zinc-950 to-neutral-950',
-    'bg-gradient-to-tr from-stone-950 to-zinc-950',
-    'bg-gradient-to-b from-neutral-950 to-black',
-    'bg-gradient-to-bl from-zinc-950 to-slate-950',
-    'bg-gradient-to-br from-zinc-900 to-zinc-950',
-    'bg-gradient-to-tr from-zinc-900 to-neutral-950',
-    'bg-gradient-to-bl from-slate-900 to-zinc-950',
-    'bg-gradient-to-b from-zinc-900 to-black',
-    'bg-gradient-to-r from-neutral-900 to-stone-950',
-    'bg-gradient-to-br from-gray-900 to-zinc-950',
-    'bg-gradient-to-tr from-zinc-800/10 to-zinc-950',
-    'bg-gradient-to-bl from-stone-800/10 to-neutral-950',
-    'bg-gradient-to-br from-slate-800/10 to-zinc-950',
-    'bg-gradient-to-br from-slate-950 via-zinc-950 to-stone-950',
-    'bg-gradient-to-tr from-stone-950 via-neutral-950 to-zinc-950',
-    'bg-gradient-to-br from-zinc-900/40 to-black',
-    'bg-gradient-to-tr from-slate-900/30 to-zinc-950',
-    'bg-gradient-to-b from-stone-900/20 to-black',
-    // Newly added neutral variations
-    'bg-gradient-to-tr from-zinc-900 via-stone-900 to-black',
-    'bg-gradient-to-br from-neutral-900 via-zinc-950 to-stone-950',
-    'bg-gradient-to-bl from-slate-950 via-zinc-900 to-black',
-    'bg-gradient-to-r from-stone-950 via-neutral-900 to-zinc-950',
-    'bg-gradient-to-t from-black via-zinc-950 to-neutral-900',
-    'bg-gradient-to-br from-gray-950 to-black',
-    'bg-gradient-to-tr from-zinc-950 to-slate-900/30',
-    'bg-gradient-to-bl from-stone-950 to-zinc-900/30',
-    'bg-gradient-to-r from-black to-zinc-900/20',
-    'bg-gradient-to-b from-zinc-950 via-black to-zinc-900',
-    'bg-gradient-to-tr from-neutral-950 to-stone-900',
-  ];
-
-  const variant = Math.abs(hash) % backgrounds.length;
-
-  const textSizeClass = lines.length > 1 || trimmed.length > 10 ? 'text-[8.2cqw]' : 'text-[9.5cqw]';
-
-  // Typographic layout variant, stable per album (tracks of one album share the album's look)
-  const STYLE_COUNT = 8;
-  const styleIdx = isArtist ? (Math.abs(hash >> 5) % 2 === 0 ? 0 : 2) : Math.abs(hash >> 5) % STYLE_COUNT;
-  const textBase = 'pointer-events-none select-none break-words';
-  const longText = trimmed.length > 12;
-
-  const renderText = () => {
-    switch (styleIdx) {
-      case 1: // editorial bottom-left
-        return (
-          <div className="absolute inset-0 flex flex-col justify-end p-[9cqw]">
-            <span className="block w-[14cqw] h-px bg-white/25 mb-[3cqw]" />
-            <span className={`${textBase} text-white/50 leading-[1.02] text-left`} style={{ fontFamily: "'Inter Tight', 'Inter', sans-serif", fontWeight: 700, fontSize: longText ? '9cqw' : '11cqw', letterSpacing: '-0.03em' }}>
-              {trimmed}
-            </span>
-          </div>
-        );
-      case 2: // serif centre
-        return (
-          <div className="absolute inset-0 flex items-center justify-center p-[10cqw]">
-            <span className={`${textBase} text-white/45 text-center leading-[1.0]`} style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: 'italic', fontWeight: 600, fontSize: longText ? '11cqw' : '14cqw' }}>
-              {trimmed}
-            </span>
-          </div>
-        );
-      case 3: // wide caps top-left
-        return (
-          <div className="absolute inset-0 flex flex-col justify-start p-[9cqw]">
-            <span className={`${textBase} text-white/45 uppercase text-left leading-[1.1]`} style={{ fontFamily: "'Unbounded', sans-serif", fontWeight: 700, fontSize: longText ? '5.6cqw' : '7cqw', letterSpacing: '0.06em' }}>
-              {trimmed}
-            </span>
-            <span className="mt-auto block w-full h-px bg-white/10" />
-          </div>
-        );
-      case 4: // condensed poster, bottom
-        return (
-          <div className="absolute inset-0 flex items-end justify-center p-[7cqw]">
-            <span className={`${textBase} text-white/40 uppercase text-center leading-[0.9]`} style={{ fontFamily: "'Oswald', sans-serif", fontWeight: 600, fontSize: longText ? '13cqw' : '18cqw', letterSpacing: '-0.01em' }}>
-              {trimmed}
-            </span>
-          </div>
-        );
-      case 5: // mono label
-        return (
-          <div className="absolute inset-0 flex flex-col justify-between p-[8cqw]">
-            <span className="block w-[6cqw] h-[6cqw] rounded-full border border-white/20" />
-            <span className={`${textBase} text-white/45 lowercase text-left leading-[1.25]`} style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 500, fontSize: longText ? '5.4cqw' : '6.6cqw' }}>
-              {trimmed}
-            </span>
-          </div>
-        );
-      case 6: // outline display
-        return (
-          <div className="absolute inset-0 flex items-center justify-center p-[9cqw]">
-            <span
-              className={`${textBase} uppercase text-center leading-[0.95] text-transparent`}
-              style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: longText ? '10cqw' : '13cqw', WebkitTextStroke: '0.35cqw rgba(255,255,255,0.35)' }}
-            >
-              {trimmed}
-            </span>
-          </div>
-        );
-      case 7: // spaced light in a frame
-        return (
-          <div className="absolute inset-[7cqw] border border-white/12 flex items-center justify-center p-[6cqw]">
-            <span className={`${textBase} text-white/45 uppercase text-center leading-[1.5]`} style={{ fontFamily: "'Manrope', sans-serif", fontWeight: 500, fontSize: longText ? '4.6cqw' : '5.6cqw', letterSpacing: '0.32em' }}>
-              {trimmed}
-            </span>
-          </div>
-        );
-      default: // classic centred (original)
-        return (
-          <div className="absolute inset-0 flex items-center justify-center p-[11cqw]">
-            <div className="flex flex-col items-center justify-center w-full gap-[1.5cqw]">
-              {lines.map((line, idx) => (
-                <span
-                  key={idx}
-                  className={`${textSizeClass} font-extrabold text-white/40 pointer-events-none select-none tracking-tight leading-[1.02] text-center break-words uppercase`}
-                >
-                  {line}
-                </span>
-              ))}
-            </div>
-          </div>
-        );
-    }
-  };
-
-  return (
-    <div className={`w-full h-full ${backgrounds[variant]} flex flex-col items-center justify-center relative overflow-hidden select-none [container-type:size] ${innerClassName}`}>
-      {renderText()}
-    </div>
-  );
-};
 
 
 // --- Beautiful Cover Art Component with Zoom Support ---
@@ -1603,105 +1439,6 @@ export const getScoreTier = (score: number): ScoreTierStyle => {
 
 // --- Rating Score Badge (Slightly smaller circular design per Request 2) ---
 
-const RatingScoreBadge_OLD: React.FC<{
-  rating?: RatingData;
-  size?: 'sm' | 'md' | 'lg';
-  showDetailsOnHover?: boolean;
-}> = ({ rating, size = 'md', showDetailsOnHover = true }) => {
-  if (!rating || !rating.totalScore) return null;
-  const [showPopover, setShowPopover] = useState(false);
-  const score = rating.totalScore;
-  const isMax = score === 90;
-  const tier = getScoreTier(score);
-
-  // Dimensions optimized for impact - 10% smaller than classic was the old req, but now they want "bigger" for main score
-  const badgeSizeClasses = 
-    size === 'sm' ? 'w-6 h-6 text-[10px]' :
-    size === 'lg' ? 'w-14 h-14 text-lg md:text-xl font-black' :
-    'w-10 h-10 text-sm font-black';
-
-  return (
-    <div 
-      className="relative inline-block select-none group shrink-0"
-      onMouseEnter={() => showDetailsOnHover && setShowPopover(true)}
-      onMouseLeave={() => showDetailsOnHover && setShowPopover(false)}
-      onClick={(e) => {
-        e.stopPropagation();
-        if (showDetailsOnHover) setShowPopover(!showPopover);
-      }}
-    >
-      <motion.div 
-        whileHover={{ scale: 1.12 }}
-        whileTap={{ scale: 0.92 }}
-        className={`rounded-full flex items-center justify-center cursor-pointer border-2 backdrop-blur-md font-black tabular-nums antialiased transition-all duration-300 ${tier.badgeBorder} ${tier.badgeText} ${tier.badgeBg} ${tier.glow} ${badgeSizeClasses} relative z-10 shadow-lg`}
-      >
-        <span className="tracking-tight leading-none drop-shadow-sm">{score}</span>
-        {isMax && (
-          <div className="absolute inset-0 rounded-full border-2 border-amber-400/80 animate-ping opacity-40" />
-        )}
-      </motion.div>
-
-      {/* Popover Breakdown on Hover / Click */}
-      <AnimatePresence>
-        {showPopover && (
-          <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.95 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="absolute left-1/2 -translate-x-1/2 bottom-full mb-4 w-72 bg-zinc-900/95 border border-white/10 rounded-3xl p-5 shadow-[0_30px_70px_-15px_rgba(0,0,0,0.8)] z-[2000] text-xs space-y-4 backdrop-blur-3xl pointer-events-none ring-1 ring-white/5"
-          >
-            <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
-              <span className="font-black text-white/40 uppercase tracking-[0.2em] text-[8px]">Экспертный разбор</span>
-              <span className={`font-black text-sm ${tier.textColor}`}>{score} / 90</span>
-            </div>
-            
-            <div className="space-y-2.5 text-zinc-400 text-[11px] font-bold">
-              <div className="flex justify-between items-center">
-                <span className="opacity-80">Рифмы / Образы</span> 
-                <span className="text-white bg-white/5 px-2 py-0.5 rounded-lg border border-white/5">{rating.rhymes}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="opacity-80">Структура / Ритмика</span> 
-                <span className="text-white bg-white/5 px-2 py-0.5 rounded-lg border border-white/5">{rating.structure}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="opacity-80">Реализация стиля</span> 
-                <span className="text-white bg-white/5 px-2 py-0.5 rounded-lg border border-white/5">{rating.style}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="opacity-80">Индивидуальность</span> 
-                <span className="text-white bg-white/5 px-2 py-0.5 rounded-lg border border-white/5">{rating.charisma}</span>
-              </div>
-              <div className="flex justify-between items-center text-purple-400 pt-2 border-t border-white/5 font-black">
-                <span>Атмосфера / Вайб</span> 
-                <span className="bg-purple-500/10 px-2 py-0.5 rounded-lg border border-purple-500/20">{rating.vibe}</span>
-              </div>
-            </div>
-
-            {rating.nominations && rating.nominations.length > 0 && (
-              <div className="pt-2 border-t border-white/5 space-y-1">
-                <span className="text-[9px] font-bold text-amber-400 uppercase tracking-wider block">Номинировано:</span>
-                <div className="flex flex-wrap gap-1">
-                  {rating.nominations.map(n => (
-                    <span key={n} className="px-2 py-0.5 rounded bg-amber-400/10 border border-amber-400/20 text-[9px] font-bold text-amber-300">
-                      🏆 {n}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="pt-2 border-t border-white/5 text-[8px] text-zinc-500 flex justify-between font-mono font-bold tracking-widest opacity-70">
-              <span>90-POINT SYSTEM</span>
-              <span className="theme-accent uppercase">CRITIC CHOICE</span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
 
 const AlbumValueBadge: React.FC<{
   albumValue?: AlbumValueRating;
@@ -1837,156 +1574,6 @@ const CriterionSlider: React.FC<{
 
 // --- Rating Input Form Component with 2-Column Responsive Layout & Nominations ---
 
-const RatingInputCard_OLD: React.FC<{
-  rating?: RatingData;
-  onChange: (rating: RatingData | undefined) => void;
-  onConfirm?: () => void;
-  title?: string;
-  isStandalone?: boolean;
-  targetType?: 'track' | 'album' | 'artist';
-}> = ({ rating, onChange, onConfirm, title = "ОЦЕНКА", isStandalone = false, targetType = 'track' }) => {
-  const [enabled, setEnabled] = useState(Boolean(rating) || isStandalone);
-  const [rhymes, setRhymes] = useState(rating?.rhymes || 10);
-  const [structure, setStructure] = useState(rating?.structure || 10);
-  const [style, setStyle] = useState(rating?.style || 10);
-  const [charisma, setCharisma] = useState(rating?.charisma || 10);
-  const [vibe, setVibe] = useState(rating?.vibe || 10);
-  const [selectedNominations, setSelectedNominations] = useState<string[]>(rating?.nominations || []);
-
-  const nominationOptions = targetType === 'album'
-    ? ['Альбом года', 'Лучшая обложка', 'Лучший концепт', 'Дебют года', 'EP года', 'Артист месяца', 'Фрешмен месяца']
-    : targetType === 'artist'
-    ? ['Артист года', 'Фрешмен года', 'Продюсер года', 'Открытие года', 'Артист месяца', 'Фрешмен месяца']
-    : ['Трек года', 'Хит года', 'Лучший фит', 'Фрешмен-трек', 'Лучший текст', 'Лучший бит', 'Лучший клип', 'Артист месяца', 'Фрешмен месяца'];
-
-  const toggleNomination = (nom: string) => {
-    setSelectedNominations(prev => 
-      prev.includes(nom) ? prev.filter(x => x !== nom) : [...prev, nom]
-    );
-  };
-
-  const calculatedTotal = calculateRatingScore(rhymes, structure, style, charisma, vibe);
-  const tier = getScoreTier(calculatedTotal);
-
-  useEffect(() => {
-    if (enabled) {
-      onChange({ rhymes, structure, style, charisma, vibe, totalScore: calculatedTotal, nominations: selectedNominations });
-    } else {
-      onChange(undefined);
-    }
-  }, [enabled, rhymes, structure, style, charisma, vibe, calculatedTotal, selectedNominations]);
-
-  return (
-    <div className={`bg-[#0d111b] border border-[#1e273e] rounded-[2rem] p-5 sm:p-7 space-y-5 shadow-2xl relative transition-all ${calculatedTotal === 90 ? 'border-amber-400/40 shadow-[0_0_30px_rgba(251,191,36,0.15)]' : ''}`}>
-      {/* Card Header */}
-      <div className="flex items-center justify-between px-1">
-        <h3 className="text-left text-base sm:text-xl font-black tracking-widest text-white uppercase flex items-center gap-2">
-          <span>{title}</span>
-          <span className="text-xs font-bold text-zinc-500 font-mono">90-POINT SYSTEM</span>
-        </h3>
-        {!isStandalone && (
-          <label className="flex items-center gap-2 cursor-pointer bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-xl border border-white/5 transition-all shrink-0">
-            <input 
-              type="checkbox" 
-              checked={enabled} 
-              onChange={(e) => setEnabled(e.target.checked)} 
-              className="w-3.5 h-3.5 rounded accent-amber-400 cursor-pointer"
-            />
-            <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-wider">Оценить</span>
-          </label>
-        )}
-      </div>
-
-      {enabled && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start animate-in fade-in duration-300">
-          {/* Column 1: Sliders */}
-          <div className="space-y-3.5">
-            {/* Box 1: 4 Main Criteria (Blue Sliders) */}
-            <div className="p-4 sm:p-5 rounded-2xl bg-[#121625]/90 border border-[#1f283e] space-y-3 shadow-inner">
-              <CriterionSlider label="Рифмы / Образы" value={rhymes} onChange={setRhymes} gradient="from-[#2563eb] to-[#3b82f6]" />
-              <CriterionSlider label="Структура / Ритмика" value={structure} onChange={setStructure} gradient="from-[#2563eb] to-[#3b82f6]" />
-              <CriterionSlider label="Реализация стиля" value={style} onChange={setStyle} gradient="from-[#2563eb] to-[#3b82f6]" />
-              <CriterionSlider label="Индивидуальность / Харизма" value={charisma} onChange={setCharisma} gradient="from-[#2563eb] to-[#3b82f6]" />
-            </div>
-
-            {/* Box 2: Atmosphere / Vibe (Purple Slider) */}
-            <div className="p-4 sm:p-5 rounded-2xl bg-[#171429]/90 border border-[#37284f] shadow-inner">
-              <CriterionSlider label="Атмосфера / Вайб" value={vibe} onChange={setVibe} gradient="from-[#7c3aed] to-[#a855f7]" badgeStyle="text-purple-300 bg-purple-500/20 border-purple-500/30" />
-            </div>
-          </div>
-
-          {/* Column 2: Nominations & Big Total Score Box */}
-          <div className="space-y-4 flex flex-col justify-between h-full">
-            {/* Nominations Selector */}
-            <div className="p-4 sm:p-5 rounded-2xl bg-[#121625]/90 border border-[#1f283e] space-y-3 shadow-inner">
-              <div className="flex items-center justify-between">
-                <span className="text-xs sm:text-sm font-extrabold text-white uppercase tracking-wider flex items-center gap-2">
-                  <Award className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>Номинации ({selectedNominations.length})</span>
-                </span>
-                {selectedNominations.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedNominations([])}
-                    className="text-xs text-zinc-400 hover:text-white transition-colors cursor-pointer underline"
-                  >
-                    Сбросить
-                  </button>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {nominationOptions.map(nom => {
-                  const isSelected = selectedNominations.includes(nom);
-                  return (
-                    <button
-                      key={nom}
-                      type="button"
-                      onClick={() => toggleNomination(nom)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-                        isSelected
-                          ? 'bg-amber-400/25 text-amber-300 border-amber-400/50 shadow-md scale-102 font-black'
-                          : 'bg-black/40 text-zinc-300 hover:text-white border-white/10 hover:border-white/20'
-                      }`}
-                    >
-                      {isSelected ? '✓ ' : '+ '}{nom}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Total Score & Action Row */}
-            <div className="p-5 rounded-2xl bg-black/40 border border-[#1f283e] flex items-center justify-between gap-4 mt-auto">
-              <div className="flex items-baseline gap-2">
-                <span className={`text-6xl sm:text-7xl font-[1000] tabular-nums tracking-tight leading-none transition-colors duration-300 ${tier.textColor}`}>
-                  {calculatedTotal}
-                </span>
-                <span className="text-base sm:text-lg font-bold text-zinc-500 uppercase tracking-wider">
-                  / 90
-                </span>
-              </div>
-
-              <motion.button 
-                type="button"
-                whileHover={{ scale: 1.08 }}
-                whileTap={{ scale: 0.92 }}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (onConfirm) onConfirm();
-                }}
-                className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center font-black cursor-pointer shadow-2xl transition-all duration-300 ${tier.btnBg}`}
-                title="Подтвердить оценку"
-              >
-                <Check className="w-8 h-8 sm:w-9 sm:h-9 stroke-[3.5]" />
-              </motion.button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
 
 // --- Quick Rating Modal matching image_ac7b40f7.png ---
 
@@ -5903,6 +5490,7 @@ export default function App() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [awards, setAwards] = useState<AwardItem[]>([]);
   useEffect(() => { setTitleGenCatalog({ artists, tracks, albums }); }, [artists, tracks, albums]);
+  useEffect(() => { setArtistAwardsSource(awards as any); }, [awards]);
   const [history, setHistory] = useState<Array<NavigationState & { scrollY: number }>>([]);
   const [forwardHistory, setForwardHistory] = useState<Array<NavigationState & { scrollY: number }>>([]);
   const contentScrollRef = useRef<HTMLDivElement>(null);
@@ -7303,6 +6891,17 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <ReleaseCalendarButton
+              artists={viewArtists}
+              tracks={viewTracks}
+              albums={viewAlbums}
+              onRelease={(a) => activeSetTracks((prev: any) => [...prev, {
+                id: Math.random().toString(36).slice(2, 11), title: a.title,
+                artistId: a.artistId || viewArtists.find(x => x.name.toLowerCase() === a.artistName.toLowerCase())?.id || '', artistName: a.artistName,
+                albumId: 'single', albumTitle: 'Single', duration: getRandomDuration(), plays: 0, likes: 0, isLiked: false,
+                releaseDate: a.date, coverUrl: a.coverUrl || '', isSnippet: a.type === 'snippet' || undefined
+              }])}
+            />
             <button
               type="button"
               onClick={() => setIsCommandPaletteOpen(true)}
@@ -9123,18 +8722,7 @@ function ChartsView({
                           {album.artistName}
                         </span>
                         {album.coArtist && (
-                          <>
-                            <span className="text-zinc-500 text-xs">,</span>
-                            <span 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigateTo('artist', { artistName: album.coArtist });
-                              }}
-                              className="text-xs text-zinc-400 hover-text-link cursor-pointer"
-                            >
-                              {album.coArtist}
-                            </span>
-                          </>
+                          <CoArtistLinks names={album.coArtist} exclude={album.artistName} artists={artists} navigateTo={navigateTo} className="text-xs text-zinc-400 hover-text-link" />
                         )}
                       </div>
                     </div>
@@ -12514,7 +12102,8 @@ function ArtistView({
     };
   }, [artist.id, artist.name, resolvedArtistCover]);
 
-  const artistAlbums = albums.filter((a: any) => a.artistId === artist.id || a.artistName?.toLowerCase() === artist.name.toLowerCase());
+  const artistAlbums = albums.filter((a: any) => a.artistId === artist.id || a.artistName?.toLowerCase() === artist.name.toLowerCase() ||
+    (a.coArtist && splitNames(a.coArtist).some(n => n.toLowerCase() === artist.name.toLowerCase())));
   const artistTracks = sortTracksByRelevance(
     tracks.filter((t: any) => 
       t.artistId === artist.id || 
@@ -12546,34 +12135,7 @@ function ArtistView({
     return Array.from(yearsSet).sort((a, b) => a - b);
   }, [artistAlbums, artistTracks]);
 
-  const eras = useMemo(() => {
-    if (distinctYears.length <= 1) return [];
-    if (distinctYears.length === 2) {
-      return [
-        { id: 'debut', label: `Дебют (${distinctYears[0]})`, years: [distinctYears[0]] },
-        { id: 'current', label: `Текущая эра (${distinctYears[1]})`, years: [distinctYears[1]] },
-      ];
-    }
-    if (distinctYears.length === 3) {
-      return [
-        { id: 'debut', label: `Дебют (${distinctYears[0]})`, years: [distinctYears[0]] },
-        { id: 'breakthrough', label: `Прорыв (${distinctYears[1]})`, years: [distinctYears[1]] },
-        { id: 'current', label: `Текущая эра (${distinctYears[2]})`, years: [distinctYears[2]] },
-      ];
-    }
-    // 4 or more years: Debut, Evolution/Breakthrough, Current Era
-    const debutYear = distinctYears[0];
-    const currentYear = distinctYears[distinctYears.length - 1];
-    const midYears = distinctYears.slice(1, distinctYears.length - 1);
-    const midLabel = midYears.length === 1 
-      ? `Прорыв (${midYears[0]})` 
-      : `Развитие (${midYears[0]}–${midYears[midYears.length - 1]})`;
-    return [
-      { id: 'debut', label: `Дебют (${debutYear})`, years: [debutYear] },
-      { id: 'evolution', label: midLabel, years: midYears },
-      { id: 'current', label: `Текущая эра (${currentYear})`, years: [currentYear] },
-    ];
-  }, [distinctYears]);
+  const eras = useMemo(() => computeArtistEras(artist, artistAlbums, artistTracks), [artist.id, artist.name, albums, tracks]);
 
   const [selectedEraId, setSelectedEraId] = useViewMemo<string>(`artist:${artist.id}:era`, 'all');
   const [trackViewMode, setTrackViewMode] = useViewMemo<'list' | 'grid'>(`artist:${artist.id}:view`, 'list');
@@ -12611,10 +12173,7 @@ function ArtistView({
     if (selectedEraId !== 'all') {
       const currentEra = eras.find(e => e.id === selectedEraId);
       if (currentEra) {
-        base = artistTracks.filter((t: any) => {
-          const yr = t.year || (t.releaseDate ? new Date(t.releaseDate).getFullYear() : null);
-          return yr && currentEra.years.includes(Number(yr));
-        });
+        base = artistTracks.filter((t: any) => eraHas(currentEra, t, 'track'));
       }
     }
     if (trackSortBy === 'newest') {
@@ -12647,10 +12206,7 @@ function ArtistView({
     if (selectedEraId !== 'all') {
       const currentEra = eras.find(e => e.id === selectedEraId);
       if (currentEra) {
-        base = artistAlbums.filter((a: any) => {
-          const yr = a.releaseYear ? Number(a.releaseYear) : (a.releaseDate ? new Date(a.releaseDate).getFullYear() : null);
-          return yr && currentEra.years.includes(yr);
-        });
+        base = artistAlbums.filter((a: any) => eraHas(currentEra, a, 'album'));
       }
     }
     if (albumSortBy === 'oldest') {
@@ -13460,77 +13016,16 @@ function ArtistView({
           </section>
         )}
 
-        {/* --- Career Eras Timeline (Шкала эпох карьеры артиста — в самом низу) --- */}
-        {eras.length > 0 && (
-          <section className="mb-12 p-4 sm:p-5 rounded-3xl bg-zinc-900/50 border border-white/5 backdrop-blur-md">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 theme-accent" />
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Шкала эпох творчества</h3>
-                </div>
-                <p className="text-xs text-zinc-400 mt-0.5">
-                  {selectedEraId === 'all' ? 'Показаны все релизы за всю карьеру' : `Выбрана эпоха: ${eras.find(e => e.id === selectedEraId)?.label}`}
-                </p>
-              </div>
-              {selectedEraId !== 'all' && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedEraId('all')}
-                  className="text-xs font-bold theme-accent hover:underline cursor-pointer self-start sm:self-auto"
-                >
-                  Сбросить фильтр эпох ✕
-                </button>
-              )}
-            </div>
-
-            {/* Timeline Rail */}
-            <div className="relative flex items-center gap-2.5 overflow-x-auto pb-1 custom-scrollbar">
-              <button
-                type="button"
-                onClick={() => setSelectedEraId('all')}
-                className={`px-3.5 py-2 rounded-2xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-2 ${
-                  selectedEraId === 'all'
-                    ? 'theme-bg-accent text-black shadow-lg scale-102'
-                    : 'bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-white/5'
-                }`}
-              >
-                <span>Все эпохи</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${selectedEraId === 'all' ? 'bg-black/20 text-black' : 'bg-white/10 text-zinc-400'}`}>
-                  {artistTracks.length}
-                </span>
-              </button>
-
-              {eras.map((era) => {
-                const isActive = selectedEraId === era.id;
-                const eraTracksCount = artistTracks.filter((t: any) => {
-                  const yr = t.year || (t.releaseDate ? new Date(t.releaseDate).getFullYear() : null);
-                  return yr && era.years.includes(Number(yr));
-                }).length;
-
-                return (
-                  <React.Fragment key={era.id}>
-                    <div className="w-3 h-[1px] bg-white/15 shrink-0" />
-                    <button
-                      type="button"
-                      onClick={() => setSelectedEraId(era.id)}
-                      className={`px-3.5 py-2 rounded-2xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 flex items-center gap-2 ${
-                        isActive
-                          ? 'theme-bg-accent text-black shadow-lg scale-102'
-                          : 'bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-white/5'
-                      }`}
-                    >
-                      <span>{era.label}</span>
-                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${isActive ? 'bg-black/20 text-black' : 'bg-white/10 text-zinc-400'}`}>
-                        {eraTracksCount}
-                      </span>
-                    </button>
-                  </React.Fragment>
-                );
-              })}
-            </div>
-          </section>
-        )}
+        {/* --- Eras of the artist (Musaic v2.3) --- */}
+        <ArtistEras
+          eras={eras}
+          selectedEraId={selectedEraId}
+          onSelect={setSelectedEraId}
+          artistName={artist.name}
+          navigateTo={navigateTo}
+          totalTracks={artistTracks.length}
+          renderCover={(url, title) => <CoverArt url={url} title={title} className="w-full h-full" innerClassName="w-full h-full object-cover" />}
+        />
       </div>
     </div>
   );
@@ -14764,6 +14259,7 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
                 <span>{isSimMode ? 'Пульт симуляции' : 'Войти в режим симуляции'}</span>
               </button>
             )}
+            <AlbumFromTracksButton artists={artists} albums={albums} tracks={tracks} setAlbums={setAlbums} setTracks={setTracks} />
           </div>
           <p className="text-xs text-zinc-400 mt-1 font-medium">Пакетный конструктор релизов, временная лента дропов и управление каталогом</p>
         </div>
@@ -18135,16 +17631,7 @@ function AlbumView({
                 {album.artistName}
               </span>
               {album.coArtist && (
-                <>
-                  <span className="text-zinc-400">, </span>
-                  <span 
-                    onClick={() => navigateTo('artist', { artistName: album.coArtist })}
-                    className="font-bold text-white hover:underline cursor-pointer"
-                    title={`Перейти к артисту ${album.coArtist}`}
-                  >
-                    {album.coArtist}
-                  </span>
-                </>
+                <CoArtistLinks names={album.coArtist} exclude={album.artistName} artists={artists} navigateTo={navigateTo} className="font-bold text-white" />
               )}
               
               <span className="text-zinc-500">•</span>
@@ -19051,7 +18538,7 @@ function SearchView({
   );
 }
 
-// --- Musaic v2.2: new components under the old names (old versions kept above as *_OLD) ---
+// --- Musaic v2.3: new components under the old names ---
 const PlaceholderArt = AutoCover;
 const RatingScoreBadge = ScoreBadge;
 const RatingInputCard = RatingPanel;

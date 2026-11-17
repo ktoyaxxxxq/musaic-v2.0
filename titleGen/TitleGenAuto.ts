@@ -28,7 +28,17 @@ function isTitleField(t: EventTarget | null): t is HTMLInputElement {
   if (t.type && t.type !== 'text') return false;
   if (t.closest('[data-no-titlegen]')) return false;
   const l = fieldLabel(t);
-  return TITLE_RE.test(l) && !SKIP_RE.test(l.replace(/назван[^ ]*/gi, ''));
+  if (!TITLE_RE.test(l) || SKIP_RE.test(l.replace(/назван[^ ]*/gi, ''))) return false;
+  return !hasOwnGenerator(t);
+}
+/** the form already has its own dice / "Случайно" button: don't add a second one */
+function hasOwnGenerator(input: HTMLInputElement): boolean {
+  let el: HTMLElement | null = input.parentElement;
+  for (let i = 0; i < 3 && el; i++, el = el.parentElement) {
+    if (el.querySelector('svg[class*="lucide-dice"], svg[class*="lucide-shuffle"], [title*="енерир"], [title*="лучайн"], [aria-label*="енерир"]')) return true;
+    if ([...el.querySelectorAll('button, span')].some(b => /случайн|сгенерир/i.test(b.textContent || ''))) return true;
+  }
+  return false;
 }
 function findArtist(input: HTMLInputElement): any | null {
   if (!catalog.artists.length) return null;

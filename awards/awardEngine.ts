@@ -185,7 +185,7 @@ const trackCand = (x: TI, score: number, inP = true, reason?: string, feat = fal
   coverUrl: x.t.coverUrl, score, plays: x.plays, inPeriod: inP, reason
 });
 const albumCand = (x: AI, score: number, inP = true, reason?: string): RankedCandidate => ({
-  id: x.a.id, type: 'album', title: x.a.title, artistName: x.a.artistName, coverUrl: x.a.coverUrl,
+  id: x.a.id, type: 'album', title: x.a.title, artistName: x.a.coArtist ? `${x.a.artistName} & ${x.a.coArtist}` : x.a.artistName, coverUrl: x.a.coverUrl,
   score, plays: x.plays, inPeriod: inP, reason
 });
 
@@ -201,9 +201,13 @@ function artistAggregates(idx: Index, p: AwardPeriod): Map<string, Agg> {
   for (const x of idx.albums) {
     if (!inPeriod(x, p)) continue;
     albumsInP.add(x.a.id);
-    const v = get(x.key);
-    v.plays += x.plays; v.releases++;
-    if (x.a.rating?.totalScore) { v.rSum += x.a.rating.totalScore; v.rN++; }
+    const credit = [x.key, ...splitFeats(x.a.coArtist).map(n => idx.nameToKey.get(norm(n))).filter((k): k is string => !!k && k !== x.key)];
+    for (const k of credit) {
+      const v = get(k);
+      v.plays += x.plays; v.releases++;
+      v.peak = Math.max(v.peak, x.plays / Math.max(1, x.trackCount || 1));
+      if (x.a.rating?.totalScore) { v.rSum += x.a.rating.totalScore; v.rN++; }
+    }
   }
   for (const x of idx.tracks) {
     if (!inPeriod(x, p) || x.t.isSnippet) continue;
@@ -213,7 +217,7 @@ function artistAggregates(idx: Index, p: AwardPeriod): Map<string, Agg> {
     if (x.t.rating?.totalScore) { v.rSum += x.t.rating.totalScore; v.rN++; }
     for (const f of x.feats) {
       const fk = idx.nameToKey.get(norm(f));
-      if (fk && fk !== x.key) get(fk).plays += x.plays * 0.35;
+      if (fk && fk !== x.key) { const fv = get(fk); fv.plays += x.plays * 0.5; fv.releases += 0.5; fv.peak = Math.max(fv.peak, x.plays * 0.5); }
     }
   }
   return agg;
@@ -221,7 +225,13 @@ function artistAggregates(idx: Index, p: AwardPeriod): Map<string, Agg> {
 function artistScore(a: Artist | undefined, v: Agg): number {
   const avgR = v.rN ? v.rSum / v.rN / 90 : 0;
   const fol = a?.followers || 0;
-  return pw(v.plays) * (1 + 0.05 * Math.min(v.releases, 6)) * (1 + 0.15 * avgR) * (1 + 0.04 * Math.log10(1 + fol / 1e5));
+  const perRelease = v.plays / Math.max(1, v.releases);
+  return pw(v.plays)                                   // streams in the period
+    * (1 + 0.06 * Math.min(v.releases, 6))             // activity in the period
+    * (1 + 0.08 * Math.log10(1 + perRelease / 1e5))    // streams per release
+    * (1 + 0.04 * Math.log10(1 + v.peak / 1e5))        // biggest hit
+    * (1 + 0.2 * avgR)                                 // your ratings
+    * (1 + 0.02 * Math.log10(1 + fol / 1e5));          // audience (tiny)
 }
 const artistCand = (key: string, a: Artist | undefined, score: number, plays: number, sub: string, inP = true, reason?: string): RankedCandidate => ({
   id: a ? String(a.id) : key, type: 'artist', title: a?.name || key.replace(/^name:/, ''),
@@ -431,7 +441,7 @@ export function buildAward(key: string, period: AwardPeriod, catalog: AwardCatal
       };
     });
   } else {
-    list = fillUp(ranked, key, period, catalog, size);
+    list = ranked.slice(0, size); // only releases of this period, no top-up
   }
 
   if (keep && ex) {

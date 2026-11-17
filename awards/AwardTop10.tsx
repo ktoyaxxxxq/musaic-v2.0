@@ -34,7 +34,10 @@ export const AwardTop10: React.FC<{
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-black uppercase tracking-wider text-zinc-300">Топ-{nominees.length} · голосование</span>
+        <span className="text-xs font-black uppercase tracking-wider text-zinc-300">
+          {nominees.length >= 10 ? 'Топ-10' : `Номинантов: ${nominees.length}`} · голосование
+          {nominees.length < 10 && <span className="ml-1.5 normal-case font-semibold text-zinc-500">в этом периоде больше нет релизов</span>}
+        </span>
         <div className="flex items-center gap-3">
           <span className="text-[11px] text-zinc-500">Всего голосов: <b className="text-zinc-300">{fmt(total)}</b></span>
           {onSaveNominees && (

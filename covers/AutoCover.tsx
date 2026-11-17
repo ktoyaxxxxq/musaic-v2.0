@@ -1,19 +1,14 @@
 // ============================================================================
-// AUTO COVER v2 — minimal generated artwork for releases without a cover
-// Drop-in replacement for PlaceholderArt in App.tsx (same props).
-// - deterministic: same title -> same cover; different titles -> different
-//   cover (seed mixes title + layout + palette + font + accents)
-// - the title is always big and readable, never a tiny caption in a corner
-// - ~45% dark neutral, ~35% colour, ~12% light / pastel, ~8% without text
+// AUTO COVER v3: minimal generated artwork for releases without a cover
+// - deterministic: same title = same cover, different titles = different covers
+// - text is measured per font and always fits: words are never cut in the middle,
+//   lines are balanced, hyphenated words may break after the hyphen
+// - mostly neutral / muted colours, bright ones are rare
+// - ~7% covers without text: just a gradient or a flat colour, no shapes
 // ============================================================================
 import React from 'react';
 
-export interface AutoCoverProps {
-  title?: string;
-  albumTitle?: string;
-  isArtist?: boolean;
-  innerClassName?: string;
-}
+export interface AutoCoverProps { title?: string; albumTitle?: string; isArtist?: boolean; innerClassName?: string }
 
 function hash(s: string): number {
   let h = 2166136261;
@@ -30,69 +25,6 @@ function rng(seed: number) {
   };
 }
 const pick = <T,>(r: () => number, arr: T[]): T => arr[Math.floor(r() * arr.length)];
-
-// [background css, text colour, accent]
-type Palette = { bg: string; fg: string; accent: string; light?: boolean };
-const DARK: Palette[] = [
-  { bg: 'linear-gradient(160deg,#0b0b0d 0%,#16161a 100%)', fg: '#e9e9ec', accent: '#3a3a42' },
-  { bg: 'linear-gradient(200deg,#0d0f12 0%,#050506 100%)', fg: '#d4d4d8', accent: '#2a2d33' },
-  { bg: 'radial-gradient(120% 90% at 30% 20%,#1c1c21 0%,#070708 70%)', fg: '#f4f4f5', accent: '#44444c' },
-  { bg: 'linear-gradient(135deg,#120f0d 0%,#060505 100%)', fg: '#e7dfd6', accent: '#3b302a' },
-  { bg: 'linear-gradient(180deg,#0e1115 0%,#0a0b0d 100%)', fg: '#b9c2cc', accent: '#26303b' },
-  { bg: 'radial-gradient(100% 100% at 70% 80%,#191a1f 0%,#08080a 75%)', fg: '#a1a1aa', accent: '#33343b' }
-];
-const COLOR: Palette[] = [
-  { bg: 'linear-gradient(150deg,#1a0b2e 0%,#3b0d4f 55%,#0b0614 100%)', fg: '#f3e8ff', accent: '#a855f7' },
-  { bg: 'linear-gradient(160deg,#04212b 0%,#0b4a5a 60%,#03141a 100%)', fg: '#d6f7ff', accent: '#22d3ee' },
-  { bg: 'linear-gradient(140deg,#2a0a0a 0%,#7f1d1d 60%,#140404 100%)', fg: '#ffe4e4', accent: '#f87171' },
-  { bg: 'linear-gradient(170deg,#06190f 0%,#14532d 60%,#030c07 100%)', fg: '#dcfce7', accent: '#4ade80' },
-  { bg: 'linear-gradient(135deg,#1e1b4b 0%,#312e81 50%,#0b0a24 100%)', fg: '#e0e7ff', accent: '#818cf8' },
-  { bg: 'linear-gradient(160deg,#2b1405 0%,#9a3412 65%,#160902 100%)', fg: '#ffedd5', accent: '#fb923c' },
-  { bg: 'radial-gradient(90% 90% at 50% 40%,#be185d 0%,#4a0624 60%,#12010a 100%)', fg: '#ffe4f1', accent: '#f472b6' },
-  { bg: 'linear-gradient(180deg,#0c1a3a 0%,#1d4ed8 70%,#0a1430 100%)', fg: '#e0edff', accent: '#93c5fd' },
-  { bg: 'radial-gradient(80% 80% at 30% 70%,#065f46 0%,#022c22 70%)', fg: '#d1fae5', accent: '#34d399' },
-  { bg: 'linear-gradient(200deg,#3f2a00 0%,#a16207 60%,#1c1300 100%)', fg: '#fef9c3', accent: '#facc15' },
-  { bg: 'linear-gradient(135deg,#4c0519 0%,#1e1b4b 100%)', fg: '#fde2ea', accent: '#fb7185' },
-  { bg: 'linear-gradient(160deg,#083344 0%,#4c1d95 100%)', fg: '#e9e6ff', accent: '#67e8f9' }
-];
-const LIGHT: Palette[] = [
-  { bg: 'linear-gradient(160deg,#f4f1ea 0%,#e4ded2 100%)', fg: '#1c1917', accent: '#a8a29e', light: true },
-  { bg: 'linear-gradient(180deg,#eef2f7 0%,#d9e1ec 100%)', fg: '#0f172a', accent: '#94a3b8', light: true },
-  { bg: 'linear-gradient(150deg,#fde7ef 0%,#f6d0de 100%)', fg: '#4a0d24', accent: '#e8a1bb', light: true },
-  { bg: 'linear-gradient(150deg,#e6f4ea 0%,#cfe9d7 100%)', fg: '#0f2e1c', accent: '#86c49d', light: true },
-  { bg: '#e9e4da', fg: '#111111', accent: '#c9c1b2', light: true }
-];
-
-// font, weight, italic, tracking (em), case transform
-type FontStyle = { family: string; weight: number; italic?: boolean; tracking: number; transform?: 'upper' | 'lower' };
-const FONTS: FontStyle[] = [
-  { family: "'Playfair Display', serif", weight: 500, italic: true, tracking: -0.01 },
-  { family: "'Cormorant Garamond', serif", weight: 500, italic: true, tracking: 0 },
-  { family: "'PT Serif', serif", weight: 400, italic: true, tracking: -0.01 },
-  { family: "'Lora', serif", weight: 500, italic: true, tracking: -0.01 },
-  { family: "'Prata', serif", weight: 400, tracking: -0.01 },
-  { family: "'Unbounded', sans-serif", weight: 800, tracking: -0.04 },
-  { family: "'Dela Gothic One', sans-serif", weight: 400, tracking: -0.02 },
-  { family: "'Russo One', sans-serif", weight: 400, tracking: 0, transform: 'upper' },
-  { family: "'Oswald', sans-serif", weight: 600, tracking: 0.01, transform: 'upper' },
-  { family: "'Inter Tight', sans-serif", weight: 800, tracking: -0.05 },
-  { family: "'Geologica', sans-serif", weight: 300, tracking: -0.02, transform: 'lower' },
-  { family: "'Onest', sans-serif", weight: 600, tracking: -0.03, transform: 'lower' },
-  { family: "'Montserrat Alternates', sans-serif", weight: 700, tracking: -0.03 },
-  { family: "'Tenor Sans', sans-serif", weight: 400, tracking: 0.12, transform: 'upper' },
-  { family: "'Poiret One', sans-serif", weight: 400, tracking: 0.04 },
-  { family: "'Yeseva One', serif", weight: 400, tracking: -0.01 },
-  { family: "'Rubik Mono One', sans-serif", weight: 400, tracking: -0.02, transform: 'upper' },
-  { family: "'JetBrains Mono', monospace", weight: 500, tracking: -0.02, transform: 'lower' },
-  { family: "'Caveat', cursive", weight: 700, tracking: 0 },
-  { family: "'Marck Script', cursive", weight: 400, tracking: 0 }
-];
-
-type Layout = 'center' | 'bottomLeft' | 'topLeft' | 'giant' | 'stack' | 'outline' | 'ruled' | 'framed' | 'none';
-const LAYOUTS: Array<[Layout, number]> = [
-  ['center', 22], ['bottomLeft', 16], ['topLeft', 10], ['giant', 12], ['stack', 10],
-  ['outline', 7], ['ruled', 8], ['framed', 7], ['none', 8]
-];
 function weighted<T>(r: () => number, items: Array<[T, number]>): T {
   const total = items.reduce((s, [, w]) => s + w, 0);
   let x = r() * total;
@@ -100,100 +32,178 @@ function weighted<T>(r: () => number, items: Array<[T, number]>): T {
   return items[items.length - 1][0];
 }
 
-function splitLines(text: string, maxLines: number): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length <= 1 || text.length <= 9) return [text];
-  const lines: string[] = [];
-  const per = Math.ceil(words.length / Math.min(maxLines, words.length));
-  for (let i = 0; i < words.length; i += per) lines.push(words.slice(i, i + per).join(' '));
-  return lines;
+type Palette = { bg: string; fg: string; glow?: string };
+const g = (deg: number, a: string, b: string) => `linear-gradient(${deg}deg, ${a} 0%, ${b} 100%)`;
+const r2 = (x: number, y: number, a: string, b: string) => `radial-gradient(130% 110% at ${x}% ${y}%, ${a} 0%, ${b} 75%)`;
+
+const NEUTRAL: Palette[] = [
+  { bg: g(160, '#0b0b0d', '#18181c'), fg: '#ececef', glow: '#3a3a42' },
+  { bg: g(200, '#0e1013', '#050506'), fg: '#d4d4d8', glow: '#2b2f36' },
+  { bg: r2(30, 20, '#1d1d22', '#070708'), fg: '#f4f4f5', glow: '#44444c' },
+  { bg: g(135, '#14110f', '#070606'), fg: '#e9e1d8', glow: '#3d332c' },
+  { bg: g(180, '#10141a', '#0a0b0d'), fg: '#c3cbd5', glow: '#28323e' },
+  { bg: r2(70, 80, '#1a1b20', '#09090b'), fg: '#b4b4bb' },
+  { bg: g(150, '#1b1b1d', '#0c0c0d'), fg: '#f1efe9' },
+  { bg: g(170, '#161a17', '#080a09'), fg: '#d9e2db', glow: '#2b3a30' },
+  { bg: g(190, '#1a1714', '#0b0a09'), fg: '#efe6da' },
+  { bg: r2(50, 30, '#22252b', '#0c0d10'), fg: '#e3e7ee' }
+];
+// deep but calm colours (like "Dope Club" indigo, wine, teal, amber-brown)
+const MUTED: Palette[] = [
+  { bg: g(150, '#2d2a6e', '#14133a'), fg: '#e4e3ff', glow: '#5b57c9' },
+  { bg: g(160, '#5a1a1f', '#220a0c'), fg: '#ffe7e3', glow: '#8f3036' },
+  { bg: g(170, '#0d3b44', '#061c21'), fg: '#d6f4f7', glow: '#1f6f7c' },
+  { bg: g(155, '#6b4512', '#2a1a06'), fg: '#fbecd0', glow: '#a36a1f' },
+  { bg: g(140, '#22402f', '#0c1a12'), fg: '#dff1e5', glow: '#3d6e51' },
+  { bg: g(165, '#3d2648', '#170e1c'), fg: '#f1e4f6', glow: '#6b4880' },
+  { bg: g(145, '#1f3354', '#0b1424'), fg: '#dfe9fa', glow: '#3c5f95' },
+  { bg: g(175, '#4a2c22', '#1c100c'), fg: '#f7e4da', glow: '#7a4a39' },
+  { bg: g(150, '#3a3f22', '#16180c'), fg: '#eef0d9' },
+  { bg: g(160, '#33424d', '#141b20'), fg: '#e4edf2' },
+  { bg: r2(30, 25, '#3a3470', '#121026'), fg: '#ebe9ff' },
+  { bg: r2(70, 30, '#5b2330', '#1b0a0e'), fg: '#ffe6ea' }
+];
+const BRIGHT: Palette[] = [
+  { bg: g(150, '#3b0d4f', '#120617'), fg: '#f3e8ff' },
+  { bg: g(160, '#9a3412', '#2b1405'), fg: '#ffedd5' },
+  { bg: r2(50, 40, '#9d174d', '#2a0515'), fg: '#ffe4f1' },
+  { bg: g(180, '#1d4ed8', '#0c1a3a'), fg: '#e0edff' },
+  { bg: g(160, '#047857', '#022c22'), fg: '#d1fae5' }
+];
+const LIGHT: Palette[] = [
+  { bg: g(160, '#f4f1ea', '#e4ded2'), fg: '#1c1917' },
+  { bg: g(180, '#eef2f7', '#d9e1ec'), fg: '#0f172a' },
+  { bg: g(150, '#efe7e1', '#dfd2c8'), fg: '#2b1d16' },
+  { bg: g(150, '#e6efe8', '#d2e2d6'), fg: '#13281b' },
+  { bg: '#e9e4da', fg: '#111111' }
+];
+const SOLID: Palette[] = [
+  { bg: '#0c0c0e', fg: '#f4f4f5' }, { bg: '#151515', fg: '#e7e5e4' }, { bg: '#1e2333', fg: '#e3e8f5' },
+  { bg: '#3a1416', fg: '#fde8e6' }, { bg: '#16302f', fg: '#ddf3f1' }, { bg: '#2b2560', fg: '#e8e6ff' },
+  { bg: '#e8e3d9', fg: '#141414' }, { bg: '#5c3d12', fg: '#fbefd9' }
+];
+
+// cw = average glyph width in em (used to fit the text)
+type FontStyle = { family: string; weight: number; italic?: boolean; tracking: number; transform?: 'upper' | 'lower'; cw: number };
+const FONTS: FontStyle[] = [
+  { family: "'Playfair Display', serif", weight: 500, italic: true, tracking: -0.01, cw: 0.5 },
+  { family: "'PT Serif', serif", weight: 400, italic: true, tracking: -0.01, cw: 0.5 },
+  { family: "'Cormorant Garamond', serif", weight: 600, italic: true, tracking: 0, cw: 0.44 },
+  { family: "'Prata', serif", weight: 400, tracking: -0.01, cw: 0.6 },
+  { family: "'Yeseva One', serif", weight: 400, tracking: -0.01, cw: 0.58 },
+  { family: "'Unbounded', sans-serif", weight: 800, tracking: -0.04, cw: 0.78 },
+  { family: "'Dela Gothic One', sans-serif", weight: 400, tracking: -0.02, cw: 0.76 },
+  { family: "'Russo One', sans-serif", weight: 400, tracking: 0, transform: 'upper', cw: 0.66 },
+  { family: "'Oswald', sans-serif", weight: 600, tracking: 0.01, transform: 'upper', cw: 0.46 },
+  { family: "'Sofia Sans Extra Condensed', sans-serif", weight: 800, tracking: 0, transform: 'upper', cw: 0.36 },
+  { family: "'Inter Tight', sans-serif", weight: 800, tracking: -0.05, cw: 0.56 },
+  { family: "'Geologica', sans-serif", weight: 300, tracking: -0.02, transform: 'lower', cw: 0.56 },
+  { family: "'Onest', sans-serif", weight: 600, tracking: -0.03, transform: 'lower', cw: 0.56 },
+  { family: "'Montserrat Alternates', sans-serif", weight: 700, tracking: -0.03, cw: 0.66 },
+  { family: "'Tenor Sans', sans-serif", weight: 400, tracking: 0.1, transform: 'upper', cw: 0.62 },
+  { family: "'Commissioner', sans-serif", weight: 300, tracking: -0.02, cw: 0.55 },
+  { family: "'JetBrains Mono', monospace", weight: 500, tracking: -0.02, transform: 'lower', cw: 0.6 },
+  { family: "'Caveat', cursive", weight: 700, tracking: 0, cw: 0.42 },
+  { family: "'Marck Script', cursive", weight: 400, tracking: 0, cw: 0.46 }
+];
+
+type Layout = 'center' | 'bottomLeft' | 'topLeft' | 'big' | 'stack' | 'ruled' | 'none';
+const LAYOUTS: Array<[Layout, number]> = [['center', 26], ['bottomLeft', 20], ['topLeft', 11], ['big', 13], ['stack', 11], ['ruled', 6], ['none', 7]];
+
+/** splits words into k lines with the shortest longest line (hyphens are break points too). */
+function balance(tokens: string[], k: number): string[] {
+  const n = tokens.length;
+  if (k <= 1 || n <= 1) return [tokens.join(' ').replace(/- /g, '-')];
+  let best: string[] = [];
+  let bestLen = Infinity;
+  const rec = (start: number, left: number, acc: string[]) => {
+    if (left === 1) {
+      const line = tokens.slice(start).join(' ').replace(/- /g, '-');
+      const lines = [...acc, line];
+      const m = Math.max(...lines.map(l => l.length));
+      if (m < bestLen) { bestLen = m; best = lines; }
+      return;
+    }
+    for (let i = start + 1; i <= n - left + 1; i++) rec(i, left - 1, [...acc, tokens.slice(start, i).join(' ').replace(/- /g, '-')]);
+  };
+  rec(0, Math.min(k, n), []);
+  return best;
 }
-/** font-size in cqw so the longest line fills the cover nicely (never tiny). */
-function fitSize(lines: string[], base: number, min: number, max: number) {
-  const longest = Math.max(...lines.map(l => l.length), 1);
-  return Math.max(min, Math.min(max, base / longest));
+function tokenize(text: string): string[] {
+  return text.split(/\s+/).filter(Boolean).flatMap(w => {
+    const parts = w.split(/(?<=-)/); // "Паи-гангстер" -> ["Паи-", "гангстер"]
+    return parts.length > 1 && parts.every(p => p.length >= 3) ? parts : [w];
+  });
+}
+/** picks the line count that gives the biggest text that still fits the box (in cqw). */
+function fit(text: string, f: FontStyle, upper: boolean, width: number, height: number, maxSize: number, maxLines = 4) {
+  const tokens = tokenize(text).slice(0, 12);
+  const cw = (f.cw + Math.max(0, f.tracking)) * (upper ? 1.12 : 1);
+  let best: { lines: string[]; size: number } | null = null;
+  for (let k = 1; k <= Math.max(1, Math.min(maxLines, tokens.length)); k++) {
+    const lines = balance(tokens.length ? tokens : [text], k);
+    const longest = Math.max(...lines.map(l => l.length), 1);
+    const size = Math.min(maxSize, width / (longest * cw), height / (k * 1.02));
+    if (!best || size > best.size * 1.15) best = { lines, size };
+  }
+  return best!;
 }
 
 export const AutoCover: React.FC<AutoCoverProps> = React.memo(({ title = '', albumTitle = '', isArtist = false, innerClassName = '' }) => {
   const text = (albumTitle || title || (isArtist ? 'Артист' : 'Музыка')).trim();
-  const seed = hash(text.toLowerCase());
-  const r = rng(seed);
-
-  const tone = r();
-  const pal = tone < 0.45 ? pick(r, DARK) : tone < 0.8 ? pick(r, COLOR) : tone < 0.92 ? pick(r, LIGHT) : pick(r, COLOR);
-  let layout = weighted(r, LAYOUTS);
-  if (isArtist) layout = 'center';
+  const r = rng(hash(text.toLowerCase()));
+  const tone = weighted(r, [['neutral', 42], ['muted', 33], ['solid', 8], ['light', 9], ['bright', 8]] as Array<[string, number]>);
+  const pal = pick(r, tone === 'neutral' ? NEUTRAL : tone === 'muted' ? MUTED : tone === 'solid' ? SOLID : tone === 'light' ? LIGHT : BRIGHT);
+  const layout: Layout = isArtist ? 'center' : weighted(r, LAYOUTS);
   const font = pick(r, FONTS);
-  const orb = r() < 0.35; // one soft light spot, nothing else
-  const orbX = 15 + r() * 70, orbY = 15 + r() * 70;
+  const glow = layout !== 'none' && pal.glow && tone !== 'solid' && r() < 0.3;
+  const gx = 20 + r() * 60, gy = 20 + r() * 60;
 
-  const shown = font.transform === 'upper' ? text.toUpperCase() : font.transform === 'lower' ? text.toLowerCase() : text;
-  const baseStyle: React.CSSProperties = {
+  const upper = font.transform === 'upper';
+  const shown = upper ? text.toUpperCase() : font.transform === 'lower' ? text.toLowerCase() : text;
+  const pad = 9;
+  const W = 100 - pad * 2;
+  const base: React.CSSProperties = {
     fontFamily: font.family, fontWeight: font.weight, fontStyle: font.italic ? 'italic' : 'normal',
-    letterSpacing: `${font.tracking}em`, color: pal.fg, lineHeight: 0.95, margin: 0, wordBreak: 'break-word'
+    letterSpacing: `${font.tracking}em`, color: pal.fg, lineHeight: 1, margin: 0, whiteSpace: 'nowrap'
   };
+  const Lines: React.FC<{ lines: string[]; size: number; align: 'left' | 'center' }> = ({ lines, size, align }) => (
+    <p style={{ ...base, fontSize: `${size}cqw`, textAlign: align }}>
+      {lines.map((l, i) => <span key={i} style={{ display: 'block' }}>{l}</span>)}
+    </p>
+  );
 
   let content: React.ReactNode = null;
-  const pad = '9cqw';
-  if (layout === 'center' || layout === 'framed') {
-    const lines = splitLines(shown, 3);
-    const size = fitSize(lines, 120, 9, 17);
-    content = (
-      <div style={{ position: 'absolute', inset: layout === 'framed' ? '8cqw' : 0, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: pad, border: layout === 'framed' ? `0.5cqw solid ${pal.fg}33` : undefined, borderRadius: layout === 'framed' ? '2cqw' : undefined }}>
-        <p style={{ ...baseStyle, fontSize: `${size}cqw` }}>{lines.map((l, i) => <span key={i} style={{ display: 'block' }}>{l}</span>)}</p>
-      </div>
-    );
+  if (layout === 'center') {
+    const t = fit(shown, font, upper, W, 70, 17, 3);
+    content = <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: `${pad}cqw` }}><Lines lines={t.lines} size={t.size} align="center" /></div>;
   } else if (layout === 'bottomLeft' || layout === 'topLeft') {
-    const lines = splitLines(shown, 3);
-    const size = fitSize(lines, 140, 11, 20);
-    content = (
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: layout === 'bottomLeft' ? 'flex-end' : 'flex-start', padding: pad }}>
-        <p style={{ ...baseStyle, fontSize: `${size}cqw`, textAlign: 'left' }}>{lines.map((l, i) => <span key={i} style={{ display: 'block' }}>{l}</span>)}</p>
-      </div>
-    );
-  } else if (layout === 'giant') {
-    const word = shown.split(/\s+/)[0] || shown;
-    const size = Math.max(22, Math.min(48, 150 / Math.max(word.length, 1)));
-    content = (
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-        <p style={{ ...baseStyle, fontSize: `${size}cqw`, whiteSpace: 'nowrap', lineHeight: 0.8 }}>{shown.length > word.length + 12 ? word : shown}</p>
-      </div>
-    );
+    const t = fit(shown, font, upper, W, 55, 18, 3);
+    content = <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: layout === 'bottomLeft' ? 'flex-end' : 'flex-start', padding: `${pad}cqw` }}><Lines lines={t.lines} size={t.size} align="left" /></div>;
+  } else if (layout === 'big') {
+    const t = fit(shown, font, upper, 100 - 12, 86, 40, 2);
+    content = <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6cqw' }}><Lines lines={t.lines} size={t.size} align="center" /></div>;
   } else if (layout === 'stack') {
-    const words = shown.split(/\s+/).filter(Boolean).slice(0, 5);
-    const size = fitSize(words, 90, 10, 22);
+    const words = tokenize(shown).slice(0, 5);
+    const t = fit(words.join(' '), font, upper, W, 76, 20, Math.min(5, words.length));
     content = (
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: pad }}>
-        {words.map((w, i) => <p key={i} style={{ ...baseStyle, fontSize: `${size}cqw`, opacity: i === 0 ? 1 : 0.55 + 0.45 * (1 - i / words.length) }}>{w}</p>)}
-      </div>
-    );
-  } else if (layout === 'outline') {
-    const lines = splitLines(shown, 2);
-    const size = fitSize(lines, 120, 12, 22);
-    content = (
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: pad }}>
-        <p style={{ ...baseStyle, fontSize: `${size}cqw`, color: 'transparent', WebkitTextStroke: `0.35cqw ${pal.fg}` } as React.CSSProperties}>{lines.map((l, i) => <span key={i} style={{ display: 'block' }}>{l}</span>)}</p>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: `${pad}cqw` }}>
+        {t.lines.map((l, i) => <p key={i} style={{ ...base, fontSize: `${t.size}cqw`, opacity: i === 0 ? 1 : 0.5 + 0.5 * (1 - i / t.lines.length) }}>{l}</p>)}
       </div>
     );
   } else if (layout === 'ruled') {
-    const lines = splitLines(shown, 2);
-    const size = fitSize(lines, 110, 10, 16);
+    const t = fit(shown, font, upper, W, 50, 15, 2);
     content = (
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: pad }}>
-        <p style={{ ...baseStyle, fontSize: `${size}cqw` }}>{lines.map((l, i) => <span key={i} style={{ display: 'block' }}>{l}</span>)}</p>
-        <div style={{ height: '0.4cqw', width: '100%', background: pal.fg, opacity: 0.35 }} />
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: `${pad}cqw` }}>
+        <Lines lines={t.lines} size={t.size} align="left" />
+        <div style={{ height: '0.35cqw', width: '100%', background: pal.fg, opacity: 0.3 }} />
       </div>
     );
   }
 
   return (
     <div className={`absolute inset-0 overflow-hidden select-none ${innerClassName}`} style={{ background: pal.bg, containerType: 'inline-size' } as React.CSSProperties} aria-label={text}>
-      {orb && (
-        <div style={{ position: 'absolute', left: `${orbX}%`, top: `${orbY}%`, width: '70cqw', height: '70cqw', transform: 'translate(-50%,-50%)', borderRadius: '50%', background: `radial-gradient(circle, ${pal.accent}${pal.light ? '55' : '40'} 0%, transparent 65%)`, filter: 'blur(4cqw)' }} />
-      )}
-      {layout === 'none' && (
-        <div style={{ position: 'absolute', left: '50%', top: '50%', width: `${38 + r() * 30}cqw`, height: `${38 + r() * 30}cqw`, transform: 'translate(-50%,-50%)', borderRadius: r() < 0.5 ? '50%' : '6cqw', background: `linear-gradient(${Math.floor(r() * 360)}deg, ${pal.accent}, transparent)`, opacity: 0.8 }} />
-      )}
+      {glow && <div style={{ position: 'absolute', left: `${gx}%`, top: `${gy}%`, width: '75cqw', height: '75cqw', transform: 'translate(-50%,-50%)', borderRadius: '50%', background: `radial-gradient(circle, ${pal.glow}55 0%, transparent 65%)`, filter: 'blur(5cqw)' }} />}
       {content}
     </div>
   );
