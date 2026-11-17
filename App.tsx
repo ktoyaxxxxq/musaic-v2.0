@@ -113,7 +113,8 @@ import {
 } from './SimulationMode';
 import './fontsExtra';
 // --- Musaic v2.4: charts, release stage, calendar, awards, eras, cover viewer, batch generators ---
-import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource, ScoreRing, AlbumReviewsButton, WeeklyNewsFeed } from './MusaicPlus';
+import { SocialFeed, SocialIcon } from './SocialFeed';
+import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource, ScoreRing, AlbumReviewsButton, TrackReviewsButton, WeeklyNewsFeed, ArtistPortfolioButton } from './MusaicPlus';
 
 // --- Types & Constants ---
 
@@ -6625,6 +6626,7 @@ export default function App() {
           <SidebarItem icon={Home} label="Главная" active={nav.view === 'home'} onClick={() => navigateTo('home')} />
           <SidebarItem icon={TrendingUp} label="Чарты" active={nav.view === 'charts'} onClick={() => navigateTo('charts')} />
           <SidebarItem icon={Newspaper} label="События" active={nav.view === 'news'} onClick={() => navigateTo('news')} />
+          <SidebarItem icon={SocialIcon} label="Лента" active={nav.view === 'social'} onClick={() => navigateTo('social')} />
           <SidebarItem icon={Award} label="Рейтинг" active={nav.view === 'rating' && nav.params?.tab !== 'awards' && nav.params?.tab !== 'album_value'} onClick={() => navigateTo('rating', { tab: 'rating' })} />
           <SidebarItem icon={Trophy} label="Премии" active={(nav.view === 'rating' && (nav.params?.tab === 'awards' || nav.params?.tab === 'album_value')) || nav.view === 'album_value'} onClick={() => navigateTo('rating', { tab: 'awards' })} />
           <SidebarItem icon={Search} label="Поиск" active={nav.view === 'search'} onClick={() => navigateTo('search')} />
@@ -7039,6 +7041,17 @@ export default function App() {
                   initialRightId={nav.params?.rightId}
                   navigateTo={navigateTo}
                   onPlayTrack={playTrack}
+                />
+              )}
+              {nav.view === 'social' && (
+                <SocialFeed
+                  artists={viewArtists}
+                  albums={viewAlbums}
+                  tracks={viewTracks}
+                  awards={viewAwards}
+                  referenceDate={isSimMode ? simActiveDate : undefined}
+                  isSim={isSimMode}
+                  navigateTo={navigateTo}
                 />
               )}
               {nav.view === 'news' && (
@@ -11378,6 +11391,7 @@ function ArtistView({
           artistId={String(artist.id)}
           name={artist.name}
           imageUrl={resolvedArtistCover}
+          fallback={<CoverArt url="" title={artist.name} isArtist className="w-full h-full" innerClassName="w-full h-full object-cover" />}
           verified={artist.verified}
           subtitle={`${formatListeners(artist.followers)}${artist.genre ? ` · ${artist.genre}` : ''}`}
           palette={headerPalette}
@@ -11502,6 +11516,8 @@ function ArtistView({
             <ArrowLeftRight className="w-3.5 h-3.5" />
             <span>Сравнить</span>
           </button>
+
+          <ArtistPortfolioButton artist={artist} tracks={tracks} albums={albums} navigateTo={navigateTo} />
 
           <button 
             onClick={() => onMoreOptionsClick && onMoreOptionsClick(artist)} 
@@ -11996,7 +12012,7 @@ function ArtistView({
         )}
 
         {/* --- Awards & nominations (Musaic v2.4) --- */}
-        <ArtistAwardsButton artist={artist} tracks={tracks} navigateTo={navigateTo} />
+        <ArtistAwardsButton artist={artist} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} />
 
         {/* --- Eras of the artist (Musaic v2.3) --- */}
         <ArtistEras
@@ -16181,26 +16197,12 @@ function TrackPage({
             <Heart className={`w-6 h-6 ${track.isLiked ? 'theme-accent fill-current' : ''}`} />
           </button>
 
-          <button 
-            onClick={() => onRateClick && onRateClick(track)} 
-            className="flex items-center gap-3 px-6 py-2.5 rounded-2xl bg-zinc-900/60 hover:bg-zinc-800 border border-white/5 hover:border-amber-400/30 text-zinc-400 hover:text-white transition-all cursor-pointer group/rate shadow-xl active:scale-95 relative overflow-hidden"
-            title="Оценить трек по 90-балльной системе"
-          >
-            <div className="absolute inset-0 bg-gradient-to-r from-amber-400/0 via-amber-400/5 to-amber-400/0 opacity-0 group-hover/rate:opacity-100 transition-opacity duration-500" />
-            <Star className="w-4 h-4 group-hover/rate:fill-amber-400 transition-colors relative z-10" />
-            <span className="text-xs font-black uppercase tracking-widest relative z-10">Оценить</span>
-          </button>
-
-          {track.rating && (
-            <motion.div 
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="relative group/score"
-            >
-              <div className="absolute inset-0 rounded-full blur-xl opacity-20 group-hover/score:opacity-40 transition-opacity bg-current" style={{ color: track.rating.totalScore === 90 ? '#fbbf24' : track.rating.totalScore >= 80 ? '#a855f7' : track.rating.totalScore >= 70 ? '#2563eb' : '#10b981' }} />
-              <RatingScoreBadge rating={track.rating} size="lg" />
-            </motion.div>
-          )}
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => onRateClick && onRateClick(track)} className="h-9 inline-flex items-center gap-2 px-3.5 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer active:scale-95" title="Оценить трек по 90-балльной системе">
+              <Star className="w-3.5 h-3.5" /><span>{track.rating ? 'Переоценить' : 'Оценить'}</span>
+            </button>
+            <TrackReviewsButton track={track} tracks={tracks} albums={albums} artists={artists} />
+          </div>
 
           <button 
             onClick={() => onMoreOptionsClick && onMoreOptionsClick(track)} 
@@ -16694,36 +16696,15 @@ function AlbumView({
               <Heart className={`w-6 h-6 ${album.isLiked ? 'theme-accent fill-current' : ''}`} />
             </button>
 
-            <button 
-              onClick={() => onRateClick && onRateClick(album)} 
-              className="flex items-center gap-2.5 px-4 py-2 rounded-full bg-zinc-900/60 hover:bg-zinc-800 border border-white/10 hover:border-amber-400/30 text-zinc-300 hover:text-white transition-all cursor-pointer group/rate active:scale-95"
-              title="Оценить альбом по 90-балльной системе"
-            >
-              <Star className="w-4 h-4 group-hover/rate:fill-amber-400 transition-colors" />
-              <span className="text-xs font-bold tracking-wide">Оценить</span>
-            </button>
-
-            <button 
-              onClick={() => navigateTo('compare', { mode: 'albums', leftId: album.id })}
-              className="px-3.5 py-2 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer"
-              title="Сравнить с другим альбомом"
-            >
-              <ArrowLeftRight className="w-3.5 h-3.5" />
-              <span>Сравнить</span>
-            </button>
-
-            {album.rating && (
-              <motion.div 
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                className="relative group/score"
-              >
-                <div className="absolute inset-0 rounded-full blur-xl opacity-20 group-hover/score:opacity-40 transition-opacity bg-current" style={{ color: album.rating.totalScore === 90 ? '#fbbf24' : album.rating.totalScore >= 80 ? '#a855f7' : album.rating.totalScore >= 70 ? '#2563eb' : '#10b981' }} />
-                <RatingScoreBadge rating={album.rating} size="lg" />
-              </motion.div>
-            )}
-
-            <AlbumReviewsButton album={album} tracks={tracks} albums={albums} artists={artists} />
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => onRateClick && onRateClick(album)} className="h-9 inline-flex items-center gap-2 px-3.5 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer active:scale-95" title="Оценить альбом по 90-балльной системе">
+                <Star className="w-3.5 h-3.5" /><span>{album.rating ? 'Переоценить' : 'Оценить'}</span>
+              </button>
+              <button type="button" onClick={() => navigateTo('compare', { mode: 'albums', leftId: album.id })} className="h-9 inline-flex items-center gap-2 px-3.5 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer active:scale-95" title="Сравнить с другим альбомом">
+                <ArrowLeftRight className="w-3.5 h-3.5" /><span>Сравнить</span>
+              </button>
+              <AlbumReviewsButton album={album} tracks={tracks} albums={albums} artists={artists} />
+            </div>
 
             <button 
               onClick={() => onMoreOptionsClick && onMoreOptionsClick(album)} 

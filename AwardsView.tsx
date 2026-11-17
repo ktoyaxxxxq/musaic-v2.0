@@ -822,7 +822,7 @@ export const AwardAssignmentModal: React.FC<{
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
-        className="relative w-full max-w-xl bg-[#0d0e13] border border-white/15 rounded-3xl overflow-hidden shadow-2xl z-10 flex flex-col max-h-[92vh]"
+        className="relative w-full max-w-2xl bg-[#0d0e13] border border-white/15 rounded-3xl overflow-hidden shadow-2xl z-10 flex flex-col max-h-[94vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -969,7 +969,7 @@ export const AwardAssignmentModal: React.FC<{
                 </div>
 
                 {/* Candidate List with Exact-period at Top and Undated at Bottom */}
-                <div className="max-h-64 overflow-y-auto custom-scrollbar space-y-2 border border-white/10 rounded-2xl p-2.5 bg-black/40">
+                <div className="max-h-[min(58vh,560px)] min-h-[260px] overflow-y-auto custom-scrollbar space-y-1.5 border border-white/10 rounded-2xl p-2 bg-black/40">
                   {eligibleCandidates.length === 0 ? (
                     <div className="py-10 text-center text-zinc-500 text-xs space-y-2">
                       <p>В периоде {periodType === 'month' ? `${MONTH_NAMES_RU[month]} ${year}` : `${year} год`} нет подходящих релизов.</p>
@@ -1200,6 +1200,234 @@ export const AwardAssignmentModal: React.FC<{
   );
 };
 
+
+// ----------------------------------------------------
+// 5. Award Ceremony — step-by-step show: nominees one by one, animated winner reveal
+//    month = spotlight scene in the site accent, year = red & gold gala with curtains
+// ----------------------------------------------------
+type CerPhase = 'intro' | 'nominees' | 'drum' | 'winner';
+const CER_T: Record<CerPhase, number> = { intro: 1900, nominees: 950, drum: 1900, winner: 4200 };
+
+const CeremonyConfetti: React.FC<{ gold: boolean; seed: number }> = ({ gold, seed }) => {
+  const parts = useMemo(() => Array.from({ length: 46 }, (_, i) => {
+    const r = (k: number) => { const x = Math.sin((seed + 1) * 9301 + i * 49297 + k * 233) * 10000; return x - Math.floor(x); };
+    return { x: (r(1) - 0.5) * 900, y: -120 - r(2) * 420, rot: r(3) * 720, d: 0.9 + r(4) * 1.4, s: 5 + r(5) * 7, c: gold ? ['#fde68a', '#fbbf24', '#f59e0b', '#fff7ed', '#ef4444'][i % 5] : ['var(--accent-color)', '#ffffff', '#a1a1aa', 'var(--accent-color)', '#e4e4e7'][i % 5], round: r(6) > 0.6 };
+  }), [gold, seed]);
+  return (
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+      {parts.map((p, i) => (
+        <motion.span key={i} className="absolute" style={{ width: p.s, height: p.round ? p.s : p.s * 0.45, background: p.c, borderRadius: p.round ? 999 : 2 }}
+          initial={{ x: 0, y: 0, opacity: 0, rotate: 0, scale: 0.4 }}
+          animate={{ x: p.x, y: [0, p.y, p.y + 520], opacity: [0, 1, 1, 0], rotate: p.rot, scale: 1 }}
+          transition={{ duration: p.d + 1.4, ease: 'easeOut', times: [0, 0.3, 1] }} />
+      ))}
+    </div>
+  );
+};
+
+export const AwardCeremony: React.FC<{
+  awards: AwardItem[];
+  annual: boolean;
+  label: string;
+  catalog: { artists: Artist[]; albums: Album[]; tracks: Track[] };
+  allAwards?: AwardItem[];
+  onClose: () => void;
+}> = ({ awards, annual, label, catalog, allAwards, onClose }) => {
+  const list = useMemo(() => awards.map(a => {
+    let live: any = a;
+    try { live = recomputeAward(a as any, catalog, allAwards); } catch { /* keep stored */ }
+    const nomsAll: AwardNominee[] = (live.nominees && live.nominees.length ? live.nominees : a.nominees) || [];
+    const w = a.winner;
+    const isW = (n: AwardNominee) => n.title.toLowerCase() === w.title.toLowerCase() && (w.type === 'artist' || !w.artistName || !n.artistName || n.artistName.toLowerCase() === w.artistName.toLowerCase());
+    const win = nomsAll.find(isW) || { title: w.title, artistName: w.artistName, coverUrl: w.coverUrl, votesPercent: undefined, type: w.type };
+    const others = nomsAll.filter(n => !isW(n)).sort((x, y) => (y.votesPercent || 0) - (x.votesPercent || 0)).slice(0, annual ? 5 : 4);
+    // reveal order: deterministic shuffle so the winner hides among the nominees
+    const order = [...others, win].map((n, i) => ({ n, k: Math.sin((a.id.length + i + 1) * 12.9898) * 43758.5453 }))
+      .sort((x, y) => (x.k - Math.floor(x.k)) - (y.k - Math.floor(y.k))).map(x => x.n);
+    return { award: a, win: { ...win, coverUrl: w.coverUrl || win.coverUrl }, order };
+  }), [awards, catalog, allAwards, annual]);
+
+  const [idx, setIdx] = useState(0);
+  const [phase, setPhase] = useState<CerPhase>('intro');
+  const [shown, setShown] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const [curtain, setCurtain] = useState(annual);
+  const [finale, setFinale] = useState(false);
+  const cur = list[idx];
+
+  const next = React.useCallback(() => {
+    if (finale) return onClose();
+    if (!cur) return;
+    if (phase === 'intro') { setPhase('nominees'); setShown(1); return; }
+    if (phase === 'nominees') { if (shown < cur.order.length) setShown(shown + 1); else setPhase('drum'); return; }
+    if (phase === 'drum') { setPhase('winner'); return; }
+    if (idx < list.length - 1) { setIdx(idx + 1); setPhase('intro'); setShown(0); } else setFinale(true);
+  }, [phase, shown, idx, list.length, cur, finale, onClose]);
+  const prev = () => { setFinale(false); if (phase !== 'intro') { setPhase('intro'); setShown(0); } else if (idx > 0) { setIdx(idx - 1); setPhase('intro'); setShown(0); } };
+  const toWinner = () => { setShown(cur?.order.length || 0); setPhase('winner'); };
+
+  useEffect(() => { if (!curtain) return; const t = setTimeout(() => setCurtain(false), 1500); return () => clearTimeout(t); }, [curtain]);
+  useEffect(() => {
+    if (!playing || curtain || finale) return;
+    const t = setTimeout(next, CER_T[phase]);
+    return () => clearTimeout(t);
+  }, [playing, curtain, finale, phase, shown, idx, next]);
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next(); }
+      else if (e.key === 'ArrowLeft') prev();
+    };
+    window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
+  });
+
+  const gold = annual;
+  const accent = gold ? '#fbbf24' : 'var(--accent-color)';
+  const pct = (n: AwardNominee) => (typeof n.votesPercent === 'number' ? `${n.votesPercent}%` : '');
+
+  return (
+    <ModalPortal>
+      <motion.div className="fixed inset-0 z-[700] overflow-hidden select-none" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        style={{ background: gold ? 'radial-gradient(120% 90% at 50% -10%, #3b0a0a 0%, #120405 45%, #050203 100%)' : 'radial-gradient(110% 80% at 50% -10%, #17181f 0%, #0a0a0d 55%, #040405 100%)' }}>
+        {/* spotlights */}
+        <motion.div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[900px] h-[900px] rounded-full pointer-events-none"
+          style={{ background: `radial-gradient(closest-side, ${gold ? 'rgba(251,191,36,.20)' : 'color-mix(in srgb, var(--accent-color) 22%, transparent)'}, transparent)` }}
+          animate={{ scale: [1, 1.08, 1], opacity: [0.7, 1, 0.7] }} transition={{ duration: 5, repeat: Infinity }} />
+        {gold && [0, 1].map(k => (
+          <motion.div key={k} className="absolute top-0 w-[38vw] h-[140vh] origin-top pointer-events-none" style={{ [k ? 'right' : 'left']: '8%', background: 'linear-gradient(to bottom, rgba(253,230,138,.10), transparent 70%)', clipPath: 'polygon(45% 0, 55% 0, 100% 100%, 0 100%)' } as any}
+            animate={{ rotate: k ? [-14, -4, -14] : [14, 4, 14] }} transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }} />
+        ))}
+
+        {/* header */}
+        <div className="absolute top-0 inset-x-0 px-5 sm:px-8 py-4 flex items-center justify-between z-20">
+          <div className="min-w-0">
+            <div className="text-[10px] font-black uppercase tracking-[0.3em]" style={{ color: accent }}>{gold ? 'Итоги года' : 'Премия месяца'}</div>
+            <div className="text-sm font-bold text-white/80 truncate">{label}</div>
+          </div>
+          <button type="button" onClick={onClose} className="w-10 h-10 rounded-full bg-white/[0.06] hover:bg-white/[0.14] text-white/80 flex items-center justify-center cursor-pointer"><X className="w-5 h-5" /></button>
+        </div>
+
+        {/* stage */}
+        <div className="absolute inset-0 flex items-center justify-center px-4 pt-16 pb-28">
+          <AnimatePresence mode="wait">
+            {finale ? (
+              <motion.div key="finale" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="w-full max-w-5xl text-center">
+                <div className="text-[11px] font-black uppercase tracking-[0.35em] mb-2" style={{ color: accent }}>Все победители</div>
+                <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight mb-8">{label}</h2>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {list.map((x, i) => (
+                    <motion.button type="button" key={x.award.id} onClick={() => { setFinale(false); setIdx(i); setPhase('winner'); setShown(x.order.length); }}
+                      initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}
+                      className="text-left rounded-2xl p-2.5 bg-white/[0.04] hover:bg-white/[0.08] border transition-colors cursor-pointer" style={{ borderColor: gold ? 'rgba(239,68,68,.35)' : 'rgba(255,255,255,.08)' }}>
+                      <div className={`aspect-square ${x.win.type === 'artist' ? 'rounded-full' : 'rounded-xl'} overflow-hidden bg-black`}>
+                        <CoverArt url={x.win.coverUrl} title={x.win.title} isArtist={x.award.winner.type === 'artist'} className="w-full h-full" innerClassName="w-full h-full object-cover" />
+                      </div>
+                      <div className="mt-2 text-[10px] font-black uppercase tracking-wider truncate" style={{ color: accent }}>{x.award.nominationTitle}</div>
+                      <div className="text-sm font-black text-white truncate">{x.win.title}</div>
+                      {x.win.artistName && x.award.winner.type !== 'artist' && <div className="text-[11px] text-zinc-400 truncate">{x.win.artistName}</div>}
+                    </motion.button>
+                  ))}
+                </div>
+              </motion.div>
+            ) : cur && phase === 'intro' ? (
+              <motion.div key={`intro-${idx}`} className="text-center" initial={{ opacity: 0, scale: 0.92, filter: 'blur(8px)' }} animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }} exit={{ opacity: 0, scale: 1.06, filter: 'blur(6px)' }} transition={{ duration: 0.6 }}>
+                <div className="text-[11px] font-black uppercase tracking-[0.4em] text-white/50 mb-4">Номинация {idx + 1} из {list.length}</div>
+                <h2 className={`font-black tracking-tight text-white ${gold ? 'text-5xl sm:text-7xl' : 'text-4xl sm:text-6xl'}`} style={{ textShadow: `0 0 60px ${gold ? 'rgba(251,191,36,.35)' : 'rgba(255,255,255,.15)'}` }}>{cur.award.nominationTitle}</h2>
+                <motion.div className="mx-auto mt-6 h-px" style={{ background: `linear-gradient(90deg, transparent, ${accent}, transparent)` }} initial={{ width: 0 }} animate={{ width: 320 }} transition={{ duration: 1.1, delay: 0.2 }} />
+                <div className="mt-4 text-sm text-white/60 font-semibold">{cur.order.length} {cur.order.length < 5 ? 'номинанта' : 'номинантов'}</div>
+              </motion.div>
+            ) : cur ? (
+              <motion.div key={`stage-${idx}`} className="w-full max-w-5xl" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <div className="text-center mb-6">
+                  <div className="text-[10px] font-black uppercase tracking-[0.35em]" style={{ color: accent }}>{cur.award.nominationTitle}</div>
+                  <AnimatePresence mode="wait">
+                    {phase === 'drum' && (
+                      <motion.div key="drum" className="mt-2 text-2xl sm:text-4xl font-black text-white" initial={{ opacity: 0, y: 8 }} animate={{ opacity: [0.4, 1, 0.4], y: 0 }} transition={{ opacity: { duration: 0.9, repeat: Infinity } }} exit={{ opacity: 0 }}>
+                        И победителем становится…
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {phase === 'winner' ? (
+                  <div className="relative flex flex-col items-center">
+                    <CeremonyConfetti gold={gold} seed={idx} />
+                    <motion.div className="absolute w-[420px] h-[420px] rounded-full pointer-events-none" style={{ background: `conic-gradient(from 0deg, transparent, ${gold ? 'rgba(251,191,36,.22)' : 'color-mix(in srgb, var(--accent-color) 25%, transparent)'}, transparent 30%, transparent 50%, ${gold ? 'rgba(239,68,68,.18)' : 'rgba(255,255,255,.08)'}, transparent 80%)` }}
+                      animate={{ rotate: 360 }} transition={{ duration: 14, repeat: Infinity, ease: 'linear' }} />
+                    <motion.div initial={{ scale: 0.3, opacity: 0, rotate: -6 }} animate={{ scale: 1, opacity: 1, rotate: 0 }} transition={{ type: 'spring', stiffness: 160, damping: 14 }}
+                      className={`relative w-56 h-56 sm:w-72 sm:h-72 ${cur.award.winner.type === 'artist' ? 'rounded-full' : 'rounded-3xl'} overflow-hidden`}
+                      style={{ boxShadow: `0 0 0 ${gold ? 3 : 2}px ${gold ? '#fbbf24' : 'rgba(255,255,255,.7)'}, 0 30px 120px -10px ${gold ? 'rgba(251,191,36,.55)' : 'color-mix(in srgb, var(--accent-color) 55%, transparent)'}` }}>
+                      <CoverArt url={cur.win.coverUrl} title={cur.win.title} isArtist={cur.award.winner.type === 'artist'} className="w-full h-full" innerClassName="w-full h-full object-cover" />
+                    </motion.div>
+                    <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }} className="relative text-center mt-6">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider" style={{ background: gold ? 'rgba(251,191,36,.16)' : 'rgba(255,255,255,.08)', color: accent }}>
+                        <Trophy className="w-3.5 h-3.5" /> Победитель{pct(cur.win) && ` · ${pct(cur.win)} голосов`}
+                      </div>
+                      <div className={`mt-2 font-black text-white tracking-tight ${gold ? 'text-4xl sm:text-6xl' : 'text-3xl sm:text-5xl'}`}>{cur.win.title}</div>
+                      {cur.win.artistName && cur.award.winner.type !== 'artist' && <div className="text-base sm:text-lg text-white/60 font-semibold mt-1">{cur.win.artistName}</div>}
+                    </motion.div>
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.8 }} className="relative mt-6 flex flex-wrap justify-center gap-2 max-w-3xl">
+                      {cur.order.filter(n => n !== cur.win && !(n.title === cur.win.title && n.artistName === cur.win.artistName)).map((n, i) => (
+                        <span key={i} className="text-[11px] px-2.5 py-1 rounded-full bg-white/[0.05] text-white/60">{n.title}{pct(n) && <span className="text-white/35"> · {pct(n)}</span>}</span>
+                      ))}
+                    </motion.div>
+                  </div>
+                ) : (
+                  <div className={`grid gap-3 sm:gap-4 justify-center ${cur.order.length > 5 ? 'grid-cols-3 sm:grid-cols-6' : cur.order.length === 5 ? 'grid-cols-3 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}>
+                    {cur.order.map((n, i) => (
+                      <motion.div key={`${idx}-${i}`} initial={{ opacity: 0, y: 30, scale: 0.85 }} animate={i < shown ? { opacity: phase === 'drum' ? 0.55 : 1, y: 0, scale: phase === 'drum' ? 0.96 : 1 } : { opacity: 0, y: 30, scale: 0.85 }}
+                        transition={{ type: 'spring', stiffness: 220, damping: 22 }} className="text-center">
+                        <div className={`aspect-square ${n.type === 'artist' || cur.award.winner.type === 'artist' ? 'rounded-full' : 'rounded-2xl'} overflow-hidden bg-black border`} style={{ borderColor: gold ? 'rgba(251,191,36,.25)' : 'rgba(255,255,255,.10)' }}>
+                          <CoverArt url={n.coverUrl} title={n.title} isArtist={n.type === 'artist' || cur.award.winner.type === 'artist'} className="w-full h-full" innerClassName="w-full h-full object-cover" />
+                        </div>
+                        <div className="mt-2 text-[13px] font-black text-white truncate">{n.title}</div>
+                        {n.artistName && n.type !== 'artist' && cur.award.winner.type !== 'artist' && <div className="text-[11px] text-white/50 truncate">{n.artistName}</div>}
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+
+        {/* curtains for the year gala */}
+        <AnimatePresence>
+          {curtain && [0, 1].map(k => (
+            <motion.div key={`c${k}`} className="absolute top-0 bottom-0 w-1/2 z-30" style={{ [k ? 'right' : 'left']: 0, background: 'repeating-linear-gradient(90deg, #5b0b0b 0 26px, #7f1d1d 26px 52px)', boxShadow: 'inset 0 0 120px rgba(0,0,0,.7)' } as any}
+              initial={{ x: 0 }} exit={{ x: k ? '100%' : '-100%' }} transition={{ duration: 1.1, ease: [0.7, 0, 0.3, 1] }} />
+          ))}
+        </AnimatePresence>
+
+        {/* controls */}
+        <div className="absolute bottom-0 inset-x-0 z-20 px-4 pb-5">
+          <div className="mx-auto max-w-xl flex flex-col items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              {list.map((_, i) => (
+                <button type="button" key={i} onClick={() => { setFinale(false); setIdx(i); setPhase('intro'); setShown(0); }}
+                  className="h-1.5 rounded-full transition-all cursor-pointer" style={{ width: i === idx && !finale ? 22 : 8, background: i < idx || finale ? accent : i === idx ? '#fff' : 'rgba(255,255,255,.2)' }} />
+              ))}
+            </div>
+            <div className="flex items-center gap-2 p-1.5 rounded-full bg-black/50 border border-white/10 backdrop-blur-xl">
+              <button type="button" onClick={prev} className="w-9 h-9 rounded-full hover:bg-white/10 text-white/80 flex items-center justify-center cursor-pointer" title="Назад"><ChevronLeft className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setPlaying(p => !p)} className="px-4 h-9 rounded-full bg-white text-black text-xs font-black cursor-pointer">{playing ? 'Пауза' : 'Авто'}</button>
+              {!finale && phase !== 'winner' && <button type="button" onClick={toWinner} className="px-3 h-9 rounded-full hover:bg-white/10 text-white/80 text-xs font-bold cursor-pointer">К победителю</button>}
+              <button type="button" onClick={next} className="w-9 h-9 rounded-full hover:bg-white/10 text-white/80 flex items-center justify-center cursor-pointer" title="Дальше"><ChevronRight className="w-4 h-4" /></button>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </ModalPortal>
+  );
+};
+
+export const CeremonyButton: React.FC<{ onClick: () => void; annual?: boolean }> = ({ onClick, annual }) => (
+  <button type="button" onClick={onClick} title="Смотреть церемонию"
+    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold transition-colors cursor-pointer ${annual ? 'border-red-500/30 text-red-300 hover:bg-red-500/10' : 'border-white/10 text-zinc-400 hover:text-white hover:bg-white/[0.06]'}`}>
+    <Play className="w-3 h-3 fill-current" /> Церемония
+  </button>
+);
+
 // ----------------------------------------------------
 // 4. Main Awards View Component
 // ----------------------------------------------------
@@ -1241,6 +1469,8 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
   }, [initialMonth]);
 
   const [selectedNomination, setSelectedNomination] = useState<string>('all');
+  const [ceremony, setCeremony] = useState<null | { awards: AwardItem[]; annual: boolean; label: string }>(null);
+  const openCeremony = (list: AwardItem[], annual: boolean, label: string) => { if (list.length) setCeremony({ awards: list, annual, label }); };
 
   // Modal states
   const [activeModalAward, setActiveModalAward] = useState<AwardItem | null>(null);
@@ -1367,11 +1597,8 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
                        }
                     }
 
-                    onSaveAward({
-                       ...aw,
-                       winner: { ...win, coverUrl: latestCover },
-                       nominees: updatedNominees.length > 0 ? updatedNominees : undefined
-                    });
+                    void updatedNominees;
+                    onSaveAward(recomputeAward({ ...aw, winner: { ...win, coverUrl: latestCover } } as any, { artists, albums, tracks }, awards));
                  });
                  showToast?.('Данные премий обновлены (фото и метрики актуализированы)');
               }}
@@ -1560,6 +1787,8 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
                       </span>
                     </div>
 
+                    <div className="flex items-center gap-3">
+                    <CeremonyButton annual onClick={() => openCeremony(annualAwardsForYear, true, `Итоги ${selectedYear} года`)} />
                     <button
                       onClick={() => setSelectedPeriod('year_review')}
                       className="text-xs font-bold text-zinc-400 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer group"
@@ -1567,6 +1796,7 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
                       <span>Открыть премию</span>
                       <span className="group-hover:translate-x-1 transition-transform">→</span>
                     </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -1609,6 +1839,8 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
                         </span>
                       </div>
 
+                      <div className="flex items-center gap-3">
+                      <CeremonyButton onClick={() => openCeremony(group.awards, false, `${group.monthName} ${selectedYear}`)} />
                       <button
                         onClick={() => setSelectedPeriod(group.monthKey)}
                         className="text-xs font-bold text-zinc-400 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer group"
@@ -1616,6 +1848,7 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
                         <span>Открыть премию</span>
                         <span className="group-hover:translate-x-1 transition-transform">→</span>
                       </button>
+                      </div>
                     </div>
 
                     {/* Horizontal scroll / carousel grid matching Screenshot 2 */}
@@ -1650,6 +1883,12 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
                     8 главных номинаций года с красными лауреатскими рамками
                   </p>
                 </div>
+                {currentFilteredAwards.length > 0 && (
+                  <button type="button" onClick={() => openCeremony(currentFilteredAwards, true, `Итоги ${selectedYear} года`)}
+                    className="shrink-0 inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white text-xs font-black transition-colors cursor-pointer shadow-lg">
+                    <Play className="w-3.5 h-3.5 fill-current" /> Церемония
+                  </button>
+                )}
               </div>
 
               {currentFilteredAwards.length === 0 ? (
@@ -1693,6 +1932,7 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
                     Победители месяца в основных номинациях ({currentFilteredAwards.length})
                   </p>
                 </div>
+                {currentFilteredAwards.length > 0 && <CeremonyButton onClick={() => openCeremony(currentFilteredAwards, false, `${MONTH_NAMES_RU[selectedPeriod] || selectedPeriod} ${selectedYear}`)} />}
               </div>
 
               {currentFilteredAwards.length === 0 ? (
@@ -1745,6 +1985,10 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
         onSaveAward={(a) => { onSaveAward(a); setActiveModalAward(a); }}
         allAwards={awards}
       />}
+
+      <AnimatePresence>
+        {ceremony && <AwardCeremony key="ceremony" awards={ceremony.awards} annual={ceremony.annual} label={ceremony.label} catalog={{ artists, albums, tracks }} allAwards={awards} onClose={() => setCeremony(null)} />}
+      </AnimatePresence>
 
       {/* Assignment / Hand-out Award Modal */}
       {isAssignModalOpen && <AwardAssignmentModal

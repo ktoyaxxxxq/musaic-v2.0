@@ -115,12 +115,13 @@ export function useHeroSettings(artistId: string, base?: Partial<HeroSettings>) 
 const HEIGHT = { s: 340, m: 440, l: 540, xl: 660 };
 const SHAPE: Record<HeroSettings['avatarShape'], string> = { circle: '9999px', squircle: '32%', rounded: '24px', square: '6px', arch: '9999px 9999px 18px 18px' };
 
-const Photo: React.FC<{ src?: string; s: HeroSettings; className?: string; style?: React.CSSProperties }> = ({ src, s, className = '', style }) => (
+const Photo: React.FC<{ src?: string; s: HeroSettings; className?: string; style?: React.CSSProperties; fb?: React.ReactNode }> = ({ src, s, className = '', style, fb }) => (
   <div className={`relative overflow-hidden bg-zinc-900 ${className}`} style={style}>
     {src && (
       <img src={src} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500"
         style={{ objectPosition: `${s.focusX}% ${s.focusY}%`, transform: `scale(${s.zoom})`, transformOrigin: `${s.focusX}% ${s.focusY}%`, filter: s.tint === 'mono' ? 'grayscale(1) contrast(1.05)' : undefined }} />
     )}
+    {!src && fb && <div className="absolute inset-0 [&>*]:!w-full [&>*]:!h-full" style={{ filter: s.tint === 'mono' ? 'grayscale(1)' : undefined }}>{fb}</div>}
   </div>
 );
 
@@ -136,8 +137,9 @@ export const ArtistHeroV2: React.FC<{
   palette?: string[];
   defaultVariant?: 'cinema' | 'poster';
   onZoom?: () => void;
+  fallback?: React.ReactNode;
   children?: React.ReactNode;
-}> = ({ artistId, name, imageUrl, verified, subtitle, palette, defaultVariant, onZoom, children }) => {
+}> = ({ artistId, name, imageUrl, verified, subtitle, palette, defaultVariant, onZoom, fallback, children }) => {
   const base = useMemo<Partial<HeroSettings> | undefined>(() => (defaultVariant === 'cinema' ? { mode: 'poster', posterLayout: 'fullbleed' } : undefined), [defaultVariant]);
   const { s, scope, update, setScope, reset } = useHeroSettings(artistId, base);
   const [panel, setPanel] = useState(false);
@@ -183,23 +185,23 @@ export const ArtistHeroV2: React.FC<{
     <motion.div layout className={`relative z-10 shrink-0 ${frameCls} ${shadow}`}
       style={{ width: `min(${w}px, 72vw)`, borderRadius: s.posterFrame === 'polaroid' ? 6 : s.cardRadius + 4 }}>
       <div onClick={onZoom} className={onZoom ? 'cursor-zoom-in' : ''}>
-        <Photo src={imageUrl} s={s} style={{ aspectRatio: s.posterAspect, borderRadius: s.posterFrame === 'polaroid' ? 3 : s.cardRadius }} />
+        <Photo src={imageUrl} fb={fallback} s={s} style={{ aspectRatio: s.posterAspect, borderRadius: s.posterFrame === 'polaroid' ? 3 : s.cardRadius }} />
       </div>
     </motion.div>
   );
 
   // background
-  const blurBg = imageUrl && (
+  const blurBg = !imageUrl ? (fallback ? <div aria-hidden className="absolute inset-0 [&>*]:!w-full [&>*]:!h-full" style={{ filter: `blur(${s.bgBlur}px) saturate(1.15)`, transform: 'scale(1.25)' }}>{fallback}</div> : null) : (
     <img src={imageUrl} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover"
       style={{ objectPosition: `${s.focusX}% ${s.focusY}%`, filter: `blur(${s.bgBlur}px) saturate(1.15) ${s.tint === 'mono' ? 'grayscale(1)' : ''}`, transform: 'scale(1.25)' }} />
   );
   let bg: React.ReactNode;
   if (isPoster && L === 'fullbleed') {
-    bg = <Photo src={imageUrl} s={expanded ? { ...s, focusX: 50, focusY: 50, zoom: 1 } : s} className="absolute inset-0" />;
+    bg = <Photo src={imageUrl} fb={fallback} s={expanded ? { ...s, focusX: 50, focusY: 50, zoom: 1 } : s} className="absolute inset-0" />;
   } else if (!isPoster && s.classicBg === 'banner') {
-    bg = <div className="absolute inset-x-0 top-0 h-[62%]"><Photo src={imageUrl} s={s} className="absolute inset-0" style={{ filter: s.bgBlur > 0 ? `blur(${Math.round(s.bgBlur / 8)}px)` : undefined }} /></div>;
+    bg = <div className="absolute inset-x-0 top-0 h-[62%]"><Photo src={imageUrl} fb={fallback} s={s} className="absolute inset-0" style={{ filter: s.bgBlur > 0 ? `blur(${Math.round(s.bgBlur / 8)}px)` : undefined }} /></div>;
   } else if (!isPoster && s.classicBg === 'duotone') {
-    bg = <>{imageUrl && <img src={imageUrl} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover" style={{ filter: 'grayscale(1) contrast(1.15) blur(2px)', objectPosition: `${s.focusX}% ${s.focusY}%` }} />}
+    bg = <>{!imageUrl && fallback && <div className="absolute inset-0 [&>*]:!w-full [&>*]:!h-full" style={{ filter: 'grayscale(1) contrast(1.15) blur(2px)' }}>{fallback}</div>}{imageUrl && <img src={imageUrl} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover" style={{ filter: 'grayscale(1) contrast(1.15) blur(2px)', objectPosition: `${s.focusX}% ${s.focusY}%` }} />}
       <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${c0}, ${c1})`, mixBlendMode: 'multiply' }} /></>;
   } else if ((!isPoster && s.classicBg === 'gradient') || (isPoster && s.posterBg === 'palette')) {
     bg = <div className="absolute inset-0" style={{ background: `radial-gradient(90% 120% at 15% 10%, ${c0}88 0%, transparent 60%), radial-gradient(80% 100% at 85% 30%, ${c1}66 0%, transparent 65%)` }} />;
@@ -217,7 +219,7 @@ export const ArtistHeroV2: React.FC<{
       : s.avatarRing === 'double' ? `0 0 0 4px var(--bg-color, #09090b), 0 0 0 5px rgba(255,255,255,0.35)` : 'none';
     const avatar = (
       <div onClick={onZoom} className={`shrink-0 ${onZoom ? 'cursor-zoom-in' : ''}`}>
-        <Photo src={imageUrl} s={s} className="shadow-2xl" style={{ width: `min(${px}px, 46vw)`, aspectRatio: '1 / 1', borderRadius: SHAPE[s.avatarShape], boxShadow: ring }} />
+        <Photo src={imageUrl} fb={fallback} s={s} className="shadow-2xl" style={{ width: `min(${px}px, 46vw)`, aspectRatio: '1 / 1', borderRadius: SHAPE[s.avatarShape], boxShadow: ring }} />
       </div>
     );
     body = (
@@ -508,7 +510,7 @@ function parseTs(d?: string, year?: number | string): number | null {
 }
 const hashHue = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360; return h; };
 const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
-const fmtTs = (ts: number) => { const d = new Date(ts); return `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
+const fmtTs = (ts: number) => { const d = new Date(ts); void MONTHS; return `${String(d.getUTCMonth() + 1).padStart(2, '0')}-${d.getUTCFullYear()}`; };
 export const eraRange = (e: ArtistEra) => (fmtTs(e.from) === fmtTs(e.to) ? fmtTs(e.from) : `${fmtTs(e.from)} — ${fmtTs(e.to)}`);
 export const eraHas = (era: ArtistEra | undefined, item: { id: string }, type: 'album' | 'track') =>
   !era ? true : type === 'album' ? era.albumIds.has(item.id) : era.trackIds.has(item.id);

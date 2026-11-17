@@ -193,7 +193,8 @@ export function formatSimDate(isoDate: string): string {
   const months = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
   const [y, m, d] = isoDate.split('-');
   if (!y || !m || !d) return isoDate;
-  return `${parseInt(d, 10)} ${months[Math.max(0, parseInt(m, 10) - 1)]} ${y}`;
+  void months;
+  return `${String(parseInt(d, 10)).padStart(2, '0')}-${String(parseInt(m, 10)).padStart(2, '0')}-${y}`;
 }
 
 function formatCompact(num: number): string {
@@ -1874,7 +1875,7 @@ export function generateWeekProposals(
       return {
         metrics: m,
         isPreferred: preferredSet.has(m.artist.id),
-        rollScore: m.readinessScore + focusBonus + randRange(0, 22)
+        rollScore: m.readinessScore + focusBonus + steadyDropperBonus(m) + randRange(0, 22)
       };
     })
     .sort((a, b) => b.rollScore - a.rollScore);
@@ -2105,6 +2106,46 @@ export interface ManualSimItem {
 }
 
 // Match ChartsView formula 1:1 so chart history aligns with what user sees on Charts screen
+/** artists who drop steadily also get a chance, not only the long-silent ones */
+function steadyDropperBonus(m: ArtistSimMetrics): number {
+  const tc = (m as any).tracksCount || 0;
+  if (m.daysSilent >= 5 && m.daysSilent <= 42 && tc >= 5) return randRange(4, 22);
+  if (m.daysSilent > 42 && m.daysSilent <= 90 && tc >= 3) return randRange(0, 10);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Catalog revivals: sometimes an old track suddenly flies back into the chart
+// ---------------------------------------------------------------------------
+const REVIVAL_REASONS = [
+  'завирусился в TikTok', 'прозвучал в популярном сериале', 'годовщина релиза — фанаты устроили флешмоб', 'новый релиз артиста подтянул каталог',
+  'стал мемом недели', 'вирусный кавер вернул интерес к оригиналу', 'ремикс диджея разогнал оригинал', 'стример включил его на многотысячной трансляции',
+  'звучит в рекламе крупного бренда', 'ушёл в спортивные хайлайты', 'попал в редакционный плейлист', 'просто так — алгоритмы решили',
+  'всплыл в тренде «звук из детства»', 'после громкого интервью артиста', 'его перепели на шоу талантов', 'стал саундтреком вирусного видео'
+];
+function applyCatalogRevivals(list: Track[], toDate: string): string | null {
+  const nowMs = new Date(toDate).getTime();
+  const roll = Math.random();
+  if (roll > 0.24) return null; // ~1 week of 4-5
+  const cands = list.map((t, i) => ({ t, i })).filter(({ t }) => {
+    if (t.isSnippet || !t.releaseDate || t.releaseDate > toDate) return false;
+    const age = (nowMs - new Date(t.releaseDate).getTime()) / 86400000;
+    const last = (t as any).revivalAt ? (nowMs - new Date((t as any).revivalAt).getTime()) / 86400000 : 9999;
+    return age >= 150 && last > 120 && (t.plays || 0) > 20_000;
+  });
+  if (!cands.length) return null;
+  const weights = cands.map(({ t }) => Math.sqrt(t.plays || 1) * (0.4 + Math.random()));
+  let x = Math.random() * weights.reduce((a, b) => a + b, 0);
+  let k = 0; while (k < cands.length - 1 && (x -= weights[k]) > 0) k++;
+  const { t, i } = cands[k];
+  const big = Math.random();
+  const power = big < 0.12 ? randRange(28, 48) : big < 0.4 ? randRange(14, 26) : randRange(6, 13);
+  const reason = REVIVAL_REASONS[randInt(0, REVIVAL_REASONS.length - 1)];
+  const boost = Math.round((t.plays || 0) * randRange(0.015, 0.06) * (power / 14));
+  list[i] = { ...t, plays: (t.plays || 0) + boost, likes: (t.likes || 0) + Math.round(boost * 0.04), ...({ revivalAt: toDate, revivalPower: power, revivalReason: reason } as any) };
+  return `Камбэк из каталога: ${t.artistName} — «${t.title}» ${reason}`;
+}
+
 function rankTracksForChart(tracks: Track[], dateStr: string): Track[] {
   const nowMs = new Date(dateStr).getTime();
   return tracks
@@ -2128,7 +2169,10 @@ function rankTracksForChart(tracks: Track[], dateStr: string): Track[] {
         longevityMult *= 0.88 + clamp(t.releaseHype, 10, 99) / 380;
       }
 
-      const hotScore = Math.round(((t.plays || 0) * recencyBoost * longevityMult * 12) / Math.pow(diffDays + 5, 0.66));
+      const rvAt = (t as any).revivalAt as string | undefined;
+      const rvLeft = rvAt && diffDays > 120 ? Math.max(0, 1 - Math.max(0, (nowMs - new Date(rvAt).getTime()) / 86400000) / 35) : 0;
+      const revivalMult = rvLeft > 0 ? 1 + ((t as any).revivalPower || 10) * rvLeft : 1;
+      const hotScore = Math.round(((t.plays || 0) * recencyBoost * longevityMult * revivalMult * 12) / Math.pow(diffDays + 5, 0.66));
       return { track: t, hotScore };
     })
     .sort((a, b) => b.hotScore - a.hotScore)
@@ -2589,6 +2633,7 @@ export function advanceSimulationStep(params: {
     return sum && sum > 0 ? { ...al, totalPlays: sum } : al;
   });
 
+  const revivalNote = applyCatalogRevivals(updatedTracksPreChart, toDate);
   const newRankedTracks = rankTracksForChart(updatedTracksPreChart, toDate);
   const newTrackRankMap = new Map<string, number>();
   const top50CountByArtist = new Map<string, number>();
@@ -2754,6 +2799,7 @@ export function advanceSimulationStep(params: {
   const losers = [...listenerChanges].filter(x => x.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 4);
 
   const highlights: string[] = [];
+  if (revivalNote) highlights.push(revivalNote);
   const realDropsCount = newAlbums.length + newTracks.filter(t => !t.isSnippet && t.albumId === 'single').length;
   const snippetsCount = newTracks.filter(t => t.isSnippet).length;
 
@@ -8462,6 +8508,8 @@ const SimManualTab = memo(({
   );
 });
 
+const SIM_CALM_CSS = `.sim-calm [class*='bg-emerald-500/'],.sim-calm [class*='bg-amber-500/'],.sim-calm [class*='bg-fuchsia-500/'],.sim-calm [class*='bg-sky-500/'],.sim-calm [class*='bg-violet-500/'],.sim-calm [class*='bg-rose-500/'],.sim-calm [class*='bg-red-500/'],.sim-calm [class*='bg-blue-500/'],.sim-calm [class*='bg-cyan-500/'],.sim-calm [class*='bg-orange-500/'],.sim-calm [class*='bg-purple-500/'],.sim-calm [class*='bg-pink-500/'],.sim-calm [class*='bg-indigo-500/'],.sim-calm [class*='bg-teal-500/'],.sim-calm [class*='bg-yellow-500/'],.sim-calm [class*='bg-lime-500/'],.sim-calm [class*='bg-emerald-400/'],.sim-calm [class*='bg-amber-400/']{background-color:rgba(255,255,255,.045)!important}.sim-calm [class*='border-emerald-'],.sim-calm [class*='border-amber-'],.sim-calm [class*='border-fuchsia-'],.sim-calm [class*='border-sky-'],.sim-calm [class*='border-violet-'],.sim-calm [class*='border-rose-'],.sim-calm [class*='border-red-'],.sim-calm [class*='border-blue-'],.sim-calm [class*='border-cyan-'],.sim-calm [class*='border-orange-'],.sim-calm [class*='border-purple-'],.sim-calm [class*='border-pink-'],.sim-calm [class*='border-indigo-'],.sim-calm [class*='border-teal-'],.sim-calm [class*='border-yellow-']{border-color:rgba(255,255,255,.08)!important}.sim-calm [class*='bg-gradient-to-']:not(.theme-bg-accent){background-image:none!important;background-color:rgba(255,255,255,.035)!important}.sim-calm [class*='shadow-']:not(.theme-bg-accent){box-shadow:none!important}.sim-calm [class*='border-white/1'],.sim-calm [class*='border-white/2']{border-color:rgba(255,255,255,.07)!important}.sim-calm p.text-xs.text-zinc-300,.sim-calm p.text-\\[11px\\].text-zinc-300{color:rgb(113 113 122)!important}.sim-calm .rounded-2xl,.sim-calm .rounded-3xl{transition:background-color .25s ease,border-color .25s ease}`;
+
 export const SimConsoleModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
@@ -8857,6 +8905,8 @@ export const SimConsoleModal: React.FC<{
     [handleAddArtistProposal]
   );
 
+  const [calmView, setCalmView] = useState<boolean>(() => { try { return localStorage.getItem('musaic.sim.calm') !== '0'; } catch { return true; } });
+  const toggleCalm = () => setCalmView(v => { const n = !v; try { localStorage.setItem('musaic.sim.calm', n ? '1' : '0'); } catch { /* */ } return n; });
   const handleRadarCreateManual = useCallback((art: Artist) => {
     setRadarAssignSignal({ seq: Date.now(), artistId: art.id, genre: art.genre || '' });
     setTab('manual');
@@ -8874,7 +8924,8 @@ export const SimConsoleModal: React.FC<{
   return createPortal(
     <div className="fixed inset-0 z-[210] flex items-center justify-center p-2.5 sm:p-5">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-[calc(100vw-1.25rem)] sm:w-[calc(100vw-2.5rem)] max-w-6xl h-[calc(100vh-1.25rem)] sm:h-[88vh] bg-zinc-950 border border-white/12 rounded-3xl shadow-2xl overflow-hidden z-10 flex flex-col min-w-0">
+      <div className={`relative w-[calc(100vw-1.25rem)] sm:w-[calc(100vw-2.5rem)] max-w-6xl h-[calc(100vh-1.25rem)] sm:h-[88vh] bg-zinc-950 border border-white/12 rounded-3xl shadow-2xl overflow-hidden z-10 flex flex-col min-w-0 ${calmView ? 'sim-calm' : ''}`}>
+        <style>{SIM_CALM_CSS}</style>
         {/* Subtle static top glow */}
         <div
           className="absolute top-0 left-0 right-0 h-28 pointer-events-none opacity-20"
@@ -8892,6 +8943,12 @@ export const SimConsoleModal: React.FC<{
             <p className="text-xs text-zinc-300 tabular-nums mt-0.5">
               Неделя {simState.weekNumber} · {simState.artists.length} артистов · {simState.tracks.length} треков
             </p>
+            <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[11px] tabular-nums">
+              <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200" title="Отмечено релизов на эту неделю">✓ {selectedProposalsCount} в релиз</span>
+              <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200" title="Прогноз прослушиваний отмеченных релизов">≈ {formatCompact(proposals.filter(p => p.selected).reduce((s, p) => s + (p.estimatedPlays || 0), 0))} просл.</span>
+              <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200" title="Релизов с фитами среди отмеченных">feat · {proposals.filter(p => p.selected && p.featuredArtist).length}</span>
+              <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200" title="Следующая дата">→ {formatSimDate(addDaysISO(simState.currentDate, 7))}</span>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 min-w-0">
@@ -8915,6 +8972,14 @@ export const SimConsoleModal: React.FC<{
                 </button>
               ))}
             </div>
+            <button
+              type="button"
+              onClick={toggleCalm}
+              title={calmView ? 'Сейчас спокойный вид: меньше цвета и рамок. Нажми, чтобы вернуть яркий' : 'Включить спокойный, менее загруженный вид'}
+              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors cursor-pointer shrink-0 ${calmView ? 'border-white/15 text-white bg-white/[0.06]' : 'border-white/10 text-zinc-400 hover:text-white'}`}
+            >
+              {calmView ? 'Спокойный вид' : 'Яркий вид'}
+            </button>
             <button
               type="button"
               onClick={onClose}

@@ -28,7 +28,7 @@ function parseDay(s?: string): string | null {
   return null;
 }
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
-const shortDate = (iso: string) => { const [y, m, d] = iso.split('-'); return `${+d} ${MONTHS[+m - 1].slice(0, 3).toLowerCase()} ${y}`; };
+const shortDate = (iso: string) => { const [y, m, d] = iso.split('-'); return `${String(+d).padStart(2, '0')}-${String(+m).padStart(2, '0')}-${y}`; };
 const fmt = (n: number) => n.toLocaleString('ru-RU');
 
 /** small cover for localStorage (keeps the data light) */

@@ -121,7 +121,7 @@ export interface Track {
   releaseHype?: number;
 }
 
-export type ViewType = 'home' | 'charts' | 'search' | 'library' | 'artist' | 'album' | 'creator' | 'track' | 'artist_tracks' | 'likes' | 'rating' | 'album_value' | 'compare' | 'news';
+export type ViewType = 'home' | 'charts' | 'search' | 'library' | 'artist' | 'album' | 'creator' | 'track' | 'artist_tracks' | 'likes' | 'rating' | 'album_value' | 'compare' | 'news' | 'social';
 
 export interface NavigationState {
   view: ViewType;

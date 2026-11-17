@@ -18,6 +18,7 @@ import { CoverArt, resolveMedia, formatNumber } from './App';
 import { setArtistAwardsSource as setHeroAwardsSource, splitNames } from './profile/ArtistHero';
 import type { ArtistEra, EraRelease } from './profile/ArtistHero';
 import { generateModernTitle, analyzeArtistNamingStyle } from './titleGen';
+import { recomputeAward } from './awards/awardEngine';
 import { computeAllArtistMetrics, forecastReleasePlays, generateAlbumTracksWithFeats, getPromoStrategyConfig, computeFanExpectation } from './SimulationMode';
 
 // ---------------------------------------------------------------------------
@@ -28,8 +29,8 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 const toISO = (ms: number) => { const d = new Date(ms); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; };
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const MONTHS_FULL = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
-const fmtDay = (ms: number) => { const d = new Date(ms); return `${d.getUTCDate()} ${MONTHS_SHORT[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
-const fmtDayShort = (ms: number) => { const d = new Date(ms); return `${d.getUTCDate()} ${MONTHS_SHORT[d.getUTCMonth()]}`; };
+const fmtDay = (ms: number) => { const d = new Date(ms); return `${pad2(d.getUTCDate())}-${pad2(d.getUTCMonth() + 1)}-${d.getUTCFullYear()}`; };
+const fmtDayShort = (ms: number) => { const d = new Date(ms); return `${pad2(d.getUTCDate())}-${pad2(d.getUTCMonth() + 1)}`; };
 export const fmtN = (n: number) => {
   const v = Math.max(0, Math.round(n || 0));
   if (v >= 1e9) return `${(v / 1e9).toFixed(v >= 1e10 ? 0 : 1).replace('.', ',')} млрд`;
@@ -1109,10 +1110,15 @@ function artistMatches(name: string, title?: string, artistName?: string) {
 export const ArtistAwardsButton: React.FC<{
   artist: { id: string; name: string; imageUrl?: string };
   tracks: Track[];
+  albums?: Album[];
+  artists?: Artist[];
   navigateTo: (view: ViewType, params?: any) => void;
-}> = ({ artist, tracks, navigateTo }) => {
+}> = ({ artist, tracks, albums, artists, navigateTo }) => {
   usePlusCss();
-  const awards = useStore(awardsStore);
+  const stored = useStore(awardsStore);
+  const dStored = useDeferredValue(stored);
+  // live: nominees & votes recomputed from the current catalog (same as the awards page)
+  const awards = useMemo(() => (albums && artists ? dStored.map(a => { try { return recomputeAward(a as any, { artists, albums, tracks }, dStored) as AwardItem; } catch { return a; } }) : dStored), [dStored, albums, artists, tracks]);
   const [open, setOpen] = useState(false);
   const data = useMemo(() => {
     const won: AwardItem[] = []; const noms: Array<{ a: AwardItem; place: number; pct?: number; title: string }> = [];
@@ -1120,9 +1126,10 @@ export const ArtistAwardsButton: React.FC<{
       const w = a.winner;
       const isWin = w.type === 'artist' ? norm(w.title) === norm(artist.name) : artistMatches(artist.name, undefined, w.artistName);
       if (isWin) { won.push(a); continue; }
-      const list = [...(a.nominees || [])].sort((x, y) => (y.votesPercent || 0) - (x.votesPercent || 0));
+      const isWinnerRow = (nm: any) => norm(nm.title) === norm(w.title) && (w.type === 'artist' || !w.artistName || !nm.artistName || norm(nm.artistName) === norm(w.artistName));
+      const list = [...(a.nominees || [])].filter(nm => !isWinnerRow(nm)).sort((x, y) => (y.votesPercent || 0) - (x.votesPercent || 0));
       const idx = list.findIndex(nm => (nm.type === 'artist' || !nm.artistName) ? norm(nm.title) === norm(artist.name) : artistMatches(artist.name, undefined, nm.artistName));
-      if (idx >= 0) noms.push({ a, place: idx + 1, pct: list[idx].votesPercent, title: list[idx].title });
+      if (idx >= 0) noms.push({ a, place: idx + 2, pct: list[idx].votesPercent, title: list[idx].title }); // 1st = the winner
     }
     won.sort((x, y) => awardSortTs(y) - awardSortTs(x));
     noms.sort((x, y) => awardSortTs(y.a) - awardSortTs(x.a));
@@ -1234,7 +1241,7 @@ const AwardsModal: React.FC<{ artist: { id: string; name: string; imageUrl?: str
               {(data.noms as Array<{ a: AwardItem; place: number; pct?: number; title: string }>).map(n => (
                 <div key={n.a.id} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 bg-white/[0.03] border border-white/[0.05]">
                   <span className={`w-10 h-10 shrink-0 rounded-xl flex flex-col items-center justify-center font-black ${n.place === 2 ? 'bg-zinc-200 text-black' : n.place === 3 ? 'bg-orange-300 text-black' : n.place <= 5 ? 'bg-white/[0.1] text-white' : 'bg-white/[0.04] text-zinc-400'}`}>
-                    <span className="text-[13px] leading-none">{n.place}</span><span className="text-[8px] uppercase leading-none mt-0.5">место</span>
+                    <span className="text-[13px] leading-none">#{n.place}</span><span className="text-[7px] uppercase leading-none mt-0.5">по голосам</span>
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="text-[13px] font-bold text-white truncate">{n.a.nominationTitle}</div>
@@ -1420,39 +1427,55 @@ function leftStr(target: number, now: number) {
   return days > 0 ? `${days} д ${h} ч` : `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
 }
 
-function genRumors(artists: Artist[], tracks: Track[], albums: Album[], today: string, seed: number, skip: Set<string>): Rumor[] {
+const RUMOR_SRC = ['Инсайдер', 'Телеграм-канал «Кухня рэпа»', 'Фанаты заметили', 'Источник в лейбле', 'Звукорежиссёр проговорился', 'По данным «Пульса»', 'Слух из закрытого чата', 'В сторис мелькнуло', 'Дистрибьютор слил', 'Говорят на студиях', 'Анонимный аккаунт', 'Таблоиды пишут'];
+function genRumors(artists: Artist[], tracks: Track[], albums: Album[], today: string, seed: number, skip: Set<string>, target?: string | null): Rumor[] {
   const pool = [...artists].sort((a, b) => (b.followers || 0) - (a.followers || 0)).slice(0, 160);
   let metrics: any[] = [];
   try { metrics = computeAllArtistMetrics(pool, tracks, albums, today); } catch { metrics = []; }
-  const r = seeded(seed * 7919 + 13);
+  const r = seeded(seed * 7919 + 13 + (target ? hashStr(target) % 7919 : 0));
+  const pick = <T,>(a: T[]) => a[Math.floor(r() * a.length)];
   const t0 = refToMs(today);
-  const win = (a: number, b: number) => [toISO(t0 + a * DAY), toISO(t0 + b * DAY)] as const;
+  const tMs = target ? refToMs(target) : null;
+  const win = (a: number, b: number) => (tMs !== null ? [toISO(tMs), toISO(tMs)] : [toISO(t0 + a * DAY), toISO(t0 + b * DAY)]) as [string, string];
   const out: Rumor[] = [];
-  const push = (x: Omit<Rumor, 'id'>) => { const id = `r${hashStr(`${x.type}|${x.artistId}|${x.text}`)}`; if (!skip.has(id)) out.push({ ...x, id }); };
+  const push = (x: Omit<Rumor, 'id'>) => { const id = `r${hashStr(`${x.type}|${x.artistId}|${x.text}|${target || ''}`)}`; if (!skip.has(id)) out.push({ ...x, text: `${pick(RUMOR_SRC)}: ${x.text}`, id }); };
+  const conf = (base: number, spread: number) => Math.round(clamp(base + r() * spread, 12, 96));
   for (const m of metrics) {
-    const a: Artist = m.artist; const hype = m.hype || 0;
-    const roll = r();
-    if ((m.daysSinceAlbum === null ? m.tracksCount >= 6 : m.daysSinceAlbum >= 300) && hype >= 55 && roll < 0.55) {
-      const [f, t] = win(21, 120); push({ artistId: a.id, artistName: a.name, type: 'album', conf: Math.round(clamp(35 + hype / 2 + r() * 10, 30, 92)), from: f, to: t, text: `${a.name} заканчивает новый альбом${m.daysSinceAlbum ? `: без альбома уже ${m.daysSinceAlbum} дн.` : ''}` });
+    const a: Artist = m.artist; const hype = m.hype || 0; const roll = r();
+    const alb = albums.filter(x => x.artistId === a.id || norm(x.artistName) === norm(a.name)).sort((x, y) => (parseDayMs(y.releaseDate, y.releaseYear) || 0) - (parseDayMs(x.releaseDate, x.releaseYear) || 0))[0];
+    if ((m.daysSinceAlbum === null ? m.tracksCount >= 6 : m.daysSinceAlbum >= 280) && hype >= 50 && roll < 0.5) {
+      const [f, t] = win(21, 120);
+      push({ artistId: a.id, artistName: a.name, type: 'album', conf: conf(35 + hype / 2, 10), from: f, to: t, text: pick([
+        `${a.name} заканчивает новый альбом${m.daysSinceAlbum ? `: без альбома уже ${m.daysSinceAlbum} дн.` : ''}`,
+        `в сеть утёк возможный треклист нового альбома ${a.name}`, `${a.name} забронировал студию на месяц — похоже, это альбом`,
+        `на обложке нового альбома ${a.name} будет детское фото`, `${a.name} сводит альбом с новым звукорежиссёром`]) });
     } else if (m.activeSnippet && roll < 0.8) {
-      const [f, t] = win(3, 30); push({ artistId: a.id, artistName: a.name, type: 'single', title: m.activeSnippet.title, conf: Math.round(clamp(60 + r() * 30, 50, 95)), from: f, to: t, text: `Полная версия сниппета «${m.activeSnippet.title}» может выйти совсем скоро` });
-    } else if (m.daysSilent >= 150 && hype >= 40 && roll < 0.5) {
-      const [f, t] = win(7, 60); push({ artistId: a.id, artistName: a.name, type: 'single', conf: Math.round(clamp(30 + hype / 2.5 + r() * 15, 25, 85)), from: f, to: t, text: `${a.name} готовит возвращение после ${m.daysSilent} дней тишины` });
-    } else if (hype >= 80 && m.daysSilent < 30 && roll < 0.35) {
-      const [f, t] = win(1, 14); push({ artistId: a.id, artistName: a.name, type: 'snippet', conf: Math.round(clamp(45 + r() * 35, 40, 90)), from: f, to: t, text: `${a.name} не сбавляет темп: в сети засветился новый кусок трека` });
+      const [f, t] = win(3, 30); push({ artistId: a.id, artistName: a.name, type: 'single', title: m.activeSnippet.title, conf: conf(60, 30), from: f, to: t, text: pick([`полная версия «${m.activeSnippet.title}» может выйти совсем скоро`, `«${m.activeSnippet.title}» уже на модерации у площадок`, `пресейв «${m.activeSnippet.title}» откроют на днях`]) });
+    } else if (m.daysSilent >= 120 && hype >= 35 && roll < 0.5) {
+      const [f, t] = win(7, 60); push({ artistId: a.id, artistName: a.name, type: 'single', conf: conf(30 + hype / 2.5, 15), from: f, to: t, text: pick([`${a.name} готовит возвращение после ${m.daysSilent} дней тишины`, `${a.name} удалил все посты — классический знак камбэка`, `${a.name} сменил аватарку и описание: дроп близко`]) });
+    } else if (m.daysSilent <= 40 && m.tracksCount >= 5 && roll < 0.35) {
+      const [f, t] = win(2, 21); push({ artistId: a.id, artistName: a.name, type: r() < 0.5 ? 'snippet' : 'single', conf: conf(45, 35), from: f, to: t, text: pick([`${a.name} не сбавляет темп: следующий трек уже готов`, `у ${a.name} в запасе ещё три готовых сингла`, `${a.name} выпускает по треку в месяц и не собирается останавливаться`]) });
+    } else if (hype >= 78 && roll < 0.4) {
+      const [f, t] = win(3, 25); push({ artistId: a.id, artistName: a.name, type: 'clip', conf: conf(40, 40), from: f, to: t, text: pick([`${a.name} снимает клип с большим бюджетом`, `съёмочную группу ${a.name} видели в заброшенном аэропорту`, `${a.name} готовит клип-короткометражку`]) });
+    } else if (alb && roll < 0.12) {
+      const [f, t] = win(14, 70); push({ artistId: a.id, artistName: a.name, type: 'ep', title: `${alb.title} (Deluxe)`, conf: conf(25, 45), from: f, to: t, text: `«${alb.title}» получит делюкс-версию с неизданным` });
+    } else if (roll > 0.965) {
+      const [f, t] = win(1, 10); push({ artistId: a.id, artistName: a.name, type: 'single', conf: conf(15, 35), from: f, to: t, text: pick([`${a.name} записал ответ на чужой дисс`, `${a.name} готовит трек-сюрприз без анонса`, `${a.name} перепел старый хит в новом стиле`]) });
     }
   }
   // collab rumors
-  const hot = metrics.filter(m => (m.hype || 0) >= 50);
-  for (let i = 0; i < 3 && hot.length > 1; i++) {
+  const hot = metrics.filter(m => (m.hype || 0) >= 45);
+  for (let i = 0; i < 4 && hot.length > 1; i++) {
     const a = hot[Math.floor(r() * hot.length)]; const cand = hot.filter(x => x !== a && norm(x.artist.genre) === norm(a.artist.genre));
     const b = cand[Math.floor(r() * cand.length)] || hot.find(x => x !== a);
     if (!b) break;
     const [f, t] = win(10, 75);
-    push({ artistId: a.artist.id, artistName: a.artist.name, feat: b.artist.name, type: 'single', conf: Math.round(clamp(25 + r() * 50, 20, 80)), from: f, to: t, text: `Инсайдеры: ${a.artist.name} и ${b.artist.name} записали совместный трек` });
+    push({ artistId: a.artist.id, artistName: a.artist.name, feat: b.artist.name, type: r() < 0.15 ? 'ep' : 'single', conf: conf(20, 55), from: f, to: t, text: pick([
+      `${a.artist.name} и ${b.artist.name} записали совместный трек`, `${a.artist.name} и ${b.artist.name} замечены в одной студии`, `${b.artist.name} подписался на ${a.artist.name} — фанаты ждут фит`,
+      `${a.artist.name} × ${b.artist.name}: совместный EP уже сведён`, `${a.artist.name} и ${b.artist.name} помирились — и, говорят, не просто так`]) });
   }
   for (let i = out.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [out[i], out[j]] = [out[j], out[i]]; }
-  return out.slice(0, 6);
+  return out.slice(0, target ? 7 : 6);
 }
 
 type CalKind = 'single' | 'album' | 'ep' | 'snippet' | 'clip';
@@ -1526,7 +1549,7 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
   const byDay = useMemo(() => { const m = new Map<string, CalItem[]>(); items.forEach(i => { if (!pass(i)) return; const l = m.get(i.date) || []; l.push(i); m.set(i.date, l); }); return m; }, [items, pass]);
   const upcoming = useMemo(() => items.filter(i => pass(i) && (i.date > today || (i.source === 'ann' && !i.ann?.released))).slice(0, 14), [items, pass, today]);
   const recent = useMemo(() => items.filter(i => pass(i) && i.source === 'catalog' && i.date <= today).slice(-10).reverse(), [items, pass, today]);
-  const rumors = useMemo(() => genRumors(artists, tracks, albums, today, rs.seed, new Set(rs.skip)), [artists, tracks, albums, today, rs]);
+  const rumors = useMemo(() => genRumors(artists, tracks, albums, today, rs.seed, new Set(rs.skip), selDay), [artists, tracks, albums, today, rs, selDay]);
 
   const [y, m] = month.split('-').map(Number);
   const startPad = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7;
@@ -1631,7 +1654,46 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
 
             <div className="p-4 sm:p-5 overflow-y-auto custom-scrollbar space-y-5">
               {list ? (
-                <CalSection title={fmtDay(refToMs(selDay!))} items={list} empty="В этот день ничего. Нажми «+ Добавить»." now={now} today={today} artistOf={artistOf} setAnn={setAnn} setForm={setForm} onReleaseAnn={releaseAnn} onOpen={onOpen ? (t, id) => { onClose(); onOpen(t, id); } : undefined} />
+                <>
+                  <CalSection title={fmtDay(refToMs(selDay!))} items={list} empty="В этот день ничего. Нажми «+ Добавить»." now={now} today={today} artistOf={artistOf} setAnn={setAnn} setForm={setForm} onReleaseAnn={releaseAnn} onOpen={onOpen ? (t, id) => { onClose(); onOpen(t, id); } : undefined} />
+                  <IdeaDeck target={selDay} artists={artists} tracks={tracks} albums={albums} today={today}
+                    onEdit={i => setForm({ mode: i.kind === 'snippet' ? (onAddTrack ? 'snippet' : 'announce') : 'announce', type: i.kind, artistName: i.artist.name, title: i.title, date: i.date, featuredArtist: i.feat || '', note: i.teaser })}
+                    onAccept={i => {
+                      if (i.kind === 'snippet' && onAddTrack) {
+                        onAddTrack({ id: uid('snip'), title: i.title, artistId: i.artist.id, artistName: i.artist.name, albumId: 'single', albumTitle: 'Single', duration: '0:45', plays: Math.round((i.artist.followers || 100000) * rnd(0.02, 0.07)), likes: 0, isLiked: false, releaseDate: i.date, coverUrl: '', isSnippet: true, snippetTeaser: i.teaser, featuredArtist: i.feat, genre: i.artist.genre } as Track);
+                        onSaved(i.date, `Сниппет «${i.title}» добавлен с тизером`);
+                      } else {
+                        setAnn(p => [...p, { id: uid('ann'), title: i.title, artistName: i.artist.name, artistId: i.artist.id, type: i.kind === 'snippet' ? 'snippet' : i.kind, date: i.date, note: i.teaser, presaves: 0, createdAt: Date.now(), featuredArtist: i.feat }]);
+                        onSaved(i.date, `Анонс «${i.title}» добавлен`);
+                      }
+                    }} />
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">{selDay ? `Слухи на ${fmtDay(refToMs(selDay))}` : 'Слухи индустрии'}</div>
+                      <button type="button" onClick={() => setRs(p => ({ ...p, seed: p.seed + 1 }))} className="text-[11px] font-bold text-zinc-400 hover:text-white">🎲 Новые слухи</button>
+                    </div>
+                    {rumors.length === 0 && <div className="text-xs text-zinc-500 py-4">Тихо. Слухи появятся, когда у артистов вырастет хайп или затянется пауза.</div>}
+                    <div className="space-y-1.5">
+                      {rumors.map(r => {
+                        const art = artists.find(a => a.id === r.artistId);
+                        return (
+                          <motion.div key={r.id} layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3 rounded-2xl bg-gradient-to-r from-fuchsia-500/[0.07] to-transparent border border-white/[0.06] p-3">
+                            <CoverArt url={art?.imageUrl} title={r.artistName} isArtist className="w-11 h-11 rounded-full overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[12px] font-bold text-white leading-snug">{r.text}</div>
+                              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                                <span className="text-[10px] text-zinc-500">{TYPE_RU[r.type]} · {fmtDayShort(refToMs(r.from))} – {fmtDayShort(refToMs(r.to))}</span>
+                                <span className="text-[10px] font-bold text-fuchsia-300">вероятность {r.conf}%</span>
+                                <button type="button" onClick={() => confirmRumor(r)} className="text-[10px] font-black px-2 py-0.5 rounded-full bg-white text-black">Подтвердить → анонс</button>
+                                <button type="button" onClick={() => dismissRumor(r)} className="text-[10px] text-zinc-500 hover:text-white">фейк</button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
               ) : (
                 <>
                   <IdeaDeck artists={artists} tracks={tracks} albums={albums} today={today}
@@ -1648,7 +1710,7 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
                   <CalSection title="Скоро" items={upcoming} empty="Пока ничего не запланировано." now={now} today={today} artistOf={artistOf} setAnn={setAnn} setForm={setForm} onReleaseAnn={releaseAnn} onOpen={onOpen ? (t, id) => { onClose(); onOpen(t, id); } : undefined} />
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Слухи индустрии</div>
+                      <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">{selDay ? `Слухи на ${fmtDay(refToMs(selDay))}` : 'Слухи индустрии'}</div>
                       <button type="button" onClick={() => setRs(p => ({ ...p, seed: p.seed + 1 }))} className="text-[11px] font-bold text-zinc-400 hover:text-white">🎲 Новые слухи</button>
                     </div>
                     {rumors.length === 0 && <div className="text-xs text-zinc-500 py-4">Тихо. Слухи появятся, когда у артистов вырастет хайп или затянется пауза.</div>}
@@ -1801,81 +1863,123 @@ const ArtistPicker: React.FC<{ value: string; onChange: (name: string) => void; 
   );
 };
 
-// ---- smart ideas: who should drop what, when, with a teaser ----
+// ---- smart ideas v2: many flavours, steady droppers too, can target a chosen day ----
 type IdeaKind = 'snippet' | 'single' | 'ep' | 'album' | 'clip';
-interface Idea { id: string; kind: IdeaKind; artist: Artist; title: string; date: string; teaser: string; reason: string; feat?: string; score: number }
+type IdeaFlavor = 'full' | 'albumDue' | 'comeback' | 'steady' | 'hype' | 'deluxe' | 'anniversary' | 'feat' | 'remix' | 'acoustic' | 'surprise' | 'season' | 'studio' | 'live' | 'birthday';
+interface Idea { id: string; kind: IdeaKind; flavor?: IdeaFlavor; artist: Artist; title: string; date: string; teaser: string; reason: string; feat?: string; score: number }
 const IDEAS_LS = 'musaic.ideas.v1';
-const T_MOODS = ['тёмный и медленный', 'летний вайб', 'жёсткий бит и злые панчи', 'грустно, но красиво', 'клубный разгон', 'очень личный текст', 'новое звучание', 'возвращение к корням', 'мелодия, которая не отпускает', 'ночной вайб'];
-const T_HOOKS = ['Фанаты уже разбирают строчки', 'Комменты в огне', 'Похоже на будущий хит', 'Звучит как заявка на чарт', 'Вайб узнаётся с первых секунд', 'Пресейв уже открыт', 'В сети спорят, кто на фите', 'Это совсем другой {a}'];
-const TEASE: Record<IdeaKind, string[]> = {
-  snippet: ['{a} показал кусок нового трека «{t}»{f}', 'Сниппет «{t}»: {mood}', '{a}{f}: 30 секунд, после которых ждать невозможно', '«{t}» засветился в сторис {a}. {hook}', '{a} тизерит «{t}». {hook}', 'Новый сниппет {a}: {mood}'],
-  single: ['{a}{f} — «{t}». Выходит {when}', 'Новый сингл {a}: «{t}». {hook}', '«{t}» уже на пресейве. Релиз {when}', '{a} возвращается с «{t}»{f}', '{when}: {a} — «{t}». {mood}'],
-  album: ['{a} анонсировал альбом «{t}». Релиз {when}', 'Альбом «{t}»: {mood}. {hook}', '{a}: «{t}» — самый личный релиз. Выходит {when}', 'Обратный отсчёт: альбом {a} «{t}» {when}'],
-  ep: ['EP «{t}» от {a} выйдет {when}', '{a} готовит EP «{t}»: {mood}', 'Короткий, но плотный: EP {a} «{t}» {when}'],
-  clip: ['{a} снял клип на «{t}». Премьера {when}', 'Премьера клипа {a} «{t}» {when}', 'Съёмки закончены: клип {a} на «{t}». {hook}']
+const T_MOODS = ['тёмный и медленный', 'летний вайб', 'жёсткий бит и злые панчи', 'грустно, но красиво', 'клубный разгон', 'очень личный текст', 'новое звучание', 'возвращение к корням', 'мелодия, которая не отпускает', 'ночной вайб', 'гитара и шёпот', 'безумный бит-свитч', 'ностальгия по нулевым', 'холодный трэп', 'танцевальный, но с надрывом', 'минимализм и голос'];
+const T_HOOKS = ['Фанаты уже разбирают строчки', 'Комменты в огне', 'Похоже на будущий хит', 'Звучит как заявка на чарт', 'Вайб узнаётся с первых секунд', 'Пресейв уже открыт', 'В сети спорят, кто на фите', 'Это совсем другой {a}', 'Звук уже растащили на видео', 'Кажется, это лучший куплет года', 'Фанбаза в шоке', 'Таймер уже тикает'];
+const TEASE: Record<IdeaFlavor, string[]> = {
+  full: ['Полная версия «{t}» выходит {when}. Сниппет сделал своё дело', '«{t}» целиком — {when}. {hook}', 'Тот самый сниппет «{t}» наконец выходит {when}'],
+  albumDue: ['{a} анонсировал альбом «{t}». Релиз {when}', 'Альбом «{t}»: {mood}. {hook}', '{a}: «{t}» — самый личный релиз. Выходит {when}', 'Обратный отсчёт: альбом {a} «{t}» {when}', 'EP «{t}» от {a} выйдет {when}'],
+  comeback: ['{a} возвращается после {days} дн. тишины: «{t}» {when}', 'Тишина закончилась. {a} — «{t}», {when}', '{days} дней без релизов — и вот «{t}»{f}'],
+  steady: ['{a} не сбавляет темп: «{t}»{f} {when}', 'Новый {kind} {a} каждую пару недель — «{t}» {when}', '{a} в форме: ещё один дроп «{t}» {when}', 'Стабильность — признак мастерства. «{t}» {when}'],
+  hype: ['Пока хайп на пике: {a} готовит «{t}». {hook}', '{a} на волне — «{t}» {when}', 'Хайп {a} конвертируется в «{t}». {mood}'],
+  deluxe: ['Делюкс «{t}»: +4 новых трека. {when}', '{a} расширяет «{alb}» — делюкс {when}', '«{t}»: неизданное и бонусы. {hook}'],
+  anniversary: ['{n} лет «{alb}»: {a} готовит юбилейный клип', 'Годовщина «{alb}» — сюрприз от {a} {when}', 'В честь годовщины «{alb}»: «{t}» {when}'],
+  feat: ['{a} и {f}: «{t}» {when}', 'Коллаб, которого ждали: {a} × {f} — «{t}»', 'В сторис {a} и {f} в одной студии. {hook}'],
+  remix: ['Ремикс на «{top}» — {when}. {mood}', '«{t}»: {a} перевернул свой хит', '{a} отдал «{top}» на ремикс. {hook}'],
+  acoustic: ['«{t}»: тот же хит, только гитара и голос', 'Акустика от {a} {when}. {mood}', '{a} показал «{top}» без бита. {hook}'],
+  surprise: ['Без анонса: {a} просто выложит «{t}» {when}', 'Сюрприз-дроп от {a}. {hook}', 'Никто не ждал: «{t}»{f} уже {when}'],
+  season: ['{season} от {a}: «{t}» {when}', 'Трек под {seasonTo} — «{t}». {mood}', '{a} закрывает {season2} релизом «{t}»'],
+  studio: ['{a} засветился в студии: «{t}» — {mood}', 'Из студии {a}: 30 секунд «{t}». {hook}', '{a} тизерит «{t}» прямо из студии'],
+  live: ['Live-сессия «{top}» от {a} {when}', '{a} записал живую версию «{top}». {hook}', 'Клип-концерт {a}: «{t}» {when}'],
+  birthday: ['На свой день рождения {a} дарит фанатам «{t}»', 'Подарок от {a}: «{t}» {when}']
 };
 function whenPhrase(dateMs: number, todayMs: number) {
   const d = Math.round((dateMs - todayMs) / DAY);
-  if (d <= 0) return 'сегодня';
+  if (d === 0) return 'сегодня';
   if (d === 1) return 'завтра';
+  if (d < 0) return fmtDayShort(dateMs);
   if (new Date(dateMs).getUTCDay() === 5 && d <= 7) return 'в эту пятницу';
   if (d <= 6) return 'на этой неделе';
   return fmtDayShort(dateMs);
 }
-function makeTeaser(kind: IdeaKind, title: string, artist: string, feat: string | undefined, dateMs: number, todayMs: number, r: () => number) {
+const SEASONS = (month: number) => month >= 5 && month <= 7 ? ['Летний трек', 'жару', 'лето'] : month === 11 || month <= 1 ? ['Зимний релиз', 'снег и огни', 'год'] : month >= 8 && month <= 10 ? ['Осенний вайб', 'дождь за окном', 'осень'] : ['Весенний релиз', 'первое тепло', 'весну'];
+function makeTeaser(flavor: IdeaFlavor, kind: IdeaKind, title: string, artist: string, feat: string | undefined, dateMs: number, todayMs: number, r: () => number, extra: { days?: number; alb?: string; top?: string; n?: number } = {}) {
   const pick = <T,>(arr: T[]) => arr[Math.floor(r() * arr.length)];
-  return pick(TEASE[kind]).replace('{hook}', pick(T_HOOKS)).replace('{mood}', pick(T_MOODS)).replace(/\{a\}/g, artist).replace(/\{t\}/g, title)
-    .replace('{f}', feat ? ` и ${feat}` : '').replace('{when}', whenPhrase(dateMs, todayMs));
+  const [season, seasonTo, season2] = SEASONS(new Date(dateMs).getUTCMonth());
+  return pick(TEASE[flavor] || TEASE.steady).replace('{hook}', pick(T_HOOKS)).replace('{mood}', pick(T_MOODS)).replace(/\{a\}/g, artist).replace(/\{t\}/g, title)
+    .replace(/\{f\}/g, feat ? (flavor === 'feat' ? feat : ` и ${feat}`) : '').replace('{when}', whenPhrase(dateMs, todayMs)).replace('{days}', String(extra.days ?? ''))
+    .replace(/\{alb\}/g, extra.alb || title).replace(/\{top\}/g, extra.top || title).replace('{n}', String(extra.n ?? 1)).replace('{kind}', kind === 'snippet' ? 'тизер' : 'трек')
+    .replace('{season}', season).replace('{seasonTo}', seasonTo).replace('{season2}', season2).replace(/\{hook\}/g, pick(T_HOOKS));
 }
 function nextFriday(fromMs: number, minDays: number) { let d = fromMs + minDays * DAY; for (let i = 0; i < 7 && new Date(d).getUTCDay() !== 5; i++) d += DAY; return d; }
 
-function genIdeas(artists: Artist[], tracks: Track[], albums: Album[], today: string, seed: number, skip: Set<string>): Idea[] {
-  const pool = [...artists].sort((a, b) => (b.followers || 0) - (a.followers || 0)).slice(0, 140);
+function genIdeas(artists: Artist[], tracks: Track[], albums: Album[], today: string, seed: number, skip: Set<string>, target?: string | null): Idea[] {
+  const pool = [...artists].sort((a, b) => (b.followers || 0) - (a.followers || 0)).slice(0, 160);
   let metrics: any[] = [];
   try { metrics = computeAllArtistMetrics(pool, tracks, albums, today); } catch { metrics = []; }
-  const r = seeded(seed * 104729 + 31);
+  const r = seeded(seed * 104729 + 31 + (target ? hashStr(target) % 9973 : 0));
   const t0 = refToMs(today);
-  const cands: Array<{ m: any; kind: IdeaKind; score: number; reason: string; snippetTitle?: string }> = [];
+  const tMs = target ? refToMs(target) : null;
+  const month = new Date(tMs ?? t0).getUTCMonth();
+  const cands: Array<{ m: any; kind: IdeaKind; flavor: IdeaFlavor; score: number; reason: string; title?: string; alb?: string; top?: string; n?: number; feat?: boolean }> = [];
   for (const m of metrics) {
+    const art: Artist = m.artist;
     let exp = { score: m.hype, what: 'новый сингл', label: '' } as any;
     try { exp = computeFanExpectation(m); } catch { /* */ }
-    const roll = r();
-    let kind: IdeaKind | null = null; let reason = '';
-    if (m.activeSnippet && roll < 0.85) { kind = 'single'; reason = `Сниппет «${m.activeSnippet.title}» прогрет, пора полную версию`; }
-    else if (exp.what === 'альбом' && m.hype >= 48) { kind = roll < 0.5 ? 'album' : 'snippet'; reason = `Без альбома ${m.daysSinceAlbum ?? 'давно'} дн. · ожидание ${exp.score}`; if (!m.hasReleasedAlbum && m.tracksCount < 8) kind = 'ep'; }
-    else if (m.daysSilent >= 28) { kind = roll < 0.45 ? 'snippet' : 'single'; reason = `Не выпускал ${m.daysSilent} дн. · ${exp.label || 'ждут'}`; }
-    else if (m.hype >= 74) { kind = roll < 0.35 ? 'clip' : 'snippet'; reason = `Хайп ${m.hype}: самое время подогреть`; }
-    else if (roll < 0.12) { kind = 'snippet'; reason = 'Неожиданный тизер, чтобы напомнить о себе'; }
-    if (!kind) continue;
-    cands.push({ m, kind, reason, score: (exp.score || 40) + r() * 28, snippetTitle: kind === 'single' && m.activeSnippet ? m.activeSnippet.title : undefined });
+    const mine = tracks.filter(t => !t.isSnippet && (t.artistId === art.id || norm(t.artistName) === norm(art.name)));
+    const top = [...mine].sort((a, b) => (b.plays || 0) - (a.plays || 0))[0];
+    const myAlbums = albums.filter(a => a.artistId === art.id || norm(a.artistName) === norm(art.name)).sort((a, b) => (parseDayMs(b.releaseDate, b.releaseYear) || 0) - (parseDayMs(a.releaseDate, a.releaseYear) || 0));
+    const lastAlb = myAlbums[0]; const lastAlbAge = lastAlb ? (t0 - (parseDayMs(lastAlb.releaseDate, lastAlb.releaseYear) || t0)) / DAY : null;
+    const opts: Array<[number, Omit<(typeof cands)[number], 'm' | 'score'>]> = [];
+    if (m.activeSnippet) opts.push([3.2, { kind: 'single', flavor: 'full', reason: `Сниппет «${m.activeSnippet.title}» прогрет, пора полную версию`, title: m.activeSnippet.title }]);
+    if (exp.what === 'альбом' && m.hype >= 45) opts.push([2.4, { kind: !m.hasReleasedAlbum && m.tracksCount < 8 ? 'ep' : r() < 0.6 ? 'album' : 'ep', flavor: 'albumDue', reason: `Без альбома ${m.daysSinceAlbum ?? 'давно'} дн. · ожидание ${exp.score}` }]);
+    if (m.daysSilent >= 60) opts.push([2.1, { kind: r() < 0.4 ? 'snippet' : 'single', flavor: 'comeback', reason: `Тишина ${m.daysSilent} дн. · ${exp.label || 'ждут'}` }]);
+    if (m.daysSilent >= 5 && m.daysSilent <= 45 && m.tracksCount >= 5) opts.push([2.3, { kind: r() < 0.45 ? 'snippet' : 'single', flavor: 'steady', reason: `Стабильно дропает · пауза ${m.daysSilent} дн.` }]);
+    if (m.hype >= 72) opts.push([1.8, { kind: r() < 0.45 ? 'clip' : 'snippet', flavor: 'hype', reason: `Хайп ${m.hype}: самое время подогреть` }]);
+    if (lastAlb && lastAlbAge !== null && lastAlbAge >= 45 && lastAlbAge <= 300) opts.push([0.9, { kind: 'ep', flavor: 'deluxe', reason: `«${lastAlb.title}» ещё на слуху`, title: `${lastAlb.title} (Deluxe)`, alb: lastAlb.title }]);
+    if (lastAlb && lastAlbAge !== null && lastAlbAge >= 340) opts.push([0.7, { kind: r() < 0.5 ? 'clip' : 'single', flavor: 'anniversary', reason: `Годовщина «${lastAlb.title}»`, alb: lastAlb.title, n: Math.max(1, Math.round(lastAlbAge / 365)) }]);
+    opts.push([1.2, { kind: r() < 0.5 ? 'snippet' : 'single', flavor: 'feat', reason: 'Логичный коллаб по жанру и аудитории', feat: true }]);
+    if (top && (top.plays || 0) > 200_000) {
+      opts.push([0.8, { kind: 'single', flavor: 'remix', reason: `«${top.title}» всё ещё крутят`, title: `${top.title} (Remix)`, top: top.title }]);
+      opts.push([0.55, { kind: r() < 0.5 ? 'single' : 'clip', flavor: 'acoustic', reason: 'Хит в новом свете', title: `${top.title} (Acoustic)`, top: top.title }]);
+      opts.push([0.5, { kind: 'clip', flavor: 'live', reason: 'Живая версия хита', title: `${top.title} — Live`, top: top.title }]);
+    }
+    opts.push([0.6, { kind: 'single', flavor: 'surprise', reason: 'Неожиданный дроп без анонса' }]);
+    opts.push([0.6, { kind: 'single', flavor: 'season', reason: 'Сезонный релиз' }]);
+    opts.push([0.7, { kind: 'snippet', flavor: 'studio', reason: 'Кусок из студии, чтобы напомнить о себе' }]);
+    if (r() < 0.04) opts.push([2, { kind: 'single', flavor: 'birthday', reason: 'Подарок фанатам' }]);
+    const total = opts.reduce((s, o) => s + o[0], 0);
+    let x = r() * total; let chosen = opts[0];
+    for (const o of opts) { x -= o[0]; if (x <= 0) { chosen = o; break; } }
+    if (!chosen) continue;
+    cands.push({ m, ...chosen[1], score: (exp.score || 40) + chosen[0] * 6 + r() * 30 });
   }
   cands.sort((a, b) => b.score - a.score);
-  const out: Idea[] = [];
+  const out: Idea[] = []; const perFlavor = new Map<string, number>();
+  const limit = target ? 8 : 7;
   for (const c of cands) {
-    if (out.length >= 6) break;
+    if (out.length >= limit) break;
+    if ((perFlavor.get(c.flavor) || 0) >= 2) continue;
     const art: Artist = c.m.artist;
-    const id = `i${hashStr(`${art.id}|${c.kind}|${seed}`)}`;
+    const id = `i${hashStr(`${art.id}|${c.flavor}|${c.kind}|${seed}|${target || ''}`)}`;
     if (skip.has(id)) continue;
     const isBig = c.kind === 'album' || c.kind === 'ep';
-    const title = c.snippetTitle || smartTitle(art, tracks, albums, isBig);
-    const dateMs = c.kind === 'snippet' ? t0 + Math.round(1 + r() * 5) * DAY : c.kind === 'clip' ? t0 + Math.round(3 + r() * 7) * DAY
+    const title = c.title || smartTitle(art, tracks, albums, isBig);
+    const dateMs = tMs !== null ? tMs : c.kind === 'snippet' ? t0 + Math.round(1 + r() * 5) * DAY : c.kind === 'clip' ? t0 + Math.round(3 + r() * 7) * DAY
       : c.kind === 'single' ? nextFriday(t0, Math.round(4 + r() * 10)) : c.kind === 'ep' ? nextFriday(t0, Math.round(14 + r() * 20)) : nextFriday(t0, Math.round(21 + r() * 40));
-    const feat = (c.kind === 'single' || c.kind === 'snippet') && r() < 0.3 ? suggestFeat(art, artists, c.m)?.name : undefined;
-    out.push({ id, kind: c.kind, artist: art, title, date: toISO(dateMs), feat, reason: c.reason, score: c.score, teaser: makeTeaser(c.kind, title, art.name, feat, dateMs, t0, r) });
+    const feat = c.feat || ((c.kind === 'single' || c.kind === 'snippet') && r() < 0.22) ? suggestFeat(art, artists, c.m)?.name : undefined;
+    if (c.flavor === 'feat' && !feat) continue;
+    perFlavor.set(c.flavor, (perFlavor.get(c.flavor) || 0) + 1);
+    out.push({ id, kind: c.kind, flavor: c.flavor, artist: art, title, date: toISO(dateMs), feat, reason: c.reason, score: c.score,
+      teaser: makeTeaser(c.flavor, c.kind, title, art.name, feat, dateMs, t0, r, { days: c.m.daysSilent, alb: c.alb, top: c.top, n: c.n }) });
   }
   return out;
 }
 
 const KIND_RU: Record<IdeaKind, string> = { snippet: 'Сниппет', single: 'Сингл', ep: 'EP', album: 'Альбом', clip: 'Клип' };
-const IdeaDeck: React.FC<{ artists: Artist[]; tracks: Track[]; albums: Album[]; today: string; onAccept: (i: Idea) => void; onEdit: (i: Idea) => void }> = ({ artists, tracks, albums, today, onAccept, onEdit }) => {
+const IdeaDeck: React.FC<{ artists: Artist[]; tracks: Track[]; albums: Album[]; today: string; target?: string | null; onAccept: (i: Idea) => void; onEdit: (i: Idea) => void }> = ({ artists, tracks, albums, today, target, onAccept, onEdit }) => {
   const [st, setSt] = useState(() => lsGet<{ seed: number; skip: string[] }>(IDEAS_LS, { seed: 1, skip: [] }));
   useEffect(() => lsSet(IDEAS_LS, st), [st]);
-  const ideas = useMemo(() => genIdeas(artists, tracks, albums, today, st.seed, new Set(st.skip)), [artists, tracks, albums, today, st]);
+  const ideas = useMemo(() => genIdeas(artists, tracks, albums, today, st.seed, new Set(st.skip), target), [artists, tracks, albums, today, st, target]);
   const drop = (id: string) => setSt(p => ({ ...p, skip: [...p.skip, id].slice(-500) }));
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Умные идеи</div>
+        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">{target ? `Идеи на ${fmtDay(refToMs(target))}` : 'Умные идеи'}</div>
         <button type="button" onClick={() => setSt(p => ({ ...p, seed: p.seed + 1 }))} className="text-[11px] font-bold text-zinc-400 hover:text-white">🎲 Ещё варианты</button>
       </div>
       {ideas.length === 0 && <div className="text-xs text-zinc-500 py-3">Идей пока нет. Нажми «Ещё варианты».</div>}
@@ -2053,9 +2157,9 @@ const CalForm: React.FC<{
 // 5. SCORE RING — prettier rating circles (same sizes and props as the old ScoreBadge)
 // ---------------------------------------------------------------------------
 const scoreTier = (sc: number) =>
-  sc >= 81 ? { c1: '#fde68a', c2: '#f59e0b', label: 'Шедевр' } : sc >= 72 ? { c1: '#6ee7b7', c2: '#10b981', label: 'Отлично' }
-    : sc >= 62 ? { c1: '#67e8f9', c2: '#06b6d4', label: 'Хорошо' } : sc >= 50 ? { c1: '#c4b5fd', c2: '#8b5cf6', label: 'Нормально' }
-      : sc >= 38 ? { c1: '#fdba74', c2: '#f97316', label: 'Слабо' } : { c1: '#fca5a5', c2: '#ef4444', label: 'Провал' };
+  sc >= 90 ? { c1: '#fde68a', c2: '#fbbf24', label: 'Шедевр' } : sc >= 80 ? { c1: '#e9d5ff', c2: '#c084fc', label: 'Выдающийся' }
+    : sc >= 70 ? { c1: '#bfdbfe', c2: '#60a5fa', label: 'Сильный' } : sc >= 60 ? { c1: '#a5f3fc', c2: '#22d3ee', label: 'Хороший' }
+      : sc >= 50 ? { c1: '#a7f3d0', c2: '#34d399', label: 'Средний' } : { c1: '#e4e4e7', c2: '#a1a1aa', label: 'Слабый' };
 const CRIT: Array<[string, string]> = [['rhymes', 'Рифмы'], ['structure', 'Структура'], ['style', 'Стиль'], ['charisma', 'Харизма'], ['vibe', 'Вайб']];
 const RING: Record<string, { s: number; w: number; f: number }> = { sm: { s: 30, w: 2.6, f: 11 }, md: { s: 40, w: 3, f: 13 }, lg: { s: 50, w: 3.4, f: 16 } };
 
@@ -2093,79 +2197,220 @@ export const ScoreRing: React.FC<{ rating?: any; size?: 'sm' | 'md' | 'lg'; show
 });
 
 // ---------------------------------------------------------------------------
-// 7. REVIEWS & METASCORE (small button on the album page)
+// 7. REVIEWS & METASCORE v3 — critics with their own taste, real competition
+// Depends on: your rating (main), plays vs the artist's usual level, the wait
+// since the previous release, feats, tracklist, genre, artist's track record,
+// chart peak + a pinch of random. 95+ is very rare, perfect 100 almost never.
 // ---------------------------------------------------------------------------
-const OUTLETS = [
-  { n: 'Звук.Журнал', scale: '100', bias: 0 }, { n: 'Пульс', scale: '10', bias: -3 }, { n: 'Рэп-Обзор', scale: '100', bias: 3 }, { n: 'Сабвуфер', scale: '5', bias: -1 },
-  { n: 'Волна', scale: '10', bias: 1 }, { n: 'NOISE', scale: '100', bias: -6 }, { n: 'Бит & Слово', scale: '10', bias: 0 }, { n: 'Ночной эфир', scale: '5', bias: 2 }
+type CritKey = 'rhymes' | 'structure' | 'style' | 'charisma' | 'vibe';
+interface Outlet { n: string; scale: '100' | '10' | '5' | 'abc'; bias: number; sd: number; likes: CritKey[]; pop: number; under: number; longHate: number; featLove: number; tone: 'warm' | 'cold' | 'ironic' | 'poetic' | 'data' }
+const OUTLETS: Outlet[] = [
+  { n: 'Звук.Журнал', scale: '100', bias: 0, sd: 6, likes: ['structure', 'style'], pop: 0, under: 0, longHate: 1, featLove: 0, tone: 'warm' },
+  { n: 'Пульс', scale: '10', bias: -3, sd: 7, likes: ['vibe'], pop: 1, under: 0, longHate: 0, featLove: 1, tone: 'warm' },
+  { n: 'Рэп-Обзор', scale: '100', bias: 2, sd: 6, likes: ['rhymes', 'charisma'], pop: 0, under: 1, longHate: 0, featLove: 1, tone: 'ironic' },
+  { n: 'Сабвуфер', scale: '5', bias: -1, sd: 8, likes: ['vibe', 'style'], pop: 0, under: 0, longHate: 1, featLove: 0, tone: 'warm' },
+  { n: 'Волна', scale: '10', bias: 1, sd: 6, likes: ['vibe', 'charisma'], pop: 1, under: 0, longHate: 0, featLove: 1, tone: 'poetic' },
+  { n: 'NOISE', scale: '100', bias: -7, sd: 9, likes: ['structure'], pop: -2, under: 2, longHate: 2, featLove: -1, tone: 'cold' },
+  { n: 'Бит & Слово', scale: '10', bias: 0, sd: 6, likes: ['rhymes', 'structure'], pop: 0, under: 1, longHate: 1, featLove: 0, tone: 'poetic' },
+  { n: 'Ночной эфир', scale: '5', bias: 2, sd: 7, likes: ['vibe'], pop: 0, under: 0, longHate: 0, featLove: 0, tone: 'poetic' },
+  { n: 'Чарт-Аналитика', scale: '100', bias: -1, sd: 5, likes: ['charisma'], pop: 2, under: -1, longHate: 0, featLove: 1, tone: 'data' },
+  { n: 'Андеграунд Сейчас', scale: 'abc', bias: -2, sd: 9, likes: ['style', 'rhymes'], pop: -2, under: 2, longHate: 1, featLove: -1, tone: 'ironic' },
+  { n: 'Громко', scale: '10', bias: 1, sd: 7, likes: ['charisma', 'vibe'], pop: 2, under: -1, longHate: 0, featLove: 2, tone: 'warm' },
+  { n: 'Плейлист Недели', scale: '5', bias: 3, sd: 6, likes: ['vibe'], pop: 1, under: 0, longHate: 1, featLove: 1, tone: 'warm' },
+  { n: 'Тихий Критик', scale: '100', bias: -4, sd: 6, likes: ['structure', 'rhymes'], pop: -1, under: 1, longHate: 2, featLove: -1, tone: 'cold' },
+  { n: 'Хайп-Радар', scale: '10', bias: 0, sd: 10, likes: ['charisma'], pop: 2, under: -1, longHate: 0, featLove: 2, tone: 'ironic' }
 ];
-const RV = {
-  open: {
-    hi: ['«{t}» — самый цельный релиз {a} на сегодня.', '{a} звучит уверенно как никогда.', 'Редкий случай, когда альбом слушается от первого до последнего трека.', 'На «{t}» {a} наконец нашёл своё звучание.', 'Это тот альбом, который будут вспоминать в итогах года.'],
-    mid: ['«{t}» держится на нескольких сильных треках.', 'Добротный альбом без больших сюрпризов.', '{a} играет на своём поле: уверенно, но предсказуемо.', 'Хорошие идеи соседствуют с проходными треками.', 'Ровный релиз, которому не хватает одного смелого шага.'],
-    lo: ['«{t}» звучит как черновик большого альбома.', 'Слишком много самоповторов.', '{a} явно торопился с релизом.', 'Пара удачных моментов тонет в однообразии.', 'Звучит устало, будто на автопилоте.']
-  },
-  top: ['Главный момент: «{top}».', '«{top}» — тот трек, ради которого стоит включить альбом.', 'Лучше всего работает «{top}».'],
-  feats: { good: ['Фиты с {feats} добавляют красок.', 'Гости ({feats}) звучат органично.'], bad: ['Гости ({feats}) местами перетягивают одеяло.', 'Даже {feats} не спасают середину.'] },
-  long: ['{n} треков — многовато, середина проседает.'], short: ['{n} треков пролетают на одном дыхании.'],
-  crit: ['Сильнее всего здесь {strong}, слабее {weak}.'],
-  prev: { hi: ['После «{prev}» это заметный шаг вперёд.'], mid: ['Продолжает линию «{prev}», не больше и не меньше.'], lo: ['До уровня «{prev}» не дотягивает.'] },
-  close: { hi: ['Must listen.', 'Один из альбомов года.', 'Слушать целиком и на громкости.'], mid: ['Стоит послушать хотя бы ради «{top}».', 'Фанатам точно зайдёт.'], lo: ['Можно пропустить.', 'Ждём реванша.'] }
-};
 const CRIT_RU: Record<string, string> = { rhymes: 'рифмы', structure: 'структура', style: 'стиль', charisma: 'харизма', vibe: 'вайб' };
+const CRIT_GOOD: Record<CritKey, string[]> = {
+  rhymes: ['панчи цепляют с первого прослушивания', 'рифмы плотные и неочевидные', 'тексты хочется разбирать на цитаты', 'игра слов здесь на уровень выше среднего'],
+  structure: ['всё выстроено как цельная история', 'драматургия продумана до мелочей', 'ни одного лишнего перехода', 'порядок треков работает на общий сюжет'],
+  style: ['звучание узнаётся с первых секунд', 'продакшн смелый и свежий', 'стилистически это шаг вперёд', 'саунд хочется разбирать на детали'],
+  charisma: ['подача держит внимание даже в слабых местах', 'харизма вытаскивает любой бит', 'голос и интонации здесь главный инструмент', 'уверенность чувствуется в каждом куплете'],
+  vibe: ['атмосфера затягивает с головой', 'настроение выдержано от начала до конца', 'это музыка, которую чувствуешь', 'вайб здесь сильнее любых слов']
+};
+const CRIT_BAD: Record<CritKey, string[]> = {
+  rhymes: ['тексты местами проваливаются в банальность', 'рифмы слишком предсказуемы', 'панчей мало, проходных строк много'],
+  structure: ['альбому не хватает формы', 'треки будто собраны из разных сессий', 'середина рассыпается'],
+  style: ['звук слишком похож на всё вокруг', 'продакшн безопасный до скуки', 'стилистически топчется на месте'],
+  charisma: ['подаче не хватает огня', 'исполнение звучит вяло', 'местами кажется, что артист сам себе не верит'],
+  vibe: ['настроение скачет без причины', 'атмосфера не успевает сложиться', 'вайб теряется к середине']
+};
+const GENRE_WORDS: Array<[RegExp, string[]]> = [
+  [/trap|трэп|drill|дрилл/i, ['808 гудят как надо', 'хай-хэты нарезаны филигранно', 'бас бьёт в грудь', 'это трэп без скидок']],
+  [/phonk|фонк/i, ['коубелл и грязь на своём месте', 'дрифтовый саунд узнаётся сразу', 'тёмный фонк в лучшем виде']],
+  [/pop|поп/i, ['припевы залипают намертво', 'хуки сделаны под радио и TikTok', 'поп, который не стыдно любить']],
+  [/rock|рок|punk|панк/i, ['гитары звучат живо', 'энергия как на концерте', 'драйв не отпускает']],
+  [/r&b|rnb|соул|soul/i, ['вокальные партии бархатные', 'грув мягкий и тёплый', 'чувственность без перебора']],
+  [/electro|house|techno|электрон|хаус/i, ['клубный пульс не сбивается', 'синтезаторы переливаются', 'танцпол оценит']],
+  [/indie|инди|alt|альт/i, ['звук тёплый и немного ломаный', 'инди-шарм на месте', 'камерно, но очень лично']],
+  [/rap|рэп|hip|хип/i, ['биты качают', 'флоу меняется как надо', 'олдскульная школа чувствуется']]
+];
+const RV3 = {
+  open: {
+    s: ['«{t}» — релиз, который будут цитировать годами.', 'Это вершина {a}. Без оговорок.', 'Редкий случай: каждая секунда «{t}» на своём месте.', '{a} выпустил работу, с которой теперь будут сравнивать всех.', 'После «{t}» планка жанра сдвинулась.'],
+    hi: ['«{t}» — самый цельный релиз {a} на сегодня.', '{a} звучит уверенно как никогда.', 'Редкий случай, когда {kind} слушается от начала до конца.', 'На «{t}» {a} наконец нашёл своё звучание.', 'Это тот релиз, который вспомнят в итогах года.', '{a} не просто вернулся — он задал тон.', '«{t}» звучит дорого, смело и очень по-своему.'],
+    mid: ['«{t}» держится на нескольких сильных моментах.', 'Добротный {kind} без больших сюрпризов.', '{a} играет на своём поле: уверенно, но предсказуемо.', 'Хорошие идеи соседствуют с проходными местами.', 'Ровный релиз, которому не хватает одного смелого шага.', '«{t}» приятно слушать, но сложно запомнить целиком.', 'Крепкий середняк — с потенциалом на большее.'],
+    lo: ['«{t}» звучит как черновик большого релиза.', 'Слишком много самоповторов.', '{a} явно торопился.', 'Пара удачных моментов тонет в однообразии.', 'Звучит устало, будто на автопилоте.', 'От {a} ждали большего — и это чувствуется.'],
+    x: ['«{t}» — самый слабый момент в карьере {a}.', 'Сложно найти, за что зацепиться.', 'Это провал, и он громкий.', 'Ощущение, что «{t}» вышел по ошибке.']
+  },
+  wait: {
+    longHi: ['{a} молчал {wait} — и пауза окупилась.', 'Ожидание в {wait} оправдано полностью.', 'Фанаты ждали {wait}, и это стоило каждого дня.'],
+    longLo: ['После {wait} тишины хотелось большего.', 'Ждали {wait} — получили набросок.', 'Пауза в {wait} подняла ожидания, до которых релиз не дотянулся.'],
+    fast: ['{a} выпускает музыку без пауз — и это начинает утомлять.', 'Новый релиз через {wait} после прошлого: темп впечатляет, глубина — нет.', 'Скорость {a} пугает: {wait} между релизами, а качество держится.'],
+    debut: ['Для первого серьёзного релиза — очень уверенно.', 'Дебют, который сложно проигнорировать.', 'Первый большой шаг — и сразу заметный.']
+  },
+  plays: {
+    up: ['Цифры говорят сами за себя: {plays} прослушиваний.', 'Слушатели проголосовали рублём и временем: {plays}.', 'Аудитория приняла релиз даже теплее критиков.'],
+    down: ['Релиз прошёл тише, чем привыкли поклонники.', 'Цифры скромнее обычного: {plays}.', 'Публика пока не распробовала.'],
+    chart: ['Пик в чарте — №{peak}, и это заслуженно.', 'Чарт подтвердил: №{peak} на пике.']
+  },
+  top: ['Главный момент — «{top}».', '«{top}» — то, ради чего стоит включить релиз.', 'Лучше всего работает «{top}».', 'Трек-магнит здесь «{top}».', '«{top}» уже звучит как будущий хит.'],
+  weak: ['«{weak}» явно лишний.', 'Провисает разве что «{weak}».', '«{weak}» можно было оставить в черновиках.'],
+  opener: ['Открывающий «{first}» сразу задаёт планку.', 'Старт с «{first}» — сильное решение.'],
+  closer: ['Финальный «{last}» закрывает историю красиво.', '«{last}» в конце оставляет послевкусие.'],
+  feats: {
+    good: ['Гости ({feats}) звучат органично.', 'Фиты с {feats} добавляют красок.', 'Лучший куплет, возможно, у {guest}.', '{guest} на фите — точное попадание.'],
+    bad: ['Гости ({feats}) местами перетягивают одеяло.', 'Даже {feats} не спасают середину.', '{guest} на фите звучит чужеродно.'],
+    many: ['Гостей так много, что сам {a} теряется.', 'Список фитов длиннее, чем хотелось бы.']
+  },
+  long: ['{n} треков — многовато, середина проседает.', 'Хронометраж можно было смело урезать.'],
+  short: ['{n} треков пролетают на одном дыхании.', 'Коротко, плотно, без воды.'],
+  single: ['Для сингла — очень ёмкое высказывание.', 'Три минуты, которые хочется поставить на повтор.', 'Сингл, который работает и в наушниках, и в колонке.'],
+  prev: { hi: ['После «{prev}» это заметный шаг вперёд.', 'Рядом с «{prev}» новый релиз звучит взрослее.'], mid: ['Продолжает линию «{prev}», не больше и не меньше.'], lo: ['До уровня «{prev}» не дотягивает.', '«{prev}» был смелее.'] },
+  career: { hi: ['Планка {a} традиционно высокая — и она взята.'], lo: ['Для артиста с таким каталогом — шаг назад.'] },
+  pop: { big: ['Масштаб {a} обязывает, и критики смотрят строже.', 'Когда у тебя {fol} слушателей, каждая ошибка заметнее.'], small: ['Для артиста с {fol} слушателей — это заявка на большее.', 'Слишком хорошо, чтобы оставаться в тени.'] },
+  tone: {
+    cold: ['Без эмоций: факт есть факт.', 'Мы не впечатлены так просто.'],
+    ironic: ['Ну что, комменты, ваш выход.', 'Мем-потенциал — отдельная оценка.'],
+    poetic: ['Это музыка для ночной дороги.', 'Звучит как воспоминание, которого не было.'],
+    data: ['По удержанию слушателей — выше медианы жанра.', 'Скипов меньше, чем у прошлых работ.'],
+    warm: ['Видно, сколько сил в это вложено.', 'Сделано с любовью к деталям.']
+  },
+  close: { s: ['Классика с первого дня.', 'Must listen. Без вариантов.', 'Претендент на всё сразу.'], hi: ['Must listen.', 'Один из релизов года.', 'Слушать целиком и на громкости.'], mid: ['Стоит послушать хотя бы ради «{top}».', 'Фанатам точно зайдёт.', 'Хорошо, но не событие.'], lo: ['Можно пропустить.', 'Ждём реванша.'], x: ['Не рекомендуем.', 'Лучше переслушать «{prev}».', 'Мимо.'] }
+};
 const metaColor = (m: number) => (m >= 75 ? '#22c55e' : m >= 50 ? '#facc15' : '#ef4444');
+const plural = (n: number, a: string, b: string, c: string) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? a : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? b : c; };
+const waitStr = (d: number) => d >= 365 ? `${Math.round(d / 365 * 10) / 10} ${d >= 730 ? 'года' : 'год'}`.replace('.', ',') : d >= 60 ? `${Math.round(d / 30)} ${plural(Math.round(d / 30), 'месяц', 'месяца', 'месяцев')}` : `${d} ${plural(d, 'день', 'дня', 'дней')}`;
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+const ABC = ['D', 'C−', 'C', 'C+', 'B−', 'B', 'B+', 'A−', 'A', 'A+'];
 
-function genReviews(album: Album, albumTracks: Track[], prev: Album | undefined, followers: number, seed: number) {
-  const r = seeded(hashStr(album.id) + seed * 7777);
+interface ReviewCtx { album: Album; at: Track[]; prev?: { title: string; score?: number }; followers: number; seed: number; waitDays: number | null; perf: number; artistAvg: number | null; single: boolean; plays: number }
+function genReviews(c: ReviewCtx) {
+  const { album, at, prev, followers, seed, waitDays, perf, artistAvg, single, plays } = c;
+  const r = seeded(hashStr(album.id) + seed * 7777 + 17);
   const pick = <T,>(a: T[]) => a[Math.floor(r() * a.length)];
-  const avg = albumTracks.length ? albumTracks.reduce((x, t) => x + (t.plays || 0), 0) / albumTracks.length : (album.totalPlays || 0) / 10;
-  const base = album.rating?.totalScore ? (album.rating.totalScore / 90) * 100 : 58 + clamp(Math.log10(Math.max(1, avg) / 1e6) * 8, -15, 15);
-  const top = [...albumTracks].sort((a, b) => (b.plays || 0) - (a.plays || 0))[0]?.title || album.title;
-  const feats = [...new Set(albumTracks.flatMap(t => splitNames(t.featuredArtist)))].slice(0, 2).join(' и ');
-  const crit = CRIT.filter(([k]) => typeof (album.rating as any)?.[k] === 'number').map(([k]) => [k, (album.rating as any)[k]] as [string, number]).sort((a, b) => b[1] - a[1]);
-  const n = clamp(Math.round(3 + Math.log10(followers + 10) - 3.5 + r() * 2), 4, 8);
-  const start = Math.floor(r() * OUTLETS.length);
-  const fill = (x: string) => x.replace(/\{t\}/g, album.title).replace(/\{a\}/g, album.artistName).replace(/\{top\}/g, top).replace('{feats}', feats).replace('{n}', String(albumTracks.length)).replace('{prev}', prev?.title || '').replace('{strong}', crit[0] ? CRIT_RU[crit[0][0]] : '').replace('{weak}', crit.length > 1 ? CRIT_RU[crit[crit.length - 1][0]] : '');
-  const reviews = Array.from({ length: n }, (_, i) => {
-    const o = OUTLETS[(start + i) % OUTLETS.length];
-    const sc = Math.round(clamp(base + (r() + r() + r() - 1.5) * 14 + o.bias, 18, 98));
-    const band = sc >= 75 ? 'hi' : sc >= 55 ? 'mid' : 'lo';
-    const parts = [pick(RV.open[band])];
-    const extra: string[] = [pick(RV.top)];
-    if (feats) extra.push(pick(band === 'lo' ? RV.feats.bad : RV.feats.good));
-    if (albumTracks.length >= 14) extra.push(pick(RV.long)); else if (albumTracks.length > 0 && albumTracks.length <= 8) extra.push(pick(RV.short));
-    if (crit.length > 1) extra.push(pick(RV.crit));
-    if (prev) extra.push(pick(RV.prev[band]));
-    for (let k = 0; k < 2 && extra.length; k++) parts.push(extra.splice(Math.floor(r() * extra.length), 1)[0]);
-    parts.push(pick(RV.close[band]));
-    const shown = o.scale === '100' ? String(sc) : o.scale === '10' ? (sc / 10).toFixed(1) : '★'.repeat(Math.max(1, Math.round(sc / 20))) + '☆'.repeat(5 - Math.max(1, Math.round(sc / 20)));
-    return { outlet: o.n, sc, shown, text: parts.map(fill).join(' ') };
+  const gauss = () => (r() + r() + r() + r() - 2) / 0.58; // ~N(0,1)
+  const rating: any = album.rating;
+  const sorted = [...at].sort((a, b) => (b.plays || 0) - (a.plays || 0));
+  const top = sorted[0]?.title || album.title;
+  const weak = sorted.length >= 5 ? sorted[sorted.length - 1].title : '';
+  const first = at[0]?.title || '', last = at.length > 3 ? at[at.length - 1].title : '';
+  const guests = [...new Set(at.flatMap(t => splitNames(t.featuredArtist)))];
+  const feats = guests.slice(0, 2).join(' и ');
+  const crit = (Object.keys(CRIT_RU) as CritKey[]).filter(k => typeof rating?.[k] === 'number').map(k => [k, rating[k]] as [CritKey, number]).sort((a, b) => b[1] - a[1]);
+  const words = GENRE_WORDS.find(([re]) => re.test(album.genre || ''))?.[1] || [];
+  // --- hidden "true quality" the critics react to ---
+  let q = rating?.totalScore ? (rating.totalScore / 90) * 100 : 60 + clamp(Math.log2(Math.max(0.05, perf)) * 7, -16, 16) + (typeof album.intrinsicQuality === 'number' ? (album.intrinsicQuality - 50) * 0.25 : 0);
+  if (artistAvg !== null && rating?.totalScore) q += clamp((artistAvg - 60) * 0.06, -2, 2);
+  if (waitDays !== null && waitDays > 300 && q < 80) q -= 3;          // long wait raises the bar
+  if (waitDays !== null && waitDays < 25 && !single) q -= 2;          // rushed
+  if (guests.length > 5) q -= 2;
+  q = clamp(q, 10, 100);
+  const critScore = 38 + (q - 38) * 0.88;                             // critics compress the top
+  const nRev = clamp(Math.round((single ? 2 : 3) + Math.log10(followers + 10) - 4.2 + Math.log10(Math.max(1, plays)) / 3.2 + r() * 1.6), single ? 3 : 4, single ? 5 : 7);
+  const outlets = [...OUTLETS].sort(() => r() - 0.5).slice(0, nRev);
+  const fill = (x: string, o: Outlet) => x.replace(/\{t\}/g, album.title).replace(/\{a\}/g, album.artistName).replace(/\{top\}/g, top).replace(/\{weak\}/g, weak)
+    .replace(/\{first\}/g, first).replace(/\{last\}/g, last).replace(/\{feats\}/g, feats).replace(/\{guest\}/g, guests[Math.floor(r() * Math.max(1, guests.length))] || feats)
+    .replace(/\{n\}/g, String(at.length)).replace(/\{prev\}/g, prev?.title || album.title).replace(/\{wait\}/g, waitDays ? waitStr(waitDays) : '')
+    .replace(/\{plays\}/g, fmtN(plays)).replace(/\{peak\}/g, String(album.peakChartPosition || (at[0] as any)?.peakChartPosition || '')).replace(/\{fol\}/g, fmtN(followers))
+    .replace(/\{kind\}/g, single ? 'трек' : at.length <= 7 ? 'EP' : 'альбом');
+  const usedGlobal = new Set<string>();
+  const once = (arr: string[]) => { const free = arr.filter(x => !usedGlobal.has(x)); const v = pick(free.length ? free : arr); usedGlobal.add(v); return v; };
+  const reviews = outlets.map(o => {
+    let sc = critScore + o.bias + gauss() * o.sd;
+    o.likes.forEach(k => { if (typeof rating?.[k] === 'number') sc += (rating[k] - 6.5) * 1.1; });
+    sc += o.pop * clamp(Math.log10(Math.max(1, followers)) - 5.5, -1.5, 1.5) * 2 - o.under * clamp(Math.log10(Math.max(1, followers)) - 5.5, -1.5, 1.5) * 1.5;
+    if (!single && at.length >= 16) sc -= o.longHate * 2.5;
+    if (guests.length) sc += o.featLove * (guests.length <= 3 ? 1.5 : -1);
+    if (r() < 0.06) sc += (r() < 0.5 ? -1 : 1) * (10 + r() * 12);        // contrarian take
+    if (sc > 93 && !(q >= 94 && r() < 0.45)) sc = 89 + r() * 4;          // 95+ is earned, not given
+    sc = Math.round(clamp(sc, 12, 100));
+    const band = sc >= 92 ? 's' : sc >= 75 ? 'hi' : sc >= 55 ? 'mid' : sc >= 35 ? 'lo' : 'x';
+    const good = band === 's' || band === 'hi';
+    const pool: string[] = [];
+    pool.push(once(RV3.top));
+    if (weak && !good) pool.push(once(RV3.weak));
+    if (first && r() < 0.35) pool.push(once(RV3.opener));
+    if (last && good && r() < 0.35) pool.push(once(RV3.closer));
+    if (guests.length > 4) pool.push(once(RV3.feats.many)); else if (guests.length) pool.push(once(good || band === 'mid' ? RV3.feats.good : RV3.feats.bad));
+    if (waitDays === null && !prev) pool.push(once(RV3.wait.debut));
+    else if (waitDays !== null && waitDays >= 270) pool.push(once(good ? RV3.wait.longHi : RV3.wait.longLo));
+    else if (waitDays !== null && waitDays <= 35) pool.push(once(RV3.wait.fast));
+    if (perf >= 1.7) pool.push(once(RV3.plays.up)); else if (perf <= 0.55) pool.push(once(RV3.plays.down));
+    const peak = album.peakChartPosition || (at[0] as any)?.peakChartPosition;
+    if (peak && peak <= 10) pool.push(once(RV3.plays.chart));
+    if (single) pool.push(once(RV3.single)); else if (at.length >= 15) pool.push(once(RV3.long)); else if (at.length > 0 && at.length <= 8) pool.push(once(RV3.short));
+    if (crit.length > 1) {
+      const liked = o.likes.find(k => crit.some(([ck, v]) => ck === k && v >= 7)) || crit[0][0];
+      pool.push(`${o.likes.includes(liked) ? 'Для нас главное: ' : 'Сильнее всего здесь: '}${pick(CRIT_GOOD[liked])}.`);
+      if (!good) pool.push(`Слабое место — ${CRIT_RU[crit[crit.length - 1][0]]}: ${pick(CRIT_BAD[crit[crit.length - 1][0]])}.`);
+    } else pool.push(`${cap(pick((good ? CRIT_GOOD : CRIT_BAD)[o.likes[0]]))}.`);
+    if (words.length && r() < 0.6) pool.push(`${cap(pick(words))}.`);
+    if (prev && r() < 0.6) pool.push(once(RV3.prev[good ? 'hi' : band === 'mid' ? 'mid' : 'lo']));
+    if (artistAvg !== null && r() < 0.3) pool.push(once(artistAvg >= 65 && good ? RV3.career.hi : RV3.career.lo));
+    if (r() < 0.35) pool.push(once(followers >= 3_000_000 ? RV3.pop.big : followers <= 300_000 ? RV3.pop.small : RV3.tone[o.tone]));
+    if (r() < 0.3) pool.push(pick(RV3.tone[o.tone]));
+    const body: string[] = [];
+    const k = single ? 1 + Math.round(r()) : 2 + Math.round(r());
+    for (let i = 0; i < k && pool.length; i++) body.push(pool.splice(Math.floor(r() * pool.length), 1)[0]);
+    const parts = [once(RV3.open[band]), ...body, once(RV3.close[band])];
+    const shown = o.scale === '100' ? String(sc) : o.scale === '10' ? (sc / 10).toFixed(1) : o.scale === 'abc' ? ABC[clamp(Math.floor((sc - 20) / 8), 0, 9)]
+      : '★'.repeat(clamp(Math.round(sc / 20), 1, 5)) + '☆'.repeat(5 - clamp(Math.round(sc / 20), 1, 5));
+    const tag = sc >= 92 ? 'Шедевр' : sc >= 86 && r() < 0.6 ? 'Выбор редакции' : sc >= 80 && r() < 0.35 ? 'Лучшее новое' : sc < 35 ? 'Разочарование' : '';
+    return { outlet: o.n, sc, shown, tag, text: parts.map(x => fill(x, o)).join(' ') };
   });
   const meta = Math.round(reviews.reduce((x, y) => x + y.sc, 0) / reviews.length);
   const pos = reviews.filter(x => x.sc >= 75).length, neg = reviews.filter(x => x.sc < 50).length;
-  const consensus = meta >= 80 ? 'Всеобщее признание' : meta >= 70 ? 'В целом положительные отзывы' : meta >= 55 ? 'Смешанные или средние отзывы' : meta >= 40 ? 'В целом негативные отзывы' : 'Разгромные отзывы';
-  return { reviews: reviews.sort((a, b) => b.sc - a.sc), meta, pos, neg, mixed: reviews.length - pos - neg, consensus };
+  const consensus = meta >= 90 ? 'Всеобщее признание' : meta >= 80 ? 'Признание критиков' : meta >= 70 ? 'В целом положительные отзывы' : meta >= 55 ? 'Смешанные или средние отзывы' : meta >= 40 ? 'В целом негативные отзывы' : 'Разгромные отзывы';
+  const spread = Math.max(...reviews.map(x => x.sc)) - Math.min(...reviews.map(x => x.sc));
+  const note = spread >= 30 ? 'Критики разошлись во мнениях' : spread <= 8 ? 'Редкое единодушие' : '';
+  return { reviews: reviews.sort((a, b) => b.sc - a.sc), meta, pos, neg, mixed: reviews.length - pos - neg, consensus, note };
 }
 
-export const AlbumReviewsButton: React.FC<{ album: Album; tracks: Track[]; albums: Album[]; artists: Artist[] }> = ({ album, tracks, albums, artists }) => {
+const RvIcon = () => (<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><path d="M8 9h8M8 13h5" /></svg>);
+
+export const AlbumReviewsButton: React.FC<{ album: Album; tracks: Track[]; albums: Album[]; artists: Artist[]; single?: Track }> = ({ album, tracks, albums, artists, single }) => {
   const [open, setOpen] = useState(false);
   const [seed, setSeed] = useState(() => lsGet<number>(`musaic.reviews.${album.id}`, 0));
   useEffect(() => { setSeed(lsGet<number>(`musaic.reviews.${album.id}`, 0)); }, [album.id]);
   const data = useMemo(() => {
-    const at = tracks.filter(t => t.albumId === album.id);
+    const at = single ? [single] : tracks.filter(t => t.albumId === album.id);
     const ts = parseDayMs(album.releaseDate, album.releaseYear) || 0;
-    const prev = albums.filter(a => a.id !== album.id && (a.artistId === album.artistId || norm(a.artistName) === norm(album.artistName)) && (parseDayMs(a.releaseDate, a.releaseYear) || 0) < ts)
+    const mine = (x: { artistId?: string; artistName?: string }) => x.artistId === album.artistId || norm(x.artistName) === norm(album.artistName);
+    const prevAlb = albums.filter(a => a.id !== album.id && mine(a) && (parseDayMs(a.releaseDate, a.releaseYear) || 0) < ts)
       .sort((a, b) => (parseDayMs(b.releaseDate, b.releaseYear) || 0) - (parseDayMs(a.releaseDate, a.releaseYear) || 0))[0];
-    const fol = artists.find(a => a.id === album.artistId)?.followers || 300000;
-    return genReviews(album, at, prev, fol, seed);
-  }, [album, tracks, albums, artists, seed]);
+    const prevTracks = tracks.filter(t => !t.isSnippet && mine(t) && t.albumId !== album.id && t.id !== single?.id && (parseDayMs(t.releaseDate) || 0) < ts);
+    const lastTs = Math.max(prevAlb ? parseDayMs(prevAlb.releaseDate, prevAlb.releaseYear) || 0 : 0, ...prevTracks.map(t => parseDayMs(t.releaseDate) || 0), 0);
+    const waitDays = lastTs > 0 && ts > 0 ? Math.max(1, Math.round((ts - lastTs) / DAY)) : null;
+    const plays = at.reduce((x, t) => x + (t.plays || 0), 0) || album.totalPlays || 0;
+    const usual = single ? (prevTracks.length ? prevTracks.reduce((x, t) => x + (t.plays || 0), 0) / prevTracks.length : 0)
+      : (prevAlb?.totalPlays || (prevTracks.length ? prevTracks.reduce((x, t) => x + (t.plays || 0), 0) / prevTracks.length * Math.max(4, at.length) * 0.55 : 0));
+    const art = artists.find(a => a.id === album.artistId);
+    const fol = art?.followers || 300000;
+    const perf = usual > 0 ? plays / usual : plays / Math.max(1, fol * (single ? 0.9 : 6));
+    const rated = [...albums.filter(a => mine(a) && a.id !== album.id && a.rating?.totalScore), ...prevTracks.filter(t => t.rating?.totalScore)].map((x: any) => (x.rating.totalScore / 90) * 100);
+    const artistAvg = rated.length ? rated.reduce((x, y) => x + y, 0) / rated.length : null;
+    const prev = prevAlb ? { title: prevAlb.title } : prevTracks.length ? { title: [...prevTracks].sort((a, b) => (b.plays || 0) - (a.plays || 0))[0].title } : undefined;
+    return genReviews({ album, at, prev, followers: fol, seed, waitDays, perf, artistAvg, single: Boolean(single), plays });
+  }, [album, tracks, albums, artists, seed, single]);
   const reroll = () => { const n = seed + 1; setSeed(n); lsSet(`musaic.reviews.${album.id}`, n); };
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} title="Рецензии критиков"
-        className="inline-flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-white/10 hover:border-white/25 text-[11px] font-bold text-zinc-400 hover:text-white transition-colors cursor-pointer">
-        <span className="w-5 h-5 rounded-md text-[10px] font-black text-black flex items-center justify-center tabular-nums" style={{ background: metaColor(data.meta) }}>{data.meta}</span>
-        Рецензии
+        className="h-9 inline-flex items-center gap-2 px-3.5 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer active:scale-95">
+        <RvIcon />
+        <span>Рецензии</span>
+        <span className="text-[11px] font-black tabular-nums" style={{ color: metaColor(data.meta) }}>{data.meta}</span>
       </button>
       <AnimatePresence>
         {open && (
@@ -2179,17 +2424,17 @@ export const AlbumReviewsButton: React.FC<{ album: Album; tracks: Track[]; album
                   <div className="relative flex items-center gap-4">
                     <CoverArt url={album.coverUrl} title={album.title} className="w-20 h-20 rounded-2xl overflow-hidden shrink-0 shadow-2xl" innerClassName="w-full h-full object-cover" />
                     <div className="min-w-0 flex-1">
-                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Рецензии</div>
+                      <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Рецензии · {single ? 'сингл' : 'релиз'}</div>
                       <div className="text-2xl font-black text-white truncate">{album.title}</div>
                       <div className="text-sm text-zinc-400 truncate">{album.artistName}</div>
                     </div>
                     <button type="button" onClick={() => setOpen(false)} className="self-start w-9 h-9 rounded-full bg-white/[0.06] hover:bg-white/[0.14] text-white/70 text-xl">×</button>
                   </div>
                   <div className="relative mt-5 flex items-center gap-4">
-                    <div className="w-[72px] h-[72px] rounded-2xl flex items-center justify-center text-3xl font-black text-black tabular-nums shadow-lg" style={{ background: metaColor(data.meta) }}>{data.meta}</div>
+                    <motion.div key={`m${seed}`} initial={{ scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-[72px] h-[72px] rounded-2xl flex items-center justify-center text-3xl font-black text-black tabular-nums shadow-lg" style={{ background: metaColor(data.meta) }}>{data.meta}</motion.div>
                     <div className="min-w-0 flex-1">
                       <div className="text-[15px] font-black text-white">{data.consensus}</div>
-                      <div className="text-[12px] text-zinc-400">Метаскор на основе {data.reviews.length} рецензий</div>
+                      <div className="text-[12px] text-zinc-400">Метаскор на основе {data.reviews.length} рецензий{data.note ? ` · ${data.note}` : ''}</div>
                       <div className="mt-2 flex h-1.5 rounded-full overflow-hidden gap-[2px]">
                         <span style={{ flexGrow: data.pos || 0.001, background: '#22c55e' }} /><span style={{ flexGrow: data.mixed || 0.001, background: '#facc15' }} /><span style={{ flexGrow: data.neg || 0.001, background: '#ef4444' }} />
                       </div>
@@ -2200,9 +2445,9 @@ export const AlbumReviewsButton: React.FC<{ album: Album; tracks: Track[]; album
                 </div>
                 <div className="px-6 pb-6 space-y-2">
                   {data.reviews.map((rv, i) => (
-                    <motion.div key={`${seed}-${i}`} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }} className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-3.5">
+                    <motion.div key={`${seed}-${i}`} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }} className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-3.5">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-[12px] font-black text-white">{rv.outlet}</span>
+                        <span className="text-[12px] font-black text-white flex items-center gap-2">{rv.outlet}{rv.tag && <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md" style={{ color: metaColor(rv.sc), background: `${metaColor(rv.sc)}14` }}>{rv.tag}</span>}</span>
                         <span className="text-[12px] font-black tabular-nums px-2 py-0.5 rounded-lg" style={{ color: metaColor(rv.sc), background: `${metaColor(rv.sc)}1a` }}>{rv.shown}</span>
                       </div>
                       <p className="text-[12.5px] text-zinc-300 leading-relaxed mt-1.5">{rv.text}</p>
@@ -2217,6 +2462,16 @@ export const AlbumReviewsButton: React.FC<{ album: Album; tracks: Track[]; album
       </AnimatePresence>
     </>
   );
+};
+
+/** Same reviews for a single track (track page) */
+export const TrackReviewsButton: React.FC<{ track: Track; tracks: Track[]; albums: Album[]; artists: Artist[] }> = ({ track, tracks, albums, artists }) => {
+  const pseudo = useMemo(() => ({
+    id: `trk-${track.id}`, title: track.title, artistId: track.artistId, artistName: track.artistName, coverUrl: track.coverUrl || '',
+    releaseYear: +(track.releaseDate || '').slice(0, 4) || new Date().getFullYear(), releaseDate: track.releaseDate, genre: track.genre || '', isLiked: false,
+    rating: track.rating, totalPlays: track.plays, peakChartPosition: track.peakChartPosition, intrinsicQuality: track.intrinsicQuality
+  } as Album), [track]);
+  return <AlbumReviewsButton album={pseudo} tracks={tracks} albums={albums} artists={artists} single={track} />;
 };
 
 // ---------------------------------------------------------------------------
@@ -2346,5 +2601,213 @@ export const WeeklyNewsFeed: React.FC<{
         </motion.div>
       </AnimatePresence>
     </section>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// 9. ARTIST PORTFOLIO — quiet button on the profile, full career dossier
+// listeners history is estimated from releases & current audience when no real data
+// ---------------------------------------------------------------------------
+const MiniArea: React.FC<{ pts: number[]; labels: string[]; color: string; marks?: number[]; h?: number }> = ({ pts, labels, color, marks = [], h = 140 }) => {
+  const W = 640; const max = Math.max(1, ...pts); const min = Math.min(...pts) * 0.85;
+  const x = (i: number) => (pts.length < 2 ? 0 : (i / (pts.length - 1)) * W);
+  const y = (v: number) => h - 8 - ((v - min) / Math.max(1, max - min)) * (h - 24);
+  const line = pts.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const gid = React.useId().replace(/:/g, '');
+  const [hov, setHov] = useState<number | null>(null);
+  return (
+    <div className="relative">
+      <svg viewBox={`0 0 ${W} ${h}`} className="w-full" style={{ height: h }} preserveAspectRatio="none"
+        onMouseMove={e => { const b = (e.currentTarget as SVGSVGElement).getBoundingClientRect(); setHov(clamp(Math.round(((e.clientX - b.left) / b.width) * (pts.length - 1)), 0, pts.length - 1)); }} onMouseLeave={() => setHov(null)}>
+        <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.35" /><stop offset="100%" stopColor={color} stopOpacity="0" /></linearGradient></defs>
+        <path d={`${line} L${W},${h} L0,${h} Z`} fill={`url(#${gid})`} />
+        <motion.path d={line} fill="none" stroke={color} strokeWidth="2.2" vectorEffect="non-scaling-stroke" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }} />
+        {marks.map(i => <line key={i} x1={x(i)} x2={x(i)} y1={8} y2={h} stroke="rgba(255,255,255,0.12)" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />)}
+        {hov !== null && <line x1={x(hov)} x2={x(hov)} y1={0} y2={h} stroke="rgba(255,255,255,0.35)" vectorEffect="non-scaling-stroke" />}
+      </svg>
+      {hov !== null && <div className="absolute top-0 px-2 py-1 rounded-lg bg-black/80 text-[11px] text-white pointer-events-none whitespace-nowrap -translate-x-1/2" style={{ left: `${(hov / Math.max(1, pts.length - 1)) * 100}%` }}>{labels[hov]} · <b>{fmtN(pts[hov])}</b></div>}
+      <div className="flex justify-between text-[10px] text-zinc-600 mt-1"><span>{labels[0]}</span><span>{labels[Math.floor(labels.length / 2)]}</span><span>{labels[labels.length - 1]}</span></div>
+    </div>
+  );
+};
+
+export const ArtistPortfolioButton: React.FC<{ artist: Artist; tracks: Track[]; albums: Album[]; navigateTo?: (v: ViewType, p?: any) => void }> = ({ artist, tracks, albums, navigateTo }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} title="Портфолио артиста"
+        className="p-2 rounded-full border border-transparent hover:border-white/15 hover:bg-white/[0.04] text-zinc-400 hover:text-white transition-all cursor-pointer">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M7 15l4-4 3 3 5-6" /></svg>
+      </button>
+      <AnimatePresence>{open && <PortfolioModal key="pf" artist={artist} tracks={tracks} albums={albums} navigateTo={navigateTo} onClose={() => setOpen(false)} />}</AnimatePresence>
+    </>
+  );
+};
+
+const PortfolioModal: React.FC<{ artist: Artist; tracks: Track[]; albums: Album[]; navigateTo?: (v: ViewType, p?: any) => void; onClose: () => void }> = ({ artist, tracks, albums, navigateTo, onClose }) => {
+  useEsc(true, onClose);
+  const awards = useStore(awardsStore);
+  const d = useMemo(() => {
+    const mineT = tracks.filter(t => isLeadOf(t, artist));
+    const featT = tracks.filter(t => !isLeadOf(t, artist) && splitNames(t.featuredArtist).map(norm).includes(norm(artist.name)));
+    const mineA = albums.filter(a => a.artistId === artist.id || norm(a.artistName) === norm(artist.name));
+    const real = mineT.filter(t => !t.isSnippet);
+    const dated = [...real.map(t => ({ ms: parseDayMs(t.releaseDate), plays: t.plays || 0, title: t.title, album: t.albumId && t.albumId !== 'single' })), ...mineA.map(a => ({ ms: parseDayMs(a.releaseDate, a.releaseYear), plays: a.totalPlays || 0, title: a.title, album: true }))].filter(x => x.ms !== null) as Array<{ ms: number; plays: number; title: string; album: boolean }>;
+    dated.sort((a, b) => a.ms - b.ms);
+    const nowMs = dayStart(Date.now());
+    const first = dated[0]?.ms ?? nowMs - 365 * DAY;
+    const lastMs = Math.max(nowMs, dated[dated.length - 1]?.ms ?? nowMs);
+    const totalPlays = real.reduce((s, t) => s + (t.plays || 0), 0);
+    // --- monthly listeners history (estimated, deterministic per artist) ---
+    const r = seeded(hashStr(artist.id) + 7);
+    const months: number[] = []; for (let m = Date.UTC(new Date(first).getUTCFullYear(), new Date(first).getUTCMonth(), 1); m <= lastMs; m = Date.UTC(new Date(m).getUTCFullYear(), new Date(m).getUTCMonth() + 1, 1)) months.push(m);
+    if (months.length < 2) months.unshift(Date.UTC(new Date(lastMs).getUTCFullYear(), new Date(lastMs).getUTCMonth() - 1, 1));
+    const relByMonth = new Map<number, number>();
+    dated.forEach(x => { const k = Date.UTC(new Date(x.ms).getUTCFullYear(), new Date(x.ms).getUTCMonth(), 1); relByMonth.set(k, (relByMonth.get(k) || 0) + x.plays * (x.album ? 0.6 : 1)); });
+    const maxRel = Math.max(1, ...relByMonth.values());
+    const trendKind = r(); // 0..1: steady riser / rollercoaster / peaked earlier
+    let base = 1, boost = 0; const raw: number[] = [];
+    months.forEach((m, i) => {
+      const t = i / Math.max(1, months.length - 1);
+      const drift = trendKind < 0.5 ? 0.03 : trendKind < 0.8 ? 0.025 * Math.sin(i / 3.2) + 0.008 : (t < 0.6 ? 0.045 : -0.02);
+      base = Math.max(0.1, base * (1 + drift + (r() - 0.5) * 0.07));
+      boost = boost * 0.62 + ((relByMonth.get(m) || 0) / maxRel) * (0.35 + r() * 0.4);
+      raw.push(base * (1 + boost));
+    });
+    const scale = (artist.followers || 100_000) / raw[raw.length - 1];
+    const listeners = raw.map(v => Math.round(v * scale));
+    const labels = months.map(m => `${pad2(new Date(m).getUTCMonth() + 1)}-${new Date(m).getUTCFullYear()}`);
+    const marks = months.map((m, i) => (relByMonth.has(m) && mineA.some(a => { const ms = parseDayMs(a.releaseDate, a.releaseYear); return ms !== null && Date.UTC(new Date(ms).getUTCFullYear(), new Date(ms).getUTCMonth(), 1) === m; }) ? i : -1)).filter(i => i >= 0);
+    const avgL = Math.round(listeners.reduce((s, v) => s + v, 0) / listeners.length);
+    const peakI = listeners.indexOf(Math.max(...listeners));
+    const yearAgo = listeners[Math.max(0, listeners.length - 13)];
+    // --- chart ---
+    const charted = real.filter(t => t.peakChartPosition && t.peakChartPosition > 0);
+    const weeks = charted.reduce((s, t) => s + (t.weeksOnChart || (t.chartHistory?.length ?? 1)), 0);
+    const bestPeak = charted.length ? Math.min(...charted.map(t => t.peakChartPosition!)) : null;
+    const chartTop = [...charted].sort((a, b) => (a.peakChartPosition! - b.peakChartPosition!) || ((b.weeksOnChart || 0) - (a.weeksOnChart || 0))).slice(0, 6);
+    // --- yearly output ---
+    const years = new Map<number, { plays: number; n: number; albums: number }>();
+    dated.forEach(x => { const y = new Date(x.ms).getUTCFullYear(); const e = years.get(y) || { plays: 0, n: 0, albums: 0 }; e.plays += x.plays; e.n++; if (x.album) e.albums++; years.set(y, e); });
+    const yearRows = [...years.entries()].sort((a, b) => a[0] - b[0]);
+    // --- cadence ---
+    const relTs = [...new Set(dated.map(x => x.ms))].sort((a, b) => a - b);
+    const gaps = relTs.slice(1).map((t, i) => (t - relTs[i]) / DAY);
+    const avgGap = gaps.length ? Math.round(gaps.reduce((s, g) => s + g, 0) / gaps.length) : null;
+    const maxGap = gaps.length ? Math.round(Math.max(...gaps)) : null;
+    const silent = relTs.length ? Math.max(0, Math.round((nowMs - relTs[relTs.length - 1]) / DAY)) : null;
+    // --- collaborators ---
+    const co = new Map<string, number>();
+    real.forEach(t => splitNames(t.featuredArtist).forEach(n => co.set(n, (co.get(n) || 0) + 1)));
+    featT.forEach(t => co.set(t.artistName, (co.get(t.artistName) || 0) + 1));
+    const collabs = [...co.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const top = [...real].sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, 5);
+    const rated = [...real, ...mineA].filter((x: any) => x.rating?.totalScore);
+    const avgScore = rated.length ? Math.round(rated.reduce((s, x: any) => s + x.rating.totalScore, 0) / rated.length) : null;
+    const wins = awards.filter(a => (a.winner.type === 'artist' ? norm(a.winner.title) === norm(artist.name) : splitNames(a.winner.artistName).map(norm).includes(norm(artist.name)))).length;
+    return { mineT: real, mineA, featT, first, totalPlays, listeners, labels, marks, avgL, peakI, yearAgo, weeks, bestPeak, chartTop, charted, yearRows, avgGap, maxGap, silent, collabs, top, avgScore, wins, no1: charted.filter(t => t.peakChartPosition === 1).length, top10: charted.filter(t => t.peakChartPosition! <= 10).length };
+  }, [artist, tracks, albums, awards]);
+  const growth = d.yearAgo ? Math.round(((d.listeners[d.listeners.length - 1] - d.yearAgo) / Math.max(1, d.yearAgo)) * 100) : 0;
+  const yearsIn = Math.max(0, (Date.now() - d.first) / (365 * DAY));
+  const maxYear = Math.max(1, ...d.yearRows.map(([, v]) => v.plays));
+  const K = ({ v, l, s }: { v: React.ReactNode; l: string; s?: React.ReactNode }) => (
+    <div className="rounded-2xl bg-white/[0.035] border border-white/[0.05] px-3.5 py-3 min-w-0"><div className="text-lg sm:text-xl font-black text-white tabular-nums truncate">{v}</div><div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mt-0.5">{l}</div>{s && <div className="text-[10px] text-zinc-500 mt-0.5 truncate">{s}</div>}</div>
+  );
+  const go = (v: ViewType, id: string) => { if (!navigateTo) return; onClose(); navigateTo(v, { id }); };
+  return (
+    <Portal>
+      <div className="fixed inset-0 z-[600] flex items-end sm:items-center justify-center sm:p-6">
+        <motion.div className="absolute inset-0 bg-black/80 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+        <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+          className="relative w-full sm:max-w-4xl max-h-[94vh] overflow-y-auto custom-scrollbar rounded-t-[28px] sm:rounded-[28px] border border-white/10 bg-[#0c0c0f]">
+          <div className="relative overflow-hidden px-6 pt-7 pb-5">
+            <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(70% 100% at 20% 0%, color-mix(in srgb, var(--accent-color) 22%, transparent), transparent 70%)' }} />
+            <div className="relative flex items-center gap-4">
+              <CoverArt url={artist.imageUrl} title={artist.name} isArtist className="w-20 h-20 rounded-full overflow-hidden shrink-0 ring-1 ring-white/15" innerClassName="w-full h-full object-cover" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-black uppercase tracking-[0.25em] text-zinc-400">Портфолио</div>
+                <div className="text-2xl sm:text-4xl font-black text-white truncate tracking-tight">{artist.name}</div>
+                <div className="text-[12px] text-zinc-400 mt-0.5">{artist.genre || 'Артист'}{artist.country ? ` · ${artist.country}` : ''} · на сцене с {fmtDay(d.first)}{yearsIn >= 1 ? ` (${yearsIn.toFixed(1).replace('.', ',')} г.)` : ''}</div>
+              </div>
+              <button type="button" onClick={onClose} className="self-start w-9 h-9 rounded-full bg-white/[0.06] hover:bg-white/[0.14] text-white/70 text-xl">×</button>
+            </div>
+          </div>
+          <div className="px-6 pb-7 space-y-6">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <K v={fmtN(artist.followers || 0)} l="Слушателей сейчас" s={`${growth >= 0 ? '+' : ''}${growth}% за год`} />
+              <K v={fmtN(d.avgL)} l="Среднее в месяц" s={`пик ${fmtN(d.listeners[d.peakI])} · ${d.labels[d.peakI]}`} />
+              <K v={fmtN(d.totalPlays)} l="Прослушиваний" s={`${d.mineT.length} треков · ${d.mineA.length} альб./EP`} />
+              <K v={d.bestPeak ? `№${d.bestPeak}` : '—'} l="Лучшая позиция" s={`${d.weeks} нед. в чарте · №1 × ${d.no1} · топ-10 × ${d.top10}`} />
+            </div>
+            <section>
+              <div className="flex items-baseline justify-between mb-2"><h4 className="text-sm font-black text-white">Динамика слушателей</h4><span className="text-[10px] text-zinc-500">оценка по релизам и аудитории · пунктир — альбомы</span></div>
+              <div className="rounded-2xl bg-white/[0.025] border border-white/[0.05] p-3"><MiniArea pts={d.listeners} labels={d.labels} color="var(--accent-color)" marks={d.marks} /></div>
+            </section>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <section>
+                <h4 className="text-sm font-black text-white mb-2">По годам</h4>
+                <div className="space-y-1.5">
+                  {d.yearRows.length === 0 && <div className="text-xs text-zinc-500">Нет датированных релизов</div>}
+                  {d.yearRows.map(([y, v], i) => (
+                    <div key={y} className="flex items-center gap-3 text-[12px]">
+                      <span className="w-10 text-zinc-400 tabular-nums">{y}</span>
+                      <div className="flex-1 h-2 rounded-full bg-white/[0.05] overflow-hidden"><motion.div className="h-full rounded-full" style={{ background: 'var(--accent-color)' }} initial={{ width: 0 }} animate={{ width: `${(v.plays / maxYear) * 100}%` }} transition={{ delay: i * 0.05, duration: 0.6 }} /></div>
+                      <span className="w-28 text-right text-zinc-300 tabular-nums">{fmtN(v.plays)} · {v.n} рел.</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-3">
+                  <K v={d.avgGap !== null ? `${d.avgGap} дн.` : '—'} l="Между релизами" />
+                  <K v={d.maxGap !== null ? `${d.maxGap} дн.` : '—'} l="Самая длинная пауза" />
+                  <K v={d.silent !== null ? `${d.silent} дн.` : '—'} l="С последнего" />
+                </div>
+              </section>
+              <section>
+                <h4 className="text-sm font-black text-white mb-2">История в чарте</h4>
+                {d.chartTop.length === 0 && <div className="text-xs text-zinc-500">Пока без попаданий в чарт</div>}
+                <div className="space-y-1.5">
+                  {d.chartTop.map(t => (
+                    <button key={t.id} type="button" onClick={() => go('track', t.id)} className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.04] text-left">
+                      <span className="w-9 text-center text-[13px] font-black tabular-nums" style={{ color: t.peakChartPosition === 1 ? '#fbbf24' : '#fff' }}>№{t.peakChartPosition}</span>
+                      <span className="min-w-0 flex-1"><span className="block text-[13px] font-bold text-white truncate">{t.title}</span><span className="block text-[10px] text-zinc-500">{t.weeksOnChart || t.chartHistory?.length || 1} нед. · {fmtN(t.plays || 0)}</span></span>
+                      {t.chartHistory && t.chartHistory.length > 1 && (
+                        <svg width="70" height="22" viewBox="0 0 70 22"><polyline fill="none" stroke="var(--accent-color)" strokeWidth="1.6" points={t.chartHistory.slice(-14).map((p, i, arr) => `${(i / Math.max(1, arr.length - 1)) * 68 + 1},${1 + (Math.min(100, p) / 100) * 20}`).join(' ')} /></svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <section>
+                <h4 className="text-sm font-black text-white mb-2">Главные треки</h4>
+                <div className="space-y-1">
+                  {d.top.map((t, i) => (
+                    <button key={t.id} type="button" onClick={() => go('track', t.id)} className="w-full flex items-center gap-3 p-1.5 rounded-xl hover:bg-white/[0.04] text-left">
+                      <span className="w-4 text-[11px] text-zinc-600 font-black">{i + 1}</span>
+                      <CoverArt url={t.coverUrl} title={t.title} className="w-9 h-9 rounded-lg overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
+                      <span className="min-w-0 flex-1 text-[13px] font-bold text-white truncate">{t.title}</span>
+                      <span className="text-[11px] text-zinc-400 tabular-nums">{d.totalPlays ? Math.round(((t.plays || 0) / d.totalPlays) * 100) : 0}%</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+              <section>
+                <h4 className="text-sm font-black text-white mb-2">Коллаборации и награды</h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {d.collabs.length === 0 && <span className="text-xs text-zinc-500">Без фитов</span>}
+                  {d.collabs.map(([n, c]) => <span key={n} className="text-[11px] px-2.5 py-1 rounded-full bg-white/[0.05] text-zinc-200">{n} <span className="text-zinc-500">× {c}</span></span>)}
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-3">
+                  <K v={d.wins} l="Наград" />
+                  <K v={d.featT.length} l="Гостевых фитов" />
+                  <K v={d.avgScore !== null ? d.avgScore : '—'} l="Средняя оценка" />
+                </div>
+              </section>
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    </Portal>
   );
 };
