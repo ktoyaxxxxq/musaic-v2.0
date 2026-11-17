@@ -14,6 +14,23 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      // Musaic v2.4: libraries go to separate cached chunks, so the app loads faster after updates
+      build: {
+        target: 'es2020',
+        chunkSizeWarningLimit: 2500,
+        rollupOptions: {
+          output: {
+            manualChunks(id) {
+              if (!id.includes('node_modules')) return;
+              if (id.includes('react-dom') || id.includes('/react/') || id.includes('scheduler')) return 'react';
+              if (id.includes('motion') || id.includes('framer')) return 'motion';
+              if (id.includes('lucide')) return 'icons';
+              if (id.includes('@google')) return 'genai';
+              return 'vendor';
+            }
+          }
+        }
       }
     };
 });

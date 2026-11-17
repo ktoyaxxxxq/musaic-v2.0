@@ -6692,6 +6692,8 @@ export const SimStartModal: React.FC<{
             </div>
           </div>
 
+          <SimScenarioPicker />
+
           {saveSlots.length > 0 && (
             <div className="space-y-2.5 pt-2 border-t border-white/[0.08]">
               <span className="text-xs font-bold text-zinc-300 block">Сохранённые симуляции ({saveSlots.length})</span>
@@ -6858,6 +6860,49 @@ const SemiProposalRow = memo<{
   );
 });
 
+// --- Radar v2: simpler card, expectation meter, drop / hide / regenerate ---
+const RADAR_HIDDEN_LS = 'musaic.radar.hidden';
+let radarHidden: Set<string> = (() => { try { return new Set<string>(JSON.parse(localStorage.getItem(RADAR_HIDDEN_LS) || '[]')); } catch { return new Set<string>(); } })();
+let radarShowHidden = false;
+const radarListeners = new Set<() => void>();
+let radarVersion = 0;
+const radarEmit = () => { radarVersion++; radarListeners.forEach(f => f()); };
+const radarSub = (f: () => void) => { radarListeners.add(f); return () => { radarListeners.delete(f); }; };
+const useRadarVersion = () => React.useSyncExternalStore(radarSub, () => radarVersion, () => radarVersion);
+const setRadarHidden = (id: string, hide: boolean) => {
+  radarHidden = new Set(radarHidden);
+  if (hide) radarHidden.add(id); else radarHidden.delete(id);
+  try { localStorage.setItem(RADAR_HIDDEN_LS, JSON.stringify([...radarHidden])); } catch { /* */ }
+  radarEmit();
+};
+
+/** what fans expect and how much (0-100). Grows with hype and silence, cools down after a very long silence */
+export function computeFanExpectation(m: ArtistSimMetrics): { score: number; label: string; what: string; color: string } {
+  const cadence = m.tier === 'mega' ? 60 : m.tier === 'large' ? 45 : m.tier === 'mid' ? 35 : 25;
+  const s = m.daysSilent / cadence;
+  const albumHunger = m.daysSinceAlbum === null ? (m.tracksCount >= 6 ? 0.7 : 0.2) : Math.min(1, m.daysSinceAlbum / 365);
+  const cool = s > 3 ? (s - 3) * 9 : 0;
+  const score = clamp(Math.round(m.hype * 0.55 + 30 * Math.min(1, s) + 18 * albumHunger + (m.activeSnippet ? 14 : 0) - cool), 0, 100);
+  const label = score >= 80 ? 'Ждут как никогда' : score >= 62 ? 'Сильно ждут' : score >= 42 ? 'Ждут' : score >= 22 ? 'Спокойно' : 'Остыли';
+  const what = m.activeSnippet ? `полную версию «${m.activeSnippet.title}»` : albumHunger >= 0.7 && m.tracksCount >= 4 ? 'альбом' : s >= 1 ? 'новый сингл' : 'продолжение волны';
+  const color = score >= 80 ? '#f472b6' : score >= 62 ? '#fbbf24' : score >= 42 ? '#34d399' : score >= 22 ? '#60a5fa' : '#71717a';
+  return { score, label, what, color };
+}
+
+const RadarHiddenBar: React.FC = () => {
+  useRadarVersion();
+  if (radarHidden.size === 0 && !radarShowHidden) return null;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-white/[0.03] border border-white/[0.06] text-xs text-zinc-300">
+      <span>Скрыто с радара: <strong className="text-white">{radarHidden.size}</strong></span>
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={() => { radarShowHidden = !radarShowHidden; radarEmit(); }} className="font-bold hover:text-white cursor-pointer">{radarShowHidden ? 'Спрятать скрытых' : 'Показать скрытых'}</button>
+        {radarHidden.size > 0 && <button type="button" onClick={() => { radarHidden = new Set(); try { localStorage.removeItem(RADAR_HIDDEN_LS); } catch { /* */ } radarEmit(); }} className="font-bold text-zinc-500 hover:text-white cursor-pointer">Вернуть всех</button>}
+      </div>
+    </div>
+  );
+};
+
 const RadarArtistRow = memo<{
   m: ArtistSimMetrics;
   radarSeed?: number;
@@ -6867,179 +6912,204 @@ const RadarArtistRow = memo<{
   onCreateManual: (artist: Artist) => void;
   onOpenArtist?: (artistId: string) => void;
 }>(({ m, radarSeed = 0, suggestedPartner, onAdjustHype, onAddToSemi, onCreateManual, onOpenArtist }) => {
-  const tierLabel =
-    m.tier === 'mega' ? 'Мега-топ' : m.tier === 'large' ? 'Крупный' : m.tier === 'mid' ? 'Средний' : 'Новичок';
-
-  const altFormats = useMemo(() => {
+  useRadarVersion();
+  const [open, setOpen] = useState(false);
+  const [localSeed, setLocalSeed] = useState(0);
+  const hidden = radarHidden.has(m.artist.id);
+  const exp = useMemo(() => computeFanExpectation(m), [m]);
+  const tierLabel = m.tier === 'mega' ? 'Мега-топ' : m.tier === 'large' ? 'Крупный' : m.tier === 'mid' ? 'Средний' : 'Новичок';
+  const ideas = useMemo(() => {
     const base = [m.recommendedFormat];
-    if (m.daysSinceAlbum === null || m.daysSinceAlbum >= 220) base.push('Концепт-EP (4–6 тр.)');
+    if (m.daysSinceAlbum === null || m.daysSinceAlbum >= 220) base.push('Концепт-EP (4–6 тр.)', 'Альбом с громким синглом-прогревом');
     if (suggestedPartner) base.push(`Коллаб-сингл с ${suggestedPartner.name}`);
-    base.push(m.hype >= 72 ? 'Громкий хит-сингл' : 'Сниппет + быстрый клип');
-    return base[radarSeed % base.length];
-  }, [m.recommendedFormat, m.daysSinceAlbum, m.hype, suggestedPartner, radarSeed]);
-
+    if (m.activeSnippet) base.push(`Выпустить «${m.activeSnippet.title}» целиком`);
+    base.push(m.hype >= 72 ? 'Громкий хит-сингл' : 'Сниппет + быстрый клип', 'Сюрприз-дроп без анонса', 'Ремикс на старый хит');
+    return base.filter(Boolean);
+  }, [m.recommendedFormat, m.daysSinceAlbum, m.hype, m.activeSnippet, suggestedPartner]);
+  const idea = ideas[(radarSeed + localSeed) % ideas.length];
+  if (hidden && !radarShowHidden) return null;
+  const lastDrop = m.lastDropDate ? `${m.daysSilent} дн. назад` : 'ещё не было';
   return (
-    <div className="p-4 sm:p-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4 hover:bg-white/[0.03] transition-colors">
-      <div className="flex items-start gap-3.5 min-w-0 flex-1">
-        <button
-          type="button"
-          onClick={() => onOpenArtist && onOpenArtist(m.artist.id)}
-          disabled={!onOpenArtist}
-          className={`shrink-0 ${onOpenArtist ? 'cursor-pointer hover:opacity-90' : 'cursor-default'}`}
-          title={onOpenArtist ? 'Открыть страницу артиста' : undefined}
-        >
-          <CoverArt
-            url={m.artist.imageUrl}
-            title={m.artist.name}
-            isArtist
-            className="w-14 h-14 rounded-full border border-white/15"
-          />
+    <div className={`p-3.5 sm:p-4 transition-colors ${hidden ? 'opacity-45' : 'hover:bg-white/[0.03]'}`}>
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={() => onOpenArtist && onOpenArtist(m.artist.id)} disabled={!onOpenArtist} className="shrink-0 cursor-pointer disabled:cursor-default">
+          <CoverArt url={m.artist.imageUrl} title={m.artist.name} isArtist className="w-12 h-12 rounded-full border border-white/15" />
         </button>
-
-        <div className="min-w-0 flex-1 space-y-2">
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-            {onOpenArtist ? (
-              <button
-                type="button"
-                onClick={() => onOpenArtist(m.artist.id)}
-                className="text-[15px] font-extrabold text-white hover:theme-accent transition-colors cursor-pointer flex items-center gap-1"
-              >
-                <span>{m.artist.name}</span>
-                <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
-              </button>
-            ) : (
-              <span className="text-[15px] font-extrabold text-white">{m.artist.name}</span>
-            )}
-            <span className="text-xs font-semibold text-zinc-300">
-              {tierLabel}
-              {m.artist.genre ? ` · ${m.artist.genre}` : ''}
-            </span>
-            <span className="text-zinc-600" aria-hidden="true">·</span>
-            <span className="text-xs text-zinc-200 tabular-nums">
-              {formatCompact(m.artist.followers)} слуш./мес
-            </span>
-            <span className="text-zinc-600" aria-hidden="true">·</span>
-            <span className="text-xs text-amber-300 font-semibold tabular-nums">
-              Своих дропов нет: {m.daysSilent} дн.
-            </span>
-            {m.daysSilentOverall < m.daysSilent && (
-              <>
-                <span className="text-zinc-600" aria-hidden="true">·</span>
-                <span className="text-xs text-emerald-300 font-semibold tabular-nums">
-                  Общее отсутствие (с фитами): {m.daysSilentOverall} дн.
-                </span>
-              </>
-            )}
-            {m.daysSinceAlbum !== null && m.daysSinceAlbum >= 260 && (
-              <>
-                <span className="text-zinc-600" aria-hidden="true">·</span>
-                <span className="text-xs text-sky-300 font-semibold tabular-nums">
-                  Без альбома {m.daysSinceAlbum} дн.
-                </span>
-              </>
-            )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 min-w-0">
+            <button type="button" onClick={() => onOpenArtist && onOpenArtist(m.artist.id)} className="text-[15px] font-extrabold text-white truncate hover:underline cursor-pointer">{m.artist.name}</button>
+            <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-white/[0.06] text-zinc-300">{tierLabel}</span>
           </div>
-
-          <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-zinc-300 tabular-nums">
-            <span>
-              Ср. на трек: <strong className="text-white">{formatCompact(m.catalogAvgPlays)}</strong>
-            </span>
-            <span>
-              Всего: <strong className="text-white">{formatCompact(m.totalPlays)}</strong>
-            </span>
-            <span>
-              Хитов: <strong className="text-white">{m.topHitsCount}</strong>
-            </span>
-            <span>
-              Оценка: <strong className="text-white">{m.avgQuality}/90</strong>
-            </span>
-            <span>
-              Прогноз: <strong className="text-white">{formatCompact(m.predictedTrackPlays)}</strong> (сингл) /{' '}
-              <strong className="text-white">{formatCompact(m.predictedAlbumPlays)}</strong> (альбом)
-            </span>
+          <div className="text-[12px] text-zinc-400 tabular-nums truncate">
+            {formatListeners(m.artist.followers)} слуш. · последний трек {lastDrop}{m.artist.genre ? ` · ${m.artist.genre}` : ''}
           </div>
+        </div>
 
-          {/* Analytical reasons & concrete action suggestions */}
-          <div className="space-y-1 pt-0.5">
-            {m.dropReasons.map((rsn, idx) => (
-              <p key={idx} className="text-xs text-zinc-200 leading-relaxed">
-                • {rsn}
-              </p>
-            ))}
-            <p className="text-xs text-zinc-300 pt-0.5">
-              Рекомендация: <span className="theme-accent font-bold">{altFormats}</span>
-              {suggestedPartner ? (
-                <>
-                  {' '}
-                  · Возможный фит: <span className="text-white font-bold">{suggestedPartner.name}</span>
-                </>
-              ) : null}
-            </p>
+        <div className="hidden md:flex items-center gap-4 shrink-0">
+          <div className="w-28">
+            <div className="flex justify-between text-[11px]"><span className="text-zinc-400">Хайп</span><span className="font-mono font-bold text-white">{m.hype}</span></div>
+            <div className="flex items-center gap-1 mt-1">
+              {onAdjustHype && <button type="button" onClick={() => onAdjustHype(m.artist.id, -5)} className="w-5 h-5 rounded-md bg-white/[0.06] hover:bg-white/[0.14] text-[11px] font-bold text-zinc-200 cursor-pointer">−</button>}
+              <div className="flex-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full theme-bg-accent rounded-full transition-all duration-500" style={{ width: `${m.hype}%` }} /></div>
+              {onAdjustHype && <button type="button" onClick={() => onAdjustHype(m.artist.id, 5)} className="w-5 h-5 rounded-md bg-white/[0.06] hover:bg-white/[0.14] text-[11px] font-bold text-zinc-200 cursor-pointer">+</button>}
+            </div>
           </div>
+          <div className="w-32" title={`Фанаты ждут: ${exp.what}`}>
+            <div className="flex justify-between text-[11px]"><span className="text-zinc-400">Ожидание</span><span className="font-mono font-bold" style={{ color: exp.color }}>{exp.score}</span></div>
+            <div className="h-1.5 mt-1 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${exp.score}%`, background: exp.color }} /></div>
+            <div className="text-[10px] mt-0.5 truncate" style={{ color: exp.color }}>{exp.label}</div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button type="button" onClick={() => onCreateManual(m.artist)} className="px-3 py-1.5 rounded-xl theme-bg-accent text-black text-xs font-black hover:opacity-90 cursor-pointer" title="Создать релиз для этого артиста">Дроп</button>
+          <button type="button" onClick={() => onAddToSemi(m.artist)} className="hidden sm:block px-2.5 py-1.5 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-bold text-white cursor-pointer" title="Добавить в кандидаты недели">+ Неделя</button>
+          <button type="button" onClick={() => setRadarHidden(m.artist.id, !hidden)} className="w-8 h-8 rounded-xl bg-white/[0.04] hover:bg-white/[0.12] text-zinc-400 hover:text-white text-xs cursor-pointer" title={hidden ? 'Вернуть на радар' : 'Убрать с радара'}>{hidden ? '↺' : '✕'}</button>
+          <button type="button" onClick={() => setOpen(v => !v)} className={`w-8 h-8 rounded-xl bg-white/[0.04] hover:bg-white/[0.12] text-zinc-300 text-xs cursor-pointer transition-transform ${open ? 'rotate-180' : ''}`} title="Подробнее">▾</button>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between xl:justify-end gap-3 shrink-0 pl-16 xl:pl-0">
-        <div className="flex items-center gap-2">
-          <div className="w-24 space-y-1">
-            <div className="flex justify-between text-xs tabular-nums">
-              <span className="text-zinc-400">Хайп</span>
-              <span className="font-mono font-bold text-white">{m.hype}</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-              <div
-                className="h-full theme-bg-accent rounded-full"
-                style={{ width: `${m.hype}%` }}
-              />
-            </div>
-          </div>
-          {onAdjustHype && (
-            <div className="flex items-center gap-0.5">
-              <button
-                type="button"
-                onClick={() => onAdjustHype(m.artist.id, -5)}
-                className="w-6 h-6 rounded-lg bg-white/[0.06] hover:bg-white/[0.14] text-xs font-bold text-zinc-200 cursor-pointer"
-                title="Снизить хайп (-5)"
-              >
-                −
-              </button>
-              <button
-                type="button"
-                onClick={() => onAdjustHype(m.artist.id, 5)}
-                className="w-6 h-6 rounded-lg bg-white/[0.06] hover:bg-white/[0.14] text-xs font-bold text-zinc-200 cursor-pointer"
-                title="Повысить хайп (+5)"
-              >
-                +
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="text-right tabular-nums w-20">
-          <span className="text-[11px] text-zinc-400 block">Готовность</span>
-          <span className="text-sm font-mono font-extrabold text-white">{m.readinessScore}%</span>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => onAddToSemi(m.artist)}
-            className="px-3 py-1.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 text-xs font-bold text-white cursor-pointer whitespace-nowrap"
-          >
-            + В полуавтомат
-          </button>
-          <button
-            type="button"
-            onClick={() => onCreateManual(m.artist)}
-            className="px-3 py-1.5 rounded-xl theme-bg-accent text-black text-xs font-bold hover:opacity-90 cursor-pointer whitespace-nowrap"
-          >
-            Создать
-          </button>
-        </div>
+      {/* mobile meters */}
+      <div className="md:hidden grid grid-cols-2 gap-3 mt-2.5 pl-[60px]">
+        <div><div className="flex justify-between text-[11px]"><span className="text-zinc-400">Хайп</span><span className="font-mono font-bold text-white">{m.hype}</span></div><div className="h-1.5 mt-1 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full theme-bg-accent rounded-full" style={{ width: `${m.hype}%` }} /></div></div>
+        <div><div className="flex justify-between text-[11px]"><span className="text-zinc-400">Ожидание</span><span className="font-mono font-bold" style={{ color: exp.color }}>{exp.score}</span></div><div className="h-1.5 mt-1 rounded-full bg-zinc-800 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${exp.score}%`, background: exp.color }} /></div></div>
       </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
+        <span className="text-zinc-500">Ждут: <span className="text-zinc-200 font-semibold">{exp.what}</span></span>
+        <span className="text-zinc-700">·</span>
+        <span className="text-zinc-500">Идея: <span className="theme-accent font-bold">{idea}</span></span>
+        <button type="button" onClick={() => setLocalSeed(s => s + 1)} className="text-[11px] text-zinc-500 hover:text-white cursor-pointer" title="Другая идея">🔄</button>
+      </div>
+
+      {open && (
+        <div className="mt-3 grid sm:grid-cols-2 gap-3 rounded-2xl bg-white/[0.03] border border-white/[0.06] p-3 text-xs text-zinc-300">
+          <div className="space-y-1 tabular-nums">
+            <div>Ср. на трек: <strong className="text-white">{formatCompact(m.catalogAvgPlays)}</strong> · всего <strong className="text-white">{formatCompact(m.totalPlays)}</strong></div>
+            <div>Хитов: <strong className="text-white">{m.topHitsCount}</strong> · оценка <strong className="text-white">{m.avgQuality}/90</strong> · готовность <strong className="text-white">{m.readinessScore}%</strong></div>
+            <div>Прогноз: сингл <strong className="text-white">{formatCompact(m.predictedTrackPlays)}</strong> · альбом <strong className="text-white">{formatCompact(m.predictedAlbumPlays)}</strong></div>
+            <div>Без альбома: <strong className="text-white">{m.daysSinceAlbum === null ? 'не было' : `${m.daysSinceAlbum} дн.`}</strong>{m.daysSilentOverall < m.daysSilent ? <> · с фитами {m.daysSilentOverall} дн.</> : null}</div>
+            {suggestedPartner && <div>Возможный фит: <strong className="text-white">{suggestedPartner.name}</strong></div>}
+          </div>
+          <div className="space-y-1">
+            {m.dropReasons.slice(0, 4).map((r, i) => <p key={i} className="leading-snug">• {r}</p>)}
+          </div>
+        </div>
+      )}
     </div>
   );
 });
+
+// --- Simulation scenarios (season presets) and weekly decisions ---
+export const SIM_SCENARIO_LS = 'musaic.sim.scenario';
+export const SIM_SCENARIOS: Array<{ id: string; icon: string; title: string; text: string; cfg: Partial<SimAutopilotConfig> }> = [
+  { id: 'classic', icon: '🎧', title: 'Классика', text: 'Ровный сезон, всё как в жизни', cfg: {} },
+  { id: 'quiet', icon: '🌙', title: 'Тихий сезон', text: 'Меньше релизов, каждый заметнее', cfg: { intensity: 'calm', weekEvent: 'quiet_week', virality: 'stable' } },
+  { id: 'album_war', icon: '💿', title: 'Война альбомов', text: 'Крупные артисты выпускают альбомы', cfg: { formatFocus: 'albums', tierFocus: 'stars', intensity: 'active', hypeRange: 'high' } },
+  { id: 'feat_season', icon: '🤝', title: 'Сезон фитов', text: 'Коллабы и неожиданные дуэты', cfg: { collabRate: 'high', allowSurpriseCollabs: true, weekEvent: 'collab_fest' } },
+  { id: 'new_blood', icon: '🌱', title: 'Новая кровь', text: 'Новички врываются в чарты', cfg: { tierFocus: 'rising', weekEvent: 'underground_wave', virality: 'viral' } },
+  { id: 'comebacks', icon: '🔁', title: 'Камбэк-сезон', text: 'Возвращаются те, кто долго молчал', cfg: { tierFocus: 'comeback', formatFocus: 'auto', intensity: 'balanced' } },
+  { id: 'chaos', icon: '🌪️', title: 'Хаос', text: 'Мега-интенсивность и вирусные взлёты', cfg: { intensity: 'mega', virality: 'viral', weekEvent: 'hot_drops', collabRate: 'high' } }
+];
+const SIM_EVENTS: Array<{ id: string; icon: string; title: string; text: string; cfg: Partial<SimAutopilotConfig> }> = [
+  { id: 'hot_friday', icon: '🔥', title: 'Горячая пятница', text: 'Все дропают в один день', cfg: { weekEvent: 'hot_drops', intensity: 'active' } },
+  { id: 'collab', icon: '🤝', title: 'Фестиваль коллабов', text: 'Фиты на каждом шагу', cfg: { weekEvent: 'collab_fest', collabRate: 'high' } },
+  { id: 'calm', icon: '☕', title: 'Затишье', text: 'Индустрия отдыхает', cfg: { weekEvent: 'quiet_week', intensity: 'calm' } },
+  { id: 'underground', icon: '🕳️', title: 'Андеграунд-волна', text: 'Шанс для маленьких артистов', cfg: { weekEvent: 'underground_wave', tierFocus: 'rising' } },
+  { id: 'tiktok', icon: '📱', title: 'Тренд в TikTok', text: 'Вирусные взлёты сильнее', cfg: { virality: 'viral' } },
+  { id: 'albums', icon: '💿', title: 'Неделя альбомов', text: 'Больше альбомов и EP', cfg: { formatFocus: 'albums' } },
+  { id: 'snippets', icon: '✂️', title: 'Сниппет-лихорадка', text: 'Артисты дразнят фанатов', cfg: { formatFocus: 'snippets' } },
+  { id: 'stars', icon: '⭐', title: 'Звёздная неделя', text: 'Выходят только топы', cfg: { tierFocus: 'stars', hypeRange: 'high' } },
+  { id: 'comeback', icon: '🔁', title: 'Неделя камбэков', text: 'Молчавшие возвращаются', cfg: { tierFocus: 'comeback' } },
+  { id: 'singles', icon: '🎵', title: 'Синглы решают', text: 'Только синглы, много синглов', cfg: { formatFocus: 'singles', intensity: 'active' } }
+];
+export const loadScenarioConfig = (): Partial<SimAutopilotConfig> => {
+  try { const id = localStorage.getItem(SIM_SCENARIO_LS); return SIM_SCENARIOS.find(s => s.id === id)?.cfg || {}; } catch { return {}; }
+};
+
+export const SimScenarioPicker: React.FC = () => {
+  const [sel, setSel] = useState<string>(() => { try { return localStorage.getItem(SIM_SCENARIO_LS) || 'classic'; } catch { return 'classic'; } });
+  const pick = (id: string) => { setSel(id); try { localStorage.setItem(SIM_SCENARIO_LS, id); } catch { /* */ } };
+  return (
+    <div className="space-y-2.5">
+      <label className="text-xs font-bold text-zinc-300 block">Сценарий сезона</label>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {SIM_SCENARIOS.map(s => (
+          <motion.button key={s.id} type="button" onClick={() => pick(s.id)} whileTap={{ scale: 0.97 }}
+            className={`p-3 rounded-2xl border text-left transition-colors cursor-pointer ${sel === s.id ? 'bg-white/[0.1] border-white/35' : 'bg-zinc-900/50 border-white/10 hover:border-white/20'}`}>
+            <div className="text-lg leading-none">{s.icon}</div>
+            <div className="text-xs font-extrabold text-white mt-1.5">{s.title}</div>
+            <div className="text-[10px] text-zinc-400 leading-snug mt-0.5">{s.text}</div>
+          </motion.button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/** season preset + 3 event cards for this week: one click changes the autopilot */
+export const SimScenarioDeck: React.FC<{ autopilot: SimAutopilotConfig; setAutopilot: React.Dispatch<React.SetStateAction<SimAutopilotConfig>>; weekNumber: number; compact?: boolean }> = ({ setAutopilot, weekNumber, compact }) => {
+  const [scenario, setScenario] = useState<string>(() => { try { return localStorage.getItem(SIM_SCENARIO_LS) || 'classic'; } catch { return 'classic'; } });
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [reroll, setReroll] = useState(0);
+  const [collapsed, setCollapsed] = useState<boolean>(() => { try { return localStorage.getItem('musaic.sim.deck') === 'min'; } catch { return false; } });
+  useEffect(() => { setChosen(null); }, [weekNumber]);
+  const events = useMemo(() => {
+    let h = (weekNumber + 1) * 2654435761 + reroll * 97;
+    const pool = [...SIM_EVENTS];
+    const out: typeof SIM_EVENTS = [];
+    while (out.length < 3 && pool.length) { h = (h * 1103515245 + 12345) >>> 0; out.push(pool.splice(h % pool.length, 1)[0]); }
+    return out;
+  }, [weekNumber, reroll]);
+  const applyScenario = (id: string) => {
+    const s = SIM_SCENARIOS.find(x => x.id === id); if (!s) return;
+    setScenario(id); try { localStorage.setItem(SIM_SCENARIO_LS, id); } catch { /* */ }
+    setAutopilot(prev => ({ ...DEFAULT_AUTOPILOT_CONFIG, preferredArtistIds: prev.preferredArtistIds, weeksCount: prev.weeksCount, ...s.cfg }));
+  };
+  const applyEvent = (e: typeof SIM_EVENTS[number]) => {
+    setChosen(e.id);
+    const base = SIM_SCENARIOS.find(x => x.id === scenario)?.cfg || {};
+    setAutopilot(prev => ({ ...prev, ...base, ...e.cfg }));
+  };
+  const toggle = () => { setCollapsed(v => { const n = !v; try { localStorage.setItem('musaic.sim.deck', n ? 'min' : 'full'); } catch { /* */ } return n; }); };
+  return (
+    <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.05] to-transparent p-3.5 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-extrabold text-white">Решение недели {weekNumber > 0 ? `#${weekNumber}` : ''}</span>
+          {chosen && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-400/15 text-emerald-300">выбрано: {SIM_EVENTS.find(e => e.id === chosen)?.title}</span>}
+        </div>
+        <div className="flex items-center gap-2">
+          {!collapsed && <button type="button" onClick={() => setReroll(r => r + 1)} className="text-[11px] font-bold text-zinc-400 hover:text-white cursor-pointer">🎲 Другие события</button>}
+          <button type="button" onClick={toggle} className="text-[11px] font-bold text-zinc-400 hover:text-white cursor-pointer">{collapsed ? 'Развернуть' : 'Свернуть'}</button>
+        </div>
+      </div>
+      {!collapsed && (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {events.map(e => (
+              <motion.button key={e.id} type="button" onClick={() => applyEvent(e)} whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }}
+                className={`p-3 rounded-2xl border text-left cursor-pointer transition-colors ${chosen === e.id ? 'bg-white text-black border-white' : 'bg-zinc-900/60 border-white/10 hover:border-white/25'}`}>
+                <div className="flex items-center gap-2"><span className="text-lg">{e.icon}</span><span className={`text-xs font-extrabold ${chosen === e.id ? 'text-black' : 'text-white'}`}>{e.title}</span></div>
+                <div className={`text-[11px] mt-1 leading-snug ${chosen === e.id ? 'text-black/70' : 'text-zinc-400'}`}>{e.text}</div>
+              </motion.button>
+            ))}
+          </div>
+          {!compact && (
+            <div className="flex flex-wrap gap-1.5">
+              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500 self-center mr-1">Сценарий</span>
+              {SIM_SCENARIOS.map(s => (
+                <button key={s.id} type="button" onClick={() => applyScenario(s.id)} title={s.text}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-bold border cursor-pointer ${scenario === s.id ? 'bg-white text-black border-white' : 'border-white/10 text-zinc-300 hover:text-white'}`}>{s.icon} {s.title}</button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
 
 // ============================================================================
 // SIMULATION CONSOLE MODAL (ISOLATED TABS FOR INSTANT 60FPS INTERACTION)
@@ -8400,7 +8470,7 @@ export const SimConsoleModal: React.FC<{
   onExitSim
 }) => {
   const [tab, setTab] = useState<SimModeType | 'radar' | 'digest'>(initialTab);
-  const [autopilot, setAutopilot] = useState<SimAutopilotConfig>(DEFAULT_AUTOPILOT_CONFIG);
+  const [autopilot, setAutopilot] = useState<SimAutopilotConfig>(() => ({ ...DEFAULT_AUTOPILOT_CONFIG, ...loadScenarioConfig() }));
   const [advanceDays, setAdvanceDays] = useState<number>(7);
   const [proposals, setProposals] = useState<SimProposal[]>([]);
   const [semiFilter, setSemiFilter] = useState<'all' | 'track' | 'album' | 'snippet'>('all');
@@ -8814,6 +8884,7 @@ export const SimConsoleModal: React.FC<{
           {/* TAB 1: SEMI-AUTO PRODUCER PICKER */}
           {tab === 'semi' && (
             <div className="space-y-4">
+              <SimScenarioDeck autopilot={autopilot} setAutopilot={setAutopilot} weekNumber={simState.weekNumber} compact />
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-[15px] font-extrabold text-white">Кандидаты на релиз недели</p>
@@ -9131,6 +9202,7 @@ export const SimConsoleModal: React.FC<{
           {/* TAB 2: EXPANDED AUTOPILOT WITH DEEP SETTINGS */}
           {tab === 'auto' && (
             <div className="max-w-4xl mx-auto py-2 space-y-6">
+              <SimScenarioDeck autopilot={autopilot} setAutopilot={setAutopilot} weekNumber={simState.weekNumber} />
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h3 className="text-[17px] font-extrabold text-white">Расширенный автопилот индустрии</h3>
@@ -9707,6 +9779,7 @@ export const SimConsoleModal: React.FC<{
                 </span>
                 <span className="text-zinc-400">Нажмите на имя артиста, чтобы открыть его страницу</span>
               </div>
+              <RadarHiddenBar />
 
               {radarViewMode === 'radar' ? (
                 <div className="divide-y divide-white/[0.08] border border-white/10 rounded-2xl bg-zinc-900/45 overflow-hidden">

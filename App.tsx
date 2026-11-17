@@ -82,8 +82,8 @@ import { AwardsView } from './AwardsView';
 // --- Musaic v2.2 modules ---
 import { AutoCover } from './covers/AutoCover';
 import { RatingPanel, ScoreBadge } from './rating/RatingPanel';
-import { ArtistHeroV2, ArtistEras, computeArtistEras, eraHas, CoArtistLinks, setArtistAwardsSource, splitNames } from './profile/ArtistHero';
-import { ReleaseCalendarButton, AlbumFromTracksButton } from './tools/StudioTools';
+import { ArtistHeroV2, ArtistEras, eraHas, CoArtistLinks, splitNames } from './profile/ArtistHero';
+import { AlbumFromTracksButton } from './tools/StudioTools';
 import { FONT_LIBRARY } from './fontsExtra';
 import { setTitleGenCatalog } from './titleGen/TitleGenAuto';
 import { CoverEditorModal } from './CoverEditorModal';
@@ -112,6 +112,8 @@ import {
   ReleaseHypeControl
 } from './SimulationMode';
 import './fontsExtra';
+// --- Musaic v2.4: charts, release stage, calendar, awards, eras, cover viewer, batch generators ---
+import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource } from './MusaicPlus';
 
 // --- Types & Constants ---
 
@@ -1904,153 +1906,7 @@ const ArtistPickerModal: React.FC<{
 
 // --- Artwork Lightbox Modal ---
 
-const ArtworkLightbox: React.FC<{
-  media: { url: string; title: string; subtitle?: string; type?: string } | null;
-  onClose: () => void;
-  onPlay?: () => void;
-  ambientPalette?: [string, string, string, string];
-}> = ({ media, onClose, onPlay, ambientPalette }) => {
-  const [isZoomed, setIsZoomed] = useState(false);
-
-  useEffect(() => {
-    if (!media) return;
-    setIsZoomed(false);
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [media, onClose]);
-
-  if (!media) return null;
-
-  const haloPrimary = ambientPalette?.[0] || 'var(--accent-color)';
-  const haloSecondary = ambientPalette?.[1] || '#6366f1';
-
-  return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-[1200] flex items-center justify-center p-3 sm:p-6 select-none overflow-y-auto">
-        {/* Backdrop */}
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.25 }}
-          className="fixed inset-0 bg-black/85 backdrop-blur-2xl" 
-          onClick={onClose} 
-        />
-
-        {/* Ambient Multi-Color Gradient Halos synced with Cover Art */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 0.42, scale: [1, 1.12, 1], x: [-20, 20, -20] }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
-          className="fixed w-96 h-96 sm:w-[540px] sm:h-[540px] rounded-full blur-[130px] pointer-events-none transition-colors duration-1000"
-          style={{ background: `radial-gradient(circle, ${haloPrimary} 0%, transparent 70%)` }}
-        />
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 0.32, scale: [1.08, 0.95, 1.08], x: [25, -25, 25] }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 13, repeat: Infinity, ease: "easeInOut" }}
-          className="fixed w-80 h-80 sm:w-[460px] sm:h-[460px] rounded-full blur-[140px] pointer-events-none transition-colors duration-1000"
-          style={{ background: `radial-gradient(circle, ${haloSecondary} 0%, transparent 70%)` }}
-        />
-
-        {/* Larger, Adaptive Modal Card for Track / Album / Artist Cover */}
-        <motion.div 
-          initial={{ scale: 0.9, opacity: 0, y: 24 }}
-          animate={{ scale: 1, opacity: 1, y: 0 }}
-          exit={{ scale: 0.92, opacity: 0, y: 16 }}
-          transition={{ type: 'spring', damping: 26, stiffness: 320 }}
-          style={{
-            backgroundImage: `radial-gradient(120% 80% at 50% 0%, ${haloPrimary}28 0%, rgba(16,18,26,0.94) 55%, rgba(9,9,13,0.97) 100%)`
-          }}
-          className={`relative z-10 w-full ${
-            isZoomed
-              ? 'max-w-[540px] sm:max-w-[660px] md:max-w-[740px]'
-              : 'max-w-[440px] sm:max-w-[520px] md:max-w-[580px]'
-          } max-h-[92vh] border border-white/15 rounded-3xl overflow-hidden shadow-[0_30px_100px_rgba(0,0,0,0.9)] p-5 sm:p-7 flex flex-col items-center justify-between backdrop-blur-3xl transition-all duration-500 my-auto`}
-        >
-          {/* Top Bar with actions */}
-          <div className="w-full flex items-center justify-between mb-4 shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full theme-bg-accent animate-pulse" />
-              <span className="text-[11px] uppercase font-black tracking-[0.2em] text-zinc-300">
-                {media.type || 'Медиа'}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button 
-                type="button"
-                onClick={() => setIsZoomed(!isZoomed)}
-                className="p-2.5 bg-white/5 hover:bg-white/15 border border-white/10 text-zinc-300 hover:text-white rounded-full transition-all cursor-pointer"
-                title={isZoomed ? "Обычный размер" : "Увеличить"}
-              >
-                <ZoomIn className={`w-4 h-4 transition-transform ${isZoomed ? 'text-emerald-400 scale-110' : ''}`} />
-              </button>
-              <button 
-                type="button"
-                onClick={onClose} 
-                className="p-2.5 bg-white/5 hover:bg-red-500/20 border border-white/10 text-zinc-400 hover:text-white rounded-full transition-all cursor-pointer"
-                title="Закрыть (Esc)"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
-          {/* Main Artwork Container - Generous size while adapting cleanly to viewport height */}
-          <div
-            className={`relative w-full aspect-square transition-all duration-300 rounded-2xl overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.85)] border border-white/10 mb-5 bg-zinc-950 group mx-auto shrink ${
-              isZoomed ? 'max-w-[min(100%,68vh)]' : 'max-w-[min(100%,58vh)]'
-            }`}
-          >
-            <CoverArt 
-              url={media.url} 
-              title={media.title}
-              className="w-full h-full object-contain"
-              innerClassName="transition-transform duration-500 group-hover:scale-105"
-            />
-          </div>
-
-          {/* Titles & Meta */}
-          <div className="text-center w-full space-y-1.5 mb-5 shrink-0">
-            <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-white tracking-tight leading-tight truncate px-2">
-              {media.title}
-            </h3>
-            {media.subtitle && (
-              <p className="text-xs sm:text-sm font-semibold text-zinc-400 truncate px-2">
-                {media.subtitle}
-              </p>
-            )}
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-3 w-full shrink-0">
-            {onPlay && (
-              <button 
-                onClick={onPlay} 
-                className="flex-1 py-3 sm:py-3.5 theme-bg-accent text-black font-extrabold rounded-2xl text-xs sm:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xl active:scale-98 hover:opacity-90"
-              >
-                <Play className="w-4 h-4 fill-black" />
-                <span>Слушать трек</span>
-              </button>
-            )}
-            <button 
-              onClick={onClose} 
-              className="flex-1 py-3 sm:py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-extrabold rounded-2xl text-xs sm:text-sm transition-all cursor-pointer active:scale-98"
-            >
-              Закрыть
-            </button>
-          </div>
-        </motion.div>
-      </div>
-    </AnimatePresence>
-  );
-};
+// (old ArtworkLightbox was replaced by CoverPeek from MusaicPlus.tsx)
 
 // --- Edit Track Modal ---
 
@@ -6704,7 +6560,7 @@ export default function App() {
         isPlayerDismissed={isPlayerDismissed}
         onTogglePlayerDismissed={handleSetPlayerDismissed}
       />
-      <ArtworkLightbox
+      <CoverPeek
         media={enlargedMedia}
         onClose={() => setEnlargedMedia(null)}
         onPlay={currentTrack ? () => playTrack(currentTrack) : undefined}
@@ -6891,10 +6747,14 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <ReleaseCalendarButton
+            <ReleaseCalendarPro
               artists={viewArtists}
               tracks={viewTracks}
               albums={viewAlbums}
+              todayIso={isSimMode ? simActiveDate : undefined}
+              onAddTrack={(t) => activeSetTracks((prev: any) => [...prev, t])}
+              onAddAlbum={(al, ts) => { activeSetAlbums((prev: any) => [...prev, al]); if (ts.length) activeSetTracks((prev: any) => [...prev, ...ts]); }}
+              onOpen={(type, id) => navigateTo(type, { id })}
               onRelease={(a) => activeSetTracks((prev: any) => [...prev, {
                 id: Math.random().toString(36).slice(2, 11), title: a.title,
                 artistId: a.artistId || viewArtists.find(x => x.name.toLowerCase() === a.artistName.toLowerCase())?.id || '', artistName: a.artistName,
@@ -6989,7 +6849,7 @@ export default function App() {
                 />
               )}
               {nav.view === 'charts' && (
-                <ChartsView 
+                <ChartsPro 
                   artists={viewArtists} 
                   albums={viewAlbums} 
                   tracks={viewTracks} 
@@ -7941,899 +7801,7 @@ function LikesView({
 
 // --- Charts & Ratings View ---
 
-function ChartsView({
-  artists,
-  albums,
-  tracks,
-  navigateTo,
-  onPlayTrack,
-  toggleLikeTrack,
-  openLightbox,
-  currentTrackId,
-  isPlaying,
-  followedArtistIds = [],
-  toggleFollowArtist,
-  referenceDate,
-  onMoreOptionsClick
-}: {
-  artists: Artist[];
-  albums: Album[];
-  tracks: Track[];
-  navigateTo: (view: ViewType, params?: { id?: string; artistName?: string; tab?: string; genre?: string }) => void;
-  onPlayTrack: (t: Track) => void;
-  toggleLikeTrack: (id: string) => void;
-  openLightbox: (m: any) => void;
-  currentTrackId?: string;
-  isPlaying?: boolean;
-  followedArtistIds?: string[];
-  toggleFollowArtist?: (id: string) => void;
-  referenceDate?: string;
-  onMoreOptionsClick?: (item: any) => void;
-}) {
-  const [category, setCategory] = useState<'tracks' | 'albums' | 'artists'>('tracks');
-  const [trackSort, setTrackSort] = useState<'hot' | 'allTime'>('hot');
-  const [albumSort, setAlbumSort] = useState<'hot' | 'allTime'>('hot');
-  const [artistSort, setArtistSort] = useState<'seasonal' | 'global'>('seasonal');
-  const [chartDate, setChartDate] = useState<string>('');
-  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
-  const datePickerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!isDatePickerOpen) return;
-    const handleOutside = (e: MouseEvent) => {
-      if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
-        setIsDatePickerOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutside);
-    return () => document.removeEventListener('mousedown', handleOutside);
-  }, [isDatePickerOpen]);
-
-  const effectiveReferenceDate = chartDate || referenceDate;
-
-  const nowMs = useMemo(() => {
-    if (chartDate) {
-      const parsed = new Date(`${chartDate}T23:59:59.999`).getTime();
-      if (!Number.isNaN(parsed)) return parsed;
-    }
-    return referenceDate ? new Date(referenceDate).getTime() : Date.now();
-  }, [chartDate, referenceDate]);
-
-  const { minCatalogDate, maxCatalogDate, catalogYears } = useMemo(() => {
-    let minMs = Infinity;
-    const years = new Set<number>();
-    const scanDate = (d?: string, fallbackYr?: number) => {
-      if (d) {
-        const ms = new Date(d).getTime();
-        if (!Number.isNaN(ms)) {
-          if (ms < minMs) minMs = ms;
-          years.add(new Date(ms).getFullYear());
-          return;
-        }
-      }
-      if (fallbackYr) years.add(fallbackYr);
-    };
-    tracks.forEach(t => scanDate(t.releaseDate));
-    albums.forEach(a => scanDate(a.releaseDate, a.releaseYear));
-
-    const maxRefDate = referenceDate ? new Date(referenceDate) : new Date();
-    const maxIso = Number.isNaN(maxRefDate.getTime())
-      ? new Date().toISOString().slice(0, 10)
-      : maxRefDate.toISOString().slice(0, 10);
-    const minIso = Number.isFinite(minMs)
-      ? new Date(minMs).toISOString().slice(0, 10)
-      : '2015-01-01';
-
-    return {
-      minCatalogDate: minIso,
-      maxCatalogDate: maxIso,
-      catalogYears: Array.from(years).sort((a, b) => b - a).slice(0, 6)
-    };
-  }, [tracks, albums, referenceDate]);
-
-  const shiftChartDateByDays = (deltaDays: number) => {
-    const baseStr = chartDate || maxCatalogDate;
-    const d = new Date(`${baseStr}T12:00:00`);
-    if (Number.isNaN(d.getTime())) return;
-    d.setDate(d.getDate() + deltaDays);
-    const nextIso = d.toISOString().slice(0, 10);
-    if (nextIso >= maxCatalogDate) {
-      setChartDate('');
-    } else if (nextIso < minCatalogDate) {
-      setChartDate(minCatalogDate);
-    } else {
-      setChartDate(nextIso);
-    }
-  };
-
-  // Filter releases to those already released on or before selected chartDate
-  const albumDateMap = useMemo(() => {
-    const m = new Map<string, string>();
-    albums.forEach(a => {
-      if (a.releaseDate) m.set(a.id, a.releaseDate);
-      else if (a.releaseYear) m.set(a.id, `${a.releaseYear}-01-01`);
-    });
-    return m;
-  }, [albums]);
-
-  const activeTracks = useMemo(() => {
-    const nonSnippets = tracks.filter(t => !t.isSnippet);
-    if (!chartDate) return nonSnippets;
-    return nonSnippets.filter(t => {
-      const relStr = t.releaseDate || (t.albumId ? albumDateMap.get(t.albumId) : undefined);
-      if (!relStr) return false;
-      const ms = new Date(relStr).getTime();
-      return !Number.isNaN(ms) && ms <= nowMs;
-    });
-  }, [tracks, albumDateMap, chartDate, nowMs]);
-
-  const activeAlbums = useMemo(() => {
-    if (!chartDate) return albums;
-    return albums.filter(a => {
-      const relStr = a.releaseDate || (a.releaseYear ? `${a.releaseYear}-01-01` : undefined);
-      if (!relStr) return false;
-      const ms = new Date(relStr).getTime();
-      return !Number.isNaN(ms) && ms <= nowMs;
-    });
-  }, [albums, chartDate, nowMs]);
-
-  // High-performance O(N) data indexing for Charts
-  const chartDataMap = useMemo(() => {
-    const trackCounts = new Map<string, number>();
-    const albumCounts = new Map<string, number>();
-    const albumTrackCounts = new Map<string, number>();
-    const totalPlays = new Map<string, number>();
-    const recentPlays = new Map<string, number>();
-
-    activeTracks.forEach(t => {
-      const key = (t.artistId && t.artistId !== 'undefined') ? t.artistId : (t.artistName?.toLowerCase().trim() || '');
-      trackCounts.set(key, (trackCounts.get(key) || 0) + 1);
-      totalPlays.set(key, (totalPlays.get(key) || 0) + (t.plays || 0));
-      if (t.albumId) {
-        albumTrackCounts.set(t.albumId, (albumTrackCounts.get(t.albumId) || 0) + 1);
-      }
-
-      const relStr = t.releaseDate || (t.albumId ? albumDateMap.get(t.albumId) : undefined);
-      if (relStr) {
-        const diff = (nowMs - new Date(relStr).getTime()) / 86400000;
-        if (diff >= 0 && diff <= 90) {
-          recentPlays.set(key, (recentPlays.get(key) || 0) + (t.plays || 0));
-        }
-      }
-    });
-
-    activeAlbums.forEach(a => {
-      const key = (a.artistId && a.artistId !== 'undefined') ? a.artistId : (a.artistName?.toLowerCase().trim() || '');
-      albumCounts.set(key, (albumCounts.get(key) || 0) + 1);
-    });
-
-    return { trackCounts, albumCounts, albumTrackCounts, totalPlays, recentPlays };
-  }, [activeTracks, activeAlbums, albumDateMap, nowMs]);
-
-  // 1) Tracks Scoring (separated from sorting so tab toggles are instantaneous):
-  const scoredTracks = useMemo(() => activeTracks.map(t => {
-    const relStr = t.releaseDate || (t.albumId ? albumDateMap.get(t.albumId) : undefined);
-    const relTime = relStr ? new Date(relStr).getTime() : (nowMs - 30 * 86400000);
-    const diffDays = Math.max(1, Math.floor((nowMs - relTime) / 86400000));
-
-    let recencyBoost = 1.0;
-    if (diffDays <= 7) recencyBoost = 14.5;
-    else if (diffDays <= 21) recencyBoost = 10.5;
-    else if (diffDays <= 45) recencyBoost = 7.4;
-    else if (diffDays <= 90) recencyBoost = 5.0;
-    else if (diffDays <= 180) recencyBoost = 3.1;
-    else if (diffDays <= 365) recencyBoost = 1.85;
-    else if (diffDays <= 730) recencyBoost = 0.65;
-    else recencyBoost = 0.18;
-
-    const stratCfg = getPromoStrategyConfig(t.promoStrategy);
-    let longevityMult = stratCfg ? (t.promoStrategy === 'quiet' && diffDays <= 21 ? 1.0 : stratCfg.longevityMult) : 1.0;
-    if (typeof t.releaseHype === 'number' && !isNaN(t.releaseHype)) {
-      const clampedHype = Math.min(99, Math.max(10, t.releaseHype));
-      longevityMult *= 0.88 + clampedHype / 380;
-    }
-
-    const hotScore = Math.round(((t.plays || 0) * recencyBoost * longevityMult * 12) / Math.pow(diffDays + 5, 0.66));
-    const playsPerDay = Math.round((t.plays || 0) / diffDays);
-    return {
-      ...t,
-      diffDays,
-      hotScore,
-      playsPerDay,
-      allTimeScore: t.plays
-    };
-  }), [activeTracks, albumDateMap, nowMs]);
-
-  const rankedTracks = useMemo(() => [...scoredTracks].sort((a, b) =>
-    trackSort === 'hot' ? b.hotScore - a.hotScore : b.allTimeScore - a.allTimeScore
-  ), [scoredTracks, trackSort]);
-
-  // 2) Albums Scoring (O(1) trackCount via albumTrackCounts):
-  const scoredAlbums = useMemo(() => activeAlbums.map(al => {
-    const albumTotalPlays = al.totalPlays || 0;
-    const trackCount = chartDataMap.albumTrackCounts.get(al.id) || 1;
-    const avgPerTrack = albumTotalPlays / trackCount;
-    const fairPlays = Math.round((albumTotalPlays * 0.6) + (avgPerTrack * 5 * 0.4));
-    const relTime = al.releaseDate ? new Date(al.releaseDate).getTime() : (nowMs - 45 * 86400000);
-    const diffDays = Math.max(1, Math.floor((nowMs - relTime) / 86400000));
-
-    let recencyBoost = 1.0;
-    if (diffDays <= 14) recencyBoost = 12.0;
-    else if (diffDays <= 30) recencyBoost = 7.0;
-    else if (diffDays <= 90) recencyBoost = 3.5;
-    else if (diffDays <= 180) recencyBoost = 1.8;
-    else if (diffDays <= 365) recencyBoost = 1.0;
-    else recencyBoost = 0.3;
-
-    const hotScore = Math.round((fairPlays * recencyBoost * 12) / Math.pow(diffDays + 6, 0.65));
-    return {
-      ...al,
-      trackCount,
-      totalPlays: albumTotalPlays,
-      avgPerTrack,
-      fairPlays,
-      diffDays,
-      hotScore
-    };
-  }), [activeAlbums, chartDataMap.albumTrackCounts, nowMs]);
-
-  const rankedAlbums = useMemo(() => [...scoredAlbums].sort((a, b) =>
-    albumSort === 'hot' ? b.hotScore - a.hotScore : b.totalPlays - a.totalPlays
-  ), [scoredAlbums, albumSort]);
-
-  // 3) Artists Scoring:
-  const scoredArtists = useMemo(() => artists.map(art => {
-    const key = art.id || (art.name?.toLowerCase().trim() || '');
-    const artTrackCount = chartDataMap.trackCounts.get(key) || 0;
-    const artAlbumCount = chartDataMap.albumCounts.get(key) || 0;
-    const artTotalPlays = chartDataMap.totalPlays.get(key) || 0;
-    const artRecentPlays = chartDataMap.recentPlays.get(key) || 0;
-
-    const seasonalScore = Math.round((artRecentPlays * 5.5) + (artTotalPlays * 0.1) + (art.followers * 120));
-    const globalScore = Math.round((artTotalPlays * 0.75) + (art.followers * 250));
-    return {
-      ...art,
-      trackCount: artTrackCount,
-      albumCount: artAlbumCount,
-      totalPlays: artTotalPlays,
-      recentPlays: artRecentPlays,
-      seasonalScore,
-      globalScore
-    };
-  }).filter(art => !chartDate || art.trackCount > 0 || art.albumCount > 0), [artists, chartDataMap, chartDate]);
-
-  const rankedArtists = useMemo(() => [...scoredArtists].sort((a, b) =>
-    artistSort === 'seasonal' ? b.seasonalScore - a.seasonalScore : b.globalScore - a.globalScore
-  ), [scoredArtists, artistSort]);
-
-  const getChartDyn = (item: any, rank: number) => {
-    if (!chartDate) return computeChartDynamics(item, rank, referenceDate);
-    return computeChartDynamics(
-      {
-        id: item.id,
-        title: item.title,
-        releaseDate: item.releaseDate,
-        diffDays: item.diffDays
-      },
-      rank,
-      effectiveReferenceDate
-    );
-  };
-
-  // Scroll-driven progressive loading (no timer loops mounting thousands of rows)
-  const albumsBatch = useScrollBatchCount(rankedAlbums.length, 24, 24, `${albumSort}-${chartDate}`);
-  const artistsBatch = useScrollBatchCount(rankedArtists.length, 24, 24, `${artistSort}-${chartDate}`);
-
-  const displayedAlbums = rankedAlbums.slice(0, albumsBatch.visibleCount);
-  const displayedArtists = rankedArtists.slice(0, artistsBatch.visibleCount);
-
-  return (
-    <div className="min-h-full pb-28">
-      {/* Header Banner (Matches Home style) */}
-      <div className="bg-gradient-to-b from-zinc-800/40 via-zinc-900/60 to-[var(--bg-color)] px-6 md:px-8 pt-8 pb-6">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center sm:items-end justify-between gap-6">
-          <div className="min-w-0 text-center sm:text-left">
-            <div className="flex items-center justify-center sm:justify-start gap-2 mb-2">
-              <div className="w-7 h-7 rounded-full theme-bg-accent flex items-center justify-center shadow-md">
-                <TrendingUp className="w-4 h-4 text-black stroke-[3]" />
-              </div>
-              <span className="text-xs font-bold uppercase tracking-widest text-zinc-300">
-                Официальные рейтинги
-              </span>
-            </div>
-            <h1 className="text-3xl sm:text-5xl md:text-6xl font-black text-white tracking-tight leading-none mb-2">
-              Чарты
-            </h1>
-            <p className="text-xs md:text-sm text-zinc-400 max-w-xl font-medium leading-relaxed">
-              Динамический рейтинг треков, альбомов и артистов с учетом скорости прослушиваний и новизны релизов.
-            </p>
-          </div>
-        </div>
-      </div>
-
-
-      <div className="max-w-7xl mx-auto px-6 md:px-8 pt-6">
-        {/* Navigation Categories and Sub-Filters */}
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-6 border-b border-white/5">
-          {/* Main 3 Categories */}
-          <div className="flex gap-2 p-1 bg-zinc-900/70 rounded-2xl border border-white/10">
-            {[
-              { id: 'tracks', label: `Треки (${activeTracks.length})`, icon: Music },
-              { id: 'albums', label: `Альбомы (${activeAlbums.length})`, icon: Disc },
-              { id: 'artists', label: `Артисты (${rankedArtists.length})`, icon: User }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setCategory(tab.id as any)}
-                className={`px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer ${
-                  category === tab.id 
-                    ? 'theme-bg-accent text-black shadow-lg scale-102' 
-                    : 'text-zinc-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <tab.icon className="w-4 h-4" />
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Sub Filters + Compact Historical Date Trigger */}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 p-1 bg-black/40 rounded-xl border border-white/5">
-              {category === 'tracks' && (
-                <>
-                  <button
-                    onClick={() => setTrackSort('hot')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                      trackSort === 'hot' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <Zap className="w-3.5 h-3.5 theme-accent" />
-                    <span>В тренде (Hot Velocity)</span>
-                  </button>
-                  <button
-                    onClick={() => setTrackSort('allTime')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      trackSort === 'allTime' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <span>За все время</span>
-                  </button>
-                </>
-              )}
-
-              {category === 'albums' && (
-                <>
-                  <button
-                    onClick={() => setAlbumSort('hot')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                      albumSort === 'hot' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <Zap className="w-3.5 h-3.5 theme-accent" />
-                    <span>Свежие релизы (Хиты)</span>
-                  </button>
-                  <button
-                    onClick={() => setAlbumSort('allTime')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      albumSort === 'allTime' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <span>Все время</span>
-                  </button>
-                </>
-              )}
-
-              {category === 'artists' && (
-                <>
-                  <button
-                    onClick={() => setArtistSort('seasonal')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                      artistSort === 'seasonal' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <Sparkles className="w-3.5 h-3.5 theme-accent" />
-                    <span>Сезонный топ</span>
-                  </button>
-                  <button
-                    onClick={() => setArtistSort('global')}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      artistSort === 'global' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    <span>Глобальный топ</span>
-                  </button>
-                </>
-              )}
-            </div>
-
-            {/* Compact Calendar Snapshot Trigger */}
-            <div ref={datePickerRef} className="relative">
-              <div
-                className={`flex items-center p-1 rounded-xl border transition-all ${
-                  chartDate
-                    ? 'bg-zinc-900/90 border-[var(--accent-color)]/45 shadow-md'
-                    : 'bg-black/40 border-white/5 hover:border-white/15'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => setIsDatePickerOpen(prev => !prev)}
-                  title={chartDate ? `Чарт на ${formatDateDisplay(chartDate)}` : 'Выбрать дату чарта'}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    chartDate || isDatePickerOpen
-                      ? 'bg-zinc-800 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  <Calendar className={`w-3.5 h-3.5 ${chartDate ? 'theme-accent' : ''}`} />
-                  {chartDate && (
-                    <span className="tabular-nums whitespace-nowrap">{formatDateDisplay(chartDate)}</span>
-                  )}
-                </button>
-                {chartDate && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setChartDate('');
-                      setIsDatePickerOpen(false);
-                    }}
-                    title="Вернуться к текущим чартам"
-                    className="ml-0.5 p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-
-              <AnimatePresence>
-                {isDatePickerOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 6, scale: 0.97 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 4, scale: 0.97 }}
-                    transition={{ duration: 0.16 }}
-                    className="absolute right-0 mt-2 w-72 p-4 rounded-2xl bg-zinc-950/95 backdrop-blur-2xl border border-white/15 shadow-2xl z-50 space-y-3.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 theme-accent" />
-                        <span className="text-xs font-black text-white">Чарт на дату</span>
-                      </div>
-                      {chartDate && (
-                        <button
-                          type="button"
-                          onClick={() => setChartDate('')}
-                          className="text-[11px] font-bold theme-accent hover:underline cursor-pointer"
-                        >
-                          Сбросить
-                        </button>
-                      )}
-                    </div>
-
-                    <input
-                      type="date"
-                      value={chartDate || maxCatalogDate}
-                      min={minCatalogDate}
-                      max={maxCatalogDate}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (!val || val >= maxCatalogDate) setChartDate('');
-                        else setChartDate(val);
-                      }}
-                      className="w-full bg-zinc-900 border border-white/15 focus:border-[var(--accent-color)] rounded-xl px-3 py-2 text-xs font-semibold text-white outline-none [color-scheme:dark] tabular-nums cursor-pointer"
-                    />
-
-                    <div className="grid grid-cols-4 gap-1.5">
-                      {[
-                        { label: '-1 год', days: -365 },
-                        { label: '-1 мес', days: -30 },
-                        { label: '-1 нед', days: -7 },
-                        { label: '+1 нед', days: 7 }
-                      ].map(step => (
-                        <button
-                          key={step.label}
-                          type="button"
-                          onClick={() => shiftChartDateByDays(step.days)}
-                          className="py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-[11px] font-bold text-zinc-200 hover:text-white transition-colors cursor-pointer"
-                        >
-                          {step.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {catalogYears.length > 0 && (
-                      <div className="space-y-1.5">
-                        <p className="text-[11px] font-semibold text-zinc-400">Быстрый выбор периода</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setChartDate('');
-                              setIsDatePickerOpen(false);
-                            }}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
-                              !chartDate
-                                ? 'theme-bg-accent text-black border-transparent'
-                                : 'bg-white/[0.05] border-white/10 text-zinc-300 hover:text-white'
-                            }`}
-                          >
-                            Сейчас
-                          </button>
-                          {catalogYears.map(yr => {
-                            const targetIso = `${yr}-12-31` > maxCatalogDate ? maxCatalogDate : `${yr}-12-31`;
-                            const isSelectedYr = Boolean(chartDate && chartDate.startsWith(String(yr)));
-                            return (
-                              <button
-                                key={yr}
-                                type="button"
-                                onClick={() => {
-                                  if (targetIso >= maxCatalogDate) setChartDate('');
-                                  else setChartDate(targetIso);
-                                }}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer tabular-nums ${
-                                  isSelectedYr
-                                    ? 'bg-zinc-800 text-white border-[var(--accent-color)]/60'
-                                    : 'bg-white/[0.05] border-white/10 text-zinc-300 hover:text-white'
-                                }`}
-                              >
-                                {yr}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </div>
-        </div>
-
-        {/* Active Historical Snapshot Strip */}
-        {chartDate && (
-          <div className="mt-5 px-4 py-2.5 rounded-2xl bg-zinc-900/70 border border-white/10 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 text-xs">
-              <Calendar className="w-4 h-4 theme-accent shrink-0" />
-              <span className="font-bold text-white">
-                Чарт на <span className="theme-accent tabular-nums">{formatDateDisplay(chartDate)}</span>
-              </span>
-              <span className="text-zinc-400">·</span>
-              <span className="text-zinc-400 tabular-nums">
-                Релизов к этой дате: {activeTracks.length} {pluralizeTracks(activeTracks.length)}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => shiftChartDateByDays(-30)}
-                className="px-2.5 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.12] border border-white/10 text-[11px] font-bold text-zinc-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
-                title="Месяц назад"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-                <span>Месяц</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => shiftChartDateByDays(30)}
-                className="px-2.5 py-1 rounded-lg bg-white/[0.05] hover:bg-white/[0.12] border border-white/10 text-[11px] font-bold text-zinc-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
-                title="Месяц вперёд"
-              >
-                <span>Месяц</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setChartDate('')}
-                className="px-3 py-1 rounded-lg bg-white/[0.08] hover:bg-white/[0.16] text-[11px] font-bold text-white transition-colors cursor-pointer"
-              >
-                Текущий чарт
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Content Showcase */}
-        <div className="pt-8">
-          {category === 'tracks' && (
-            <div className="space-y-6">
-              {rankedTracks.length === 0 ? (
-                <div className="py-16 text-center space-y-3 rounded-3xl bg-zinc-900/40 border border-white/5">
-                  <Calendar className="w-8 h-8 text-zinc-500 mx-auto" />
-                  <p className="text-sm font-bold text-zinc-300">На выбранную дату треков ещё не выходило</p>
-                  <button
-                    type="button"
-                    onClick={() => setChartDate('')}
-                    className="px-4 py-2 rounded-xl theme-bg-accent text-black text-xs font-extrabold cursor-pointer hover:opacity-90"
-                  >
-                    Вернуться к текущим чартам
-                  </button>
-                </div>
-              ) : (
-                <>
-              {/* Top 3 Podium for Tracks if available */}
-              {rankedTracks.length >= 3 && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                  {rankedTracks.slice(0, 3).map((t, idx) => {
-                    const badgeStyles = [
-                      'from-amber-400/20 to-amber-600/5 border-amber-400/40 text-amber-300',
-                      'from-slate-300/20 to-slate-500/5 border-slate-300/40 text-slate-200',
-                      'from-amber-700/20 to-amber-900/5 border-amber-700/40 text-amber-400'
-                    ][idx];
-                    const rankLabels = ['#1 Золото', '#2 Серебро', '#3 Бронза'];
-                    const podiumDyn = getChartDyn(t, idx + 1);
-                    return (
-                      <div 
-                        key={t.id}
-                        onClick={() => navigateTo('track', { id: t.id })}
-                        className={`p-5 rounded-2xl bg-gradient-to-b ${badgeStyles} border relative group cursor-pointer hover-outline-card shadow-xl flex flex-col justify-between`}
-                      >
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-black/50 border border-white/10">
-                              {rankLabels[idx]}
-                            </span>
-                            <ChartTrendBadge dynamics={podiumDyn} />
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onPlayTrack(t);
-                            }}
-                            className="w-9 h-9 rounded-full theme-bg-accent text-black flex items-center justify-center shadow-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer"
-                          >
-                            <Play className="w-4 h-4 fill-black ml-0.5" />
-                          </button>
-                        </div>
-
-                        <div className="flex items-center gap-4 mb-3">
-                          <CoverArt 
-                            url={t.coverUrl} 
-                            title={t.title}
-                            className="w-16 h-16 rounded-xl overflow-hidden shadow-lg bg-zinc-800 shrink-0 border border-white/10 relative group/cov"
-                            innerClassName="group-hover/cov:scale-108"
-                            showZoomIcon={true}
-                          />
-                        <div className="min-w-0 flex-1">
-                          <p className="font-extrabold text-base text-white truncate hover-text-link">{t.title}</p>
-                          <p 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (t.artistId) navigateTo('artist', { id: t.artistId, artistName: t.artistName });
-                              else navigateTo('artist', { artistName: t.artistName });
-                            }}
-                            className="text-xs text-zinc-300 truncate mt-0.5 hover-text-link cursor-pointer"
-                          >
-                            {t.artistName}
-                          </p>
-                          {(podiumDyn.peakRank || t.genre) && (
-                            <p className="text-[11px] text-zinc-400 truncate mt-1 tabular-nums">
-                              {podiumDyn.peakRank ? `Пик #${podiumDyn.peakRank}` : t.genre}
-                              {podiumDyn.peakRank && podiumDyn.weeksOnChart ? ` · ${podiumDyn.weeksOnChart} нед.` : ''}
-                            </p>
-                          )}
-                        </div>
-                        </div>
-
-                        <div className="pt-3 border-t border-white/10 flex items-center justify-between text-xs text-zinc-400">
-                          <span className="font-semibold text-white tabular-nums">{t.plays.toLocaleString('ru-RU')} прослушиваний</span>
-                          <span className="font-mono text-[11px] theme-accent tabular-nums">
-                            {trackSort === 'hot' ? `~${t.playsPerDay.toLocaleString('ru-RU')} / день` : t.duration}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Full Tracks Chart List (Progressive IntersectionObserver) */}
-              <ProgressiveTrackList
-                key={`chart-tracks-${trackSort}-${chartDate}`}
-                tracks={rankedTracks}
-                initialBatchSize={40}
-                incrementBatchSize={40}
-                className="space-y-1"
-                renderItem={(track, i) => (
-                  <TrackRow 
-                    key={track.id} 
-                    track={track} 
-                    index={i} 
-                    toggleLike={toggleLikeTrack} 
-                    onTrackClick={() => navigateTo('track', { id: track.id })}
-                    onPlay={() => onPlayTrack(track)} 
-                    onArtworkClick={() => openLightbox({ url: track.coverUrl, title: track.title, subtitle: track.artistName, type: 'Трек' })}
-                    onMoreOptionsClick={onMoreOptionsClick}
-                    isPlayingTrack={isPlaying && currentTrackId === track.id}
-                    size="lg"
-                    albums={albums}
-                    artists={artists}
-                    navigateTo={navigateTo}
-                    chartDynamics={getChartDyn(track, i + 1)}
-                  />
-                )}
-              />
-                </>
-              )}
-            </div>
-          )}
-
-          {category === 'albums' && (
-            displayedAlbums.length === 0 ? (
-              <div className="py-16 text-center space-y-3 rounded-3xl bg-zinc-900/40 border border-white/5">
-                <Calendar className="w-8 h-8 text-zinc-500 mx-auto" />
-                <p className="text-sm font-bold text-zinc-300">На выбранную дату альбомов ещё не выходило</p>
-                <button
-                  type="button"
-                  onClick={() => setChartDate('')}
-                  className="px-4 py-2 rounded-xl theme-bg-accent text-black text-xs font-extrabold cursor-pointer hover:opacity-90"
-                >
-                  Вернуться к текущим чартам
-                </button>
-              </div>
-            ) : (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                {displayedAlbums.map((album, idx) => {
-                  const albDyn = getChartDyn(album, idx + 1);
-                  return (
-                  <div 
-                    key={album.id}
-                    onClick={() => navigateTo('album', { id: album.id })}
-                    className="p-4 rounded-2xl bg-zinc-900/60 hover:bg-zinc-800/80 border border-white/5 hover-outline-card cursor-pointer group shadow-xl flex flex-col justify-between"
-                  >
-                    <div>
-                      <CoverArt 
-                        url={album.coverUrl} 
-                        title={album.title}
-                        className="relative aspect-square w-full rounded-xl overflow-hidden mb-4 shadow-xl bg-zinc-800 border border-white/5"
-                        innerClassName="group-hover:scale-105 duration-300"
-                      >
-                        <div className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-full bg-black/85 text-[11px] font-black text-white border border-white/10 z-20 flex items-center gap-1.5 tabular-nums">
-                          <span>#{idx + 1}</span>
-                          <ChartTrendBadge dynamics={albDyn} compact />
-                        </div>
-                        <button 
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const albTrks = tracks.filter((t: any) => t.albumId === album.id);
-                            if (albTrks.length > 0) onPlayTrack(albTrks[0]);
-                            else navigateTo('album', { id: album.id });
-                          }}
-                          className="absolute bottom-3 right-3 w-11 h-11 rounded-full theme-bg-accent shadow-2xl flex items-center justify-center opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all hover:scale-105 active:scale-95 cursor-pointer z-20"
-                        >
-                          <Play className="w-5 h-5 text-black fill-black ml-0.5" />
-                        </button>
-                      </CoverArt>
-
-                      <h4 className="font-extrabold text-base text-white truncate hover-text-link">{album.title}</h4>
-                      <div className="flex flex-wrap items-center gap-x-1 mt-1">
-                        <span 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (album.artistId) navigateTo('artist', { id: album.artistId, artistName: album.artistName });
-                            else navigateTo('artist', { artistName: album.artistName });
-                          }}
-                          className="text-xs text-zinc-400 hover-text-link cursor-pointer"
-                        >
-                          {album.artistName}
-                        </span>
-                        {album.coArtist && (
-                          <CoArtistLinks names={album.coArtist} exclude={album.artistName} artists={artists} navigateTo={navigateTo} className="text-xs text-zinc-400 hover-text-link" />
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mt-4 pt-3 border-t border-white/5 flex items-center justify-between text-[11px] text-zinc-400">
-                      <span className="tabular-nums">
-                        {albDyn.peakRank
-                          ? `Пик #${albDyn.peakRank}${albDyn.weeksOnChart ? ` · ${albDyn.weeksOnChart} нед.` : ''}`
-                          : `${album.trackCount} ${pluralizeTracks(album.trackCount)} · ${album.releaseYear}`}
-                      </span>
-                      <span className="font-bold text-white tabular-nums">{album.totalPlays.toLocaleString('ru-RU')} просл.</span>
-                    </div>
-                  </div>
-                );
-                })}
-              </div>
-              {albumsBatch.hasMore && (
-                <div ref={albumsBatch.sentinelRef} className="py-4 text-center">
-                  <button
-                    type="button"
-                    onClick={albumsBatch.loadMore}
-                    className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-400 hover:text-white transition-all cursor-pointer"
-                  >
-                    Показать ещё альбомы ({rankedAlbums.length - displayedAlbums.length})
-                  </button>
-                </div>
-              )}
-            </div>
-            )
-          )}
-
-          {category === 'artists' && (
-            displayedArtists.length === 0 ? (
-              <div className="py-16 text-center space-y-3 rounded-3xl bg-zinc-900/40 border border-white/5">
-                <Calendar className="w-8 h-8 text-zinc-500 mx-auto" />
-                <p className="text-sm font-bold text-zinc-300">На выбранную дату релизов артистов ещё не было</p>
-                <button
-                  type="button"
-                  onClick={() => setChartDate('')}
-                  className="px-4 py-2 rounded-xl theme-bg-accent text-black text-xs font-extrabold cursor-pointer hover:opacity-90"
-                >
-                  Вернуться к текущим чартам
-                </button>
-              </div>
-            ) : (
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                {displayedArtists.map((artist, idx) => (
-                  <div 
-                    key={artist.id}
-                    onClick={() => navigateTo('artist', { id: artist.id })}
-                    className="p-5 rounded-2xl bg-zinc-900/60 hover:bg-zinc-800/80 border border-white/5 hover:border-white/20 transition-all cursor-pointer group shadow-xl flex flex-col items-center text-center relative"
-                  >
-                    <div className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-black/85 text-[11px] font-black text-white border border-white/10">
-                      #{idx + 1}
-                    </div>
-
-                    <CoverArt 
-                      url={artist.imageUrl} 
-                      title={artist.name} 
-                      isArtist={true}
-                      className="w-28 h-28 rounded-full mb-4 shadow-2xl bg-zinc-800 border-2 border-white/10" 
-                      innerClassName="group-hover:scale-105 transition-transform duration-300"
-                    />
-
-                    <h4 className="font-black text-lg text-white truncate w-full hover-text-link">{artist.name}</h4>
-                    <p className="text-xs text-zinc-400 mt-1">{formatListeners(artist.followers)}</p>
-
-                    <div className="w-full mt-4 pt-3 border-t border-white/5 flex items-center justify-between text-xs text-zinc-400">
-                      <span>{artist.trackCount} треков</span>
-                      <span className="font-bold text-white tabular-nums">{artist.totalPlays.toLocaleString('ru-RU')} просл.</span>
-                    </div>
-
-                    {toggleFollowArtist && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleFollowArtist(artist.id);
-                        }}
-                        className={`mt-3 w-full py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                          followedArtistIds.includes(artist.id)
-                            ? 'bg-white/10 text-white hover:bg-red-500/20 hover:text-red-400'
-                            : 'theme-bg-accent text-black hover:opacity-90'
-                        }`}
-                      >
-                        {followedArtistIds.includes(artist.id) ? 'В подписках' : 'Подписаться'}
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {artistsBatch.hasMore && (
-                <div ref={artistsBatch.sentinelRef} className="py-4 text-center">
-                  <button
-                    type="button"
-                    onClick={artistsBatch.loadMore}
-                    className="px-5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-zinc-400 hover:text-white transition-all cursor-pointer"
-                  >
-                    Показать ещё артистов ({rankedArtists.length - displayedArtists.length})
-                  </button>
-                </div>
-              )}
-            </div>
-            )
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+// (old ChartsView was replaced by ChartsPro from MusaicPlus.tsx)
 
 // --- ALBUM VALUE CALCULATOR & VIEW ---
 
@@ -13016,6 +11984,9 @@ function ArtistView({
           </section>
         )}
 
+        {/* --- Awards & nominations (Musaic v2.4) --- */}
+        <ArtistAwardsButton artist={artist} tracks={tracks} navigateTo={navigateTo} />
+
         {/* --- Eras of the artist (Musaic v2.3) --- */}
         <ArtistEras
           eras={eras}
@@ -14717,6 +13688,21 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
                       className="w-full bg-black/40 border border-white/10 rounded-2xl px-4 py-3 text-sm md:text-base font-bold text-white outline-none focus:border-white/30"
                     />
                   </div>
+
+                  {/* Generators from the simulation (Musaic v2.4) */}
+                  <BatchSmartTools
+                    mode={batchItemType}
+                    artistId={batchItemType === 'album' ? formData.albumArtistId : formData.trackArtistId}
+                    artists={artists}
+                    tracks={tracks}
+                    albums={albums}
+                    dateIso={parseFlexibleDate(batchTargetDate)}
+                    onTitle={(v) => setFormData((prev: any) => (batchItemType === 'album' ? { ...prev, albumTitle: v } : { ...prev, trackTitle: v }))}
+                    onPlays={(v) => setFormData((prev: any) => ({ ...prev, trackPlays: v }))}
+                    onDuration={(v) => setFormData((prev: any) => ({ ...prev, trackDuration: v }))}
+                    onFeat={(v) => setBatchFit(v)}
+                    onAlbumTracks={(list) => setStagedAlbumTracks(list)}
+                  />
 
                   {/* Artist Selector Modal Button */}
                   <div>
@@ -17041,7 +16027,8 @@ function TrackPage({
   const isCurrentPlaying = isPlaying && currentTrackId === track.id;
 
   return (
-    <div className="min-h-full pb-24">
+    <div className="min-h-full pb-24 relative isolate">
+      <ReleaseStage kind="track" id={track.id} cover={track.coverUrl} title={track.title} artistName={track.artistName} genre={track.genre || album?.genre} releaseDate={track.releaseDate || album?.releaseDate} plays={track.plays} />
       {/* Top Banner (Spotify style with rich gradient & larger cover) */}
       <div className="bg-gradient-to-b from-emerald-950/35 via-zinc-900/65 to-[var(--bg-color)] backdrop-blur-xl px-6 md:px-8 pt-8 pb-8 relative overflow-hidden">
         <div className="flex flex-col sm:flex-row items-center sm:items-end gap-6 md:gap-8 max-w-7xl mx-auto relative z-10">
@@ -17554,9 +16541,10 @@ function AlbumView({
 
   return (
     <div
-      className={`min-h-full pb-20 ${coverColorsOn ? 'page-accent-scope' : ''}`}
+      className={`min-h-full pb-20 relative isolate ${coverColorsOn ? 'page-accent-scope' : ''}`}
       style={coverColorsOn ? ({ ['--page-accent' as any]: pageAccent } as React.CSSProperties) : undefined}
     >
+      <ReleaseStage kind="album" id={album.id} cover={album.coverUrl} title={album.title} artistName={album.artistName} genre={album.genre} releaseDate={album.releaseDate} plays={totalAlbumPlays} />
       {/* Top Banner (Spotify style with rich gradient & larger cover) */}
       <div className={`${coverColorsOn ? '' : 'bg-gradient-to-b from-indigo-950/35 via-zinc-900/65 to-[var(--bg-color)] backdrop-blur-xl'} px-6 md:px-8 ${albumHeroOn ? 'pt-10 pb-10 md:pt-14 md:pb-12' : 'pt-8 pb-8'} relative overflow-hidden`}>
         {coverColorsOn && (
