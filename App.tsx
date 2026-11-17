@@ -5959,6 +5959,7 @@ export default function App() {
     root.style.setProperty('--header-blur', `${theme.headerBlur}px`);
     root.style.setProperty('--anim-speed', `${theme.animationSpeed}s`);
     root.style.setProperty('--sidebar-width', theme.sidebarWidth.toString() + 'px');
+    root.dataset.design = theme.designMode;
 
     // Advanced visual controls
     root.style.setProperty('--border-intensity', theme.borderIntensity.toString());
