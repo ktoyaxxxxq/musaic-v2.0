@@ -79,6 +79,12 @@ import {
 } from 'lucide-react';
 import { Artist, Album, Track, ViewType, NavigationState, HomeViewProps, ArtistViewProps, RatingData, AlbumValueRating, AwardItem, AwardNominee, SimState, SimSaveSlot, SimFuturePolicy, SimModeType, SimAutopilotConfig, ReleasePromoStrategy } from './types';
 import { AwardsView } from './AwardsView';
+// --- Musaic v2.2 modules ---
+import { AutoCover } from './covers/AutoCover';
+import { RatingPanel, ScoreBadge } from './rating/RatingPanel';
+import { ArtistHeroV2 } from './profile/ArtistHero';
+import { FONT_LIBRARY } from './fontsExtra';
+import { setTitleGenCatalog } from './titleGen/TitleGenAuto';
 import { CoverEditorModal } from './CoverEditorModal';
 import { INITIAL_AWARDS, buildAwardsFromCatalog } from './awardsData';
 import {
@@ -133,7 +139,7 @@ const THEME_PRESETS: ThemePreset[] = [
   { id: 'lime', name: 'Лаймовый пульс', accentColor: '#84cc16', bgColor: '#0f1408', fontFamily: "'Manrope', sans-serif", radiusFactor: 1.1, desc: 'Кислый лайм на тёмной траве' },
 ];
 
-const AVAILABLE_FONTS = [
+const AVAILABLE_FONTS_BASE = [
   { id: "'Geist', 'Inter', sans-serif", name: 'Geist (Современный)', desc: 'Премиальный системный шрифт от Vercel' },
   { id: "'Inter', sans-serif", name: 'Inter (Классический)', desc: 'Премиальный гротеск с высокой читаемостью' },
   { id: "'Space Grotesk', sans-serif", name: 'Space Grotesk (Техно)', desc: 'Геометрический гротеск для заголовков' },
@@ -148,6 +154,7 @@ const AVAILABLE_FONTS = [
   { id: "'Geologica', 'Inter', sans-serif", name: 'Geologica', desc: 'Адаптивный с характером' },
   { id: "'Jost', sans-serif", name: 'Jost', desc: 'Геометрический минимализм' },
 ];
+const AVAILABLE_FONTS = [...AVAILABLE_FONTS_BASE, ...FONT_LIBRARY.filter(f => !AVAILABLE_FONTS_BASE.some(b => b.id === f.id))];
 
 export interface ThemeConfig {
   designMode: 'nextGen' | 'classic'; // 'nextGen' = Modern Liquid Glass UI; 'classic' = Original Classic Musaic
@@ -1279,7 +1286,7 @@ export const FeaturedArtistsLinks: React.FC<{
 
 // Minimalist Procedural Art Generator
 // Minimalist Procedural Art Generator - Optimized for all sizes using Container Queries
-const PlaceholderArt: React.FC<{
+const PlaceholderArt_OLD: React.FC<{
   title?: string;
   albumTitle?: string;
   isArtist?: boolean;
@@ -1596,7 +1603,7 @@ export const getScoreTier = (score: number): ScoreTierStyle => {
 
 // --- Rating Score Badge (Slightly smaller circular design per Request 2) ---
 
-const RatingScoreBadge: React.FC<{
+const RatingScoreBadge_OLD: React.FC<{
   rating?: RatingData;
   size?: 'sm' | 'md' | 'lg';
   showDetailsOnHover?: boolean;
@@ -1830,7 +1837,7 @@ const CriterionSlider: React.FC<{
 
 // --- Rating Input Form Component with 2-Column Responsive Layout & Nominations ---
 
-const RatingInputCard: React.FC<{
+const RatingInputCard_OLD: React.FC<{
   rating?: RatingData;
   onChange: (rating: RatingData | undefined) => void;
   onConfirm?: () => void;
@@ -2028,6 +2035,7 @@ const QuickRatingModal: React.FC<{
           title="ОЦЕНКА"
           isStandalone={true}
           targetType={type}
+          context={{ hasFeature: Boolean((item as any).featuredArtist || (item as any).coArtist), isSnippet: Boolean((item as any).isSnippet), genre: (item as any).genre }}
         />
       </motion.div>
     </div>
@@ -5894,6 +5902,7 @@ export default function App() {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [awards, setAwards] = useState<AwardItem[]>([]);
+  useEffect(() => { setTitleGenCatalog({ artists, tracks, albums }); }, [artists, tracks, albums]);
   const [history, setHistory] = useState<Array<NavigationState & { scrollY: number }>>([]);
   const [forwardHistory, setForwardHistory] = useState<Array<NavigationState & { scrollY: number }>>([]);
   const contentScrollRef = useRef<HTMLDivElement>(null);
@@ -12830,14 +12839,14 @@ function ArtistView({
       style={coverColorsOn ? ({ ['--page-accent' as any]: pageAccent } as React.CSSProperties) : undefined}
     >
       {heroOn && (
-        <ArtistHero
-          artist={artist}
-          coverUrl={resolvedArtistCover}
+        <ArtistHeroV2
+          artistId={String(artist.id)}
+          name={artist.name}
+          imageUrl={resolvedArtistCover}
+          verified={artist.verified}
+          subtitle={`${formatListeners(artist.followers)}${artist.genre ? ` · ${artist.genre}` : ''}`}
           palette={headerPalette}
-          useColors={coverColorsOn}
-          animate={uiPrefs?.smoothTransitions !== false}
-          variant={uiPrefs?.artistHeroStyle || 'cinema'}
-          onPlay={() => filteredArtistTracks[0] && (onPlayTrack ? onPlayTrack(filteredArtistTracks[0]) : navigateTo('track', { id: filteredArtistTracks[0].id }))}
+          defaultVariant={uiPrefs?.artistHeroStyle || 'cinema'}
           onZoom={() => openLightbox && openLightbox({ url: artist.imageUrl, title: artist.name, subtitle: formatListeners(artist.followers), type: 'Исполнитель' })}
         />
       )}
@@ -19041,3 +19050,8 @@ function SearchView({
     </div>
   );
 }
+
+// --- Musaic v2.2: new components under the old names (old versions kept above as *_OLD) ---
+const PlaceholderArt = AutoCover;
+const RatingScoreBadge = ScoreBadge;
+const RatingInputCard = RatingPanel;

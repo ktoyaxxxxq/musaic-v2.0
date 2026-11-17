@@ -37,6 +37,8 @@ import {
   buildAwardsFromCatalog
 } from './awardsData';
 import { CoverArt, resolveMedia } from './App';
+import { ModalPortal, AwardTop10 } from './awards/AwardTop10';
+import { recomputeAward, syncAwards, periodsForSelection } from './awards/awardEngine';
 
 const formatDateDisplay = (dateStr?: string): string => {
   if (!dateStr) return '';
@@ -166,7 +168,9 @@ export const AwardNomineesModal: React.FC<{
   tracks: Track[];
   artists: Artist[];
   onPlayTrack?: (track: Track) => void;
-}> = ({ isOpen, award, onClose, onEdit, onDelete, openLightbox, navigateTo, albums, tracks, artists, onPlayTrack }) => {
+  onSaveAward?: (award: AwardItem) => void;
+  allAwards?: AwardItem[];
+}> = ({ isOpen, award, onClose, onEdit, onDelete, openLightbox, navigateTo, albums, tracks, artists, onPlayTrack, onSaveAward, allAwards }) => {
   if (!isOpen || !award) return null;
 
   const winner = award.winner;
@@ -254,6 +258,7 @@ export const AwardNomineesModal: React.FC<{
   }, [award, albums, tracks, artists, winner, periodPrefix, isAnnual]);
 
   return (
+    <ModalPortal>
     <div className="fixed inset-0 z-[140] flex items-center justify-center p-4">
       <motion.div
         initial={{ opacity: 0 }}
@@ -338,98 +343,21 @@ export const AwardNomineesModal: React.FC<{
             </div>
           </div>
 
-          {/* Voting Results & Nominees */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h5 className="text-xs font-black uppercase tracking-wider text-zinc-300 flex items-center gap-2">
-                <Star className="w-4 h-4 text-amber-400" /> Номинанты и результаты голосования
-              </h5>
-              {totalVotes > 0 && (
-                <span className="text-[11px] font-semibold text-zinc-500">
-                  Всего голосов: {totalVotes.toLocaleString('ru-RU')}
-                </span>
-              )}
-            </div>
-
-            <div className="space-y-2.5">
-              {nominees.map((nom, idx) => {
-                const isTop = idx === 0;
-                const pct = nom.votesPercent || Math.max(5, Math.round(100 / nominees.length));
-                return (
-                  <div
-                    key={idx}
-                    className={`p-3 rounded-2xl border transition-all ${
-                      isTop
-                        ? 'bg-amber-500/10 border-amber-500/35 shadow-md'
-                        : 'bg-black/30 border-white/5 hover:border-white/10'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-3 text-xs mb-1.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 ${
-                          isTop ? 'bg-amber-400 text-black' : 'bg-white/10 text-zinc-400'
-                        }`}>
-                          {idx + 1}
-                        </span>
-                        <span
-                          className="font-bold text-white truncate cursor-pointer hover:text-amber-400 hover:underline"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onClose();
-                            
-                            // Improved lookup: try by ID, then by Name/Artist match
-                            const item = tracks.find(t => t.id === nom.id || (t.title === nom.title && t.artistName === nom.artistName)) || 
-                                         albums.find(a => a.id === nom.id || (a.title === nom.title && a.artistName === nom.artistName)) || 
-                                         artists.find(a => a.id === nom.id || a.name === nom.title || a.name === nom.artistName);
-                            
-                            if (item) {
-                              // Determine type
-                              let type: ViewType = 'artist';
-                              if ('duration' in item) type = 'track';
-                              else if ('releaseYear' in item) type = 'album';
-                              
-                              navigateTo(type, { id: item.id });
-                            }
-                          }}
-                        >
-                          {nom.title}
-                        </span>
-                        {nom.artistName && (
-                          <span 
-                            className="text-zinc-400 truncate cursor-pointer hover:text-amber-400 hover:underline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onClose();
-                              const artist = artists.find(a => a.name === nom.artistName);
-                              if (artist) navigateTo('artist', { id: artist.id });
-                            }}
-                          >({nom.artistName})</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0 font-mono">
-                        <span className="font-extrabold text-white text-xs">{pct}%</span>
-                        {nom.votesCount && (
-                          <span className="text-[10px] text-zinc-500 hidden sm:inline">
-                            ({nom.votesCount.toLocaleString('ru-RU')})
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          isTop ? 'bg-gradient-to-r from-amber-400 to-amber-200' : 'bg-zinc-600'
-                        }`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          {/* Voting Results & Nominees: live top-10 from the award engine */}
+          <AwardTop10
+            award={award}
+            catalog={{ artists, albums, tracks }}
+            awards={allAwards}
+            onOpen={(n) => {
+              if (!n.id || String(n.id).startsWith('custom')) return;
+              onClose();
+              navigateTo(n.type === 'artist' ? 'artist' : n.type === 'album' ? 'album' : 'track', { id: n.id });
+            }}
+            onSaveNominees={onSaveAward}
+            renderCover={(n) => (
+              <CoverArt url={n.coverUrl} title={n.title} isArtist={n.type === 'artist'} className="w-full h-full" innerClassName="w-full h-full object-cover" />
+            )}
+          />
 
           {/* Other Releases from this Period close to Award ("были близки к награде") */}
           {periodContenders.length > 0 && (
@@ -534,6 +462,7 @@ export const AwardNomineesModal: React.FC<{
         </div>
       </motion.div>
     </div>
+    </ModalPortal>
   );
 };
 
@@ -555,6 +484,7 @@ export const AwardAssignmentModal: React.FC<{
   artists: Artist[];
   initialYear?: string;
   initialMonth?: string;
+  allAwards?: AwardItem[];
 }> = ({
   isOpen,
   onClose,
@@ -564,7 +494,8 @@ export const AwardAssignmentModal: React.FC<{
   tracks,
   artists,
   initialYear = '2026',
-  initialMonth = '09'
+  initialMonth = '09',
+  allAwards
 }) => {
   if (!isOpen) return null;
 
@@ -827,6 +758,20 @@ export const AwardAssignmentModal: React.FC<{
     }
   };
 
+  // own top-10 (set from the "Свой топ" editor in the preview below)
+  const [customTop, setCustomTop] = useState<{ nominees: any[]; mode: 'auto' | 'manual' } | null>(
+    (editingAward as any)?.nomineesMode === 'manual' ? { nominees: editingAward!.nominees || [], mode: 'manual' } : null
+  );
+  const previewAward = useMemo(() => {
+    if (!winnerTitle.trim()) return null;
+    const nom = availableNominations.find(n => n.key === nominationKey) || availableNominations[0];
+    return recomputeAward({
+      id: editingAward?.id || 'preview', year, month: periodType === 'month' ? month : undefined, periodType, nominationKey,
+      nominationTitle: nom?.title || '', winner: { type: winnerType, title: winnerTitle.trim(), artistName: winnerArtist.trim() || undefined, coverUrl: winnerCover.trim() || undefined },
+      source: 'manual', nomineesMode: customTop?.mode || 'auto', nominees: customTop?.mode === 'manual' ? customTop.nominees : undefined
+    } as any, { artists, albums, tracks }, allAwards);
+  }, [winnerTitle, winnerArtist, winnerCover, winnerType, nominationKey, year, month, periodType, customTop, artists, albums, tracks, allAwards]);
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!winnerTitle.trim()) return;
@@ -858,11 +803,18 @@ export const AwardAssignmentModal: React.FC<{
       awardedAt: new Date().toISOString().split('T')[0],
     };
 
-    onSave(newAward);
+    const saved = recomputeAward({
+      ...newAward,
+      source: 'manual',
+      nomineesMode: customTop?.mode || 'auto',
+      nominees: customTop?.mode === 'manual' ? customTop.nominees : undefined
+    } as any, { artists, albums, tracks }, allAwards);
+    onSave(saved);
     onClose();
   };
 
   return (
+    <ModalPortal>
     <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/85 backdrop-blur-xl" onClick={onClose} />
 
@@ -870,7 +822,7 @@ export const AwardAssignmentModal: React.FC<{
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
-        className="relative w-full max-w-2xl bg-[#0d0e13] border border-white/15 rounded-3xl overflow-hidden shadow-2xl z-10 flex flex-col max-h-[92vh]"
+        className="relative w-full max-w-xl bg-[#0d0e13] border border-white/15 rounded-3xl overflow-hidden shadow-2xl z-10 flex flex-col max-h-[92vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -880,7 +832,7 @@ export const AwardAssignmentModal: React.FC<{
               <Trophy className="w-5 h-5 fill-black" />
             </div>
             <div>
-              <h3 className="text-xl font-black text-white">Вручение музыкальной премии</h3>
+              <h3 className="text-base font-black text-white">Вручение музыкальной премии</h3>
               <p className="text-xs text-zinc-400 mt-0.5">Номинирование артистов, альбомов и треков за период</p>
             </div>
           </div>
@@ -893,7 +845,7 @@ export const AwardAssignmentModal: React.FC<{
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSave} className="p-6 overflow-y-auto custom-scrollbar space-y-6">
+        <form onSubmit={handleSave} className="p-4 sm:p-5 overflow-y-auto custom-scrollbar space-y-4">
           {/* Step 1: Period & Nomination */}
           <div className="space-y-4 p-4 rounded-2xl bg-white/5 border border-white/5">
             <div className="flex items-center justify-between">
@@ -1017,7 +969,7 @@ export const AwardAssignmentModal: React.FC<{
                 </div>
 
                 {/* Candidate List with Exact-period at Top and Undated at Bottom */}
-                <div className="max-h-80 sm:max-h-[380px] overflow-y-auto custom-scrollbar space-y-2 border border-white/10 rounded-2xl p-2.5 bg-black/40">
+                <div className="max-h-64 overflow-y-auto custom-scrollbar space-y-2 border border-white/10 rounded-2xl p-2.5 bg-black/40">
                   {eligibleCandidates.length === 0 ? (
                     <div className="py-10 text-center text-zinc-500 text-xs space-y-2">
                       <p>В периоде {periodType === 'month' ? `${MONTH_NAMES_RU[month]} ${year}` : `${year} год`} нет подходящих релизов.</p>
@@ -1036,7 +988,7 @@ export const AwardAssignmentModal: React.FC<{
                         <div
                           key={`${item.id}-${idx}`}
                           onClick={() => handleSelectRelease(item)}
-                          className={`p-3 sm:p-3.5 rounded-2xl flex items-center justify-between gap-3 sm:gap-4 cursor-pointer transition-all border ${
+                          className={`px-3 py-2 rounded-xl flex items-center justify-between gap-3 cursor-pointer transition-all border ${
                             isSelected
                               ? 'bg-amber-500/15 border-amber-500/50 text-white shadow-lg ring-1 ring-amber-500/30'
                               : 'bg-white/[0.03] hover:bg-white/[0.08] border-white/5 hover:border-white/15'
@@ -1044,7 +996,7 @@ export const AwardAssignmentModal: React.FC<{
                         >
                           <div className="flex items-center gap-3.5 min-w-0">
                             {/* Artwork / Avatar with CoverArt resolving idb: & procedural fallback */}
-                            <div className={`w-14 h-14 sm:w-16 sm:h-16 ${item.type === 'artist' ? 'rounded-full' : 'rounded-xl'} overflow-hidden bg-zinc-800 shrink-0 border border-white/15 shadow-md relative`}>
+                            <div className={`w-10 h-10 ${item.type === 'artist' ? 'rounded-full' : 'rounded-lg'} overflow-hidden bg-zinc-800 shrink-0 border border-white/15 shadow-md relative`}>
                               <CoverArt
                                 url={item.coverUrl}
                                 title={item.title}
@@ -1143,7 +1095,7 @@ export const AwardAssignmentModal: React.FC<{
 
             {winnerCover && (
               <div className="flex items-center gap-4 p-3.5 bg-black/40 rounded-2xl border border-white/10">
-                <div className={`w-16 h-16 ${winnerType === 'artist' ? 'rounded-full' : 'rounded-2xl'} overflow-hidden shrink-0 bg-zinc-900 border border-white/15 relative shadow-md`}>
+                <div className={`w-12 h-12 ${winnerType === 'artist' ? 'rounded-full' : 'rounded-xl'} overflow-hidden shrink-0 bg-zinc-900 border border-white/15 relative shadow-md`}>
                   <CoverArt
                     url={winnerCover}
                     title={winnerTitle}
@@ -1213,6 +1165,18 @@ export const AwardAssignmentModal: React.FC<{
             </div>
           </div>
 
+          {/* 4. Top-10 preview: auto from the engine, or your own */}
+          {previewAward && (
+            <div className="p-4 rounded-2xl border border-white/10 bg-black/30">
+              <AwardTop10
+                award={previewAward}
+                catalog={{ artists, albums, tracks }}
+                awards={allAwards}
+                onSaveNominees={(a: any) => setCustomTop(a.nomineesMode === 'manual' ? { nominees: a.nominees || [], mode: 'manual' } : null)}
+              />
+            </div>
+          )}
+
           {/* Action Buttons */}
           <div className="pt-2 flex items-center justify-end gap-3">
             <button
@@ -1232,6 +1196,7 @@ export const AwardAssignmentModal: React.FC<{
         </form>
       </motion.div>
     </div>
+    </ModalPortal>
   );
 };
 
@@ -1255,6 +1220,7 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
 }) => {
   const [selectedYear, setSelectedYear] = useState<string>(initialYear);
   const [selectedPeriod, setSelectedPeriod] = useState<string>(initialMonth);
+  const [undoSync, setUndoSync] = useState<null | { restore: AwardItem[]; remove: string[] }>(null);
 
   useEffect(() => {
     if (updateNavParams) {
@@ -1419,12 +1385,16 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
             <button
               type="button"
               onClick={() => {
-                const catalogAwards = buildAwardsFromCatalog(artists, albums, tracks);
-                if (catalogAwards.length === 0) {
-                  alert('В каталоге пока нет релизов для авто-формирования премий. Вы можете добавить релизы или вручить премии вручную.');
+                const catalog = { artists, albums, tracks };
+                const periods = periodsForSelection(selectedYear, selectedPeriod, catalog);
+                const res = syncAwards(periods, catalog, awards);
+                if (res.upserts.length === 0) {
+                  showToast?.('В выбранном периоде нет релизов для премий');
                   return;
                 }
-                catalogAwards.forEach(aw => onSaveAward(aw));
+                res.upserts.forEach(aw => onSaveAward(aw));
+                setUndoSync(res.undo);
+                showToast?.(`Премии обновлены: новых ${res.summary.created}, пересчитано ${res.summary.updated}, твоих победителей сохранено ${res.summary.keptWinners}`);
               }}
               className="px-4 py-3 rounded-2xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white font-bold text-xs sm:text-sm border border-white/10 transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg hover:border-amber-400/30"
               title="Обновить премии на основе ваших реальных исполнителей, треков и альбомов"
@@ -1432,6 +1402,23 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
               <Sparkles className="w-4 h-4 text-amber-400" />
               <span>Синхронизировать с каталогом</span>
             </button>
+
+            {undoSync && (
+              <button
+                type="button"
+                onClick={() => {
+                  undoSync.remove.forEach(id => onDeleteAward(id));
+                  undoSync.restore.forEach(aw => onSaveAward(aw));
+                  setUndoSync(null);
+                  showToast?.('Синхронизация отменена');
+                }}
+                className="px-4 py-3 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-xs sm:text-sm border border-amber-500/30 transition-all cursor-pointer flex items-center justify-center gap-2"
+                title="Вернуть премии как были до синхронизации"
+              >
+                <RotateCcw className="w-4 h-4" />
+                <span>Отменить синхронизацию</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -1737,7 +1724,7 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
       </div>
 
       {/* Nominees & Contenders Modal */}
-      <AwardNomineesModal
+      {activeModalAward && <AwardNomineesModal
         isOpen={Boolean(activeModalAward)}
         award={activeModalAward}
         onClose={() => setActiveModalAward(null)}
@@ -1755,10 +1742,12 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
         tracks={tracks}
         artists={artists}
         onPlayTrack={onPlayTrack}
-      />
+        onSaveAward={(a) => { onSaveAward(a); setActiveModalAward(a); }}
+        allAwards={awards}
+      />}
 
       {/* Assignment / Hand-out Award Modal */}
-      <AwardAssignmentModal
+      {isAssignModalOpen && <AwardAssignmentModal
         isOpen={isAssignModalOpen}
         onClose={() => {
           setIsAssignModalOpen(false);
@@ -1771,7 +1760,8 @@ export const AwardsView: React.FC<AwardsViewProps> = ({
         artists={artists}
         initialYear={selectedYear}
         initialMonth={selectedPeriod !== 'all_months' && selectedPeriod !== 'year_review' ? selectedPeriod : '09'}
-      />
+        allAwards={awards}
+      />}
     </div>
   );
 };
