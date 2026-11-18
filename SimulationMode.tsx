@@ -8508,6 +8508,71 @@ const SimManualTab = memo(({
   );
 });
 
+// ---------------------------------------------------------------------------
+// Light mode of the console: one calm screen — who drops this week, one tap to toggle,
+// quick presets; everything else stays in the full mode
+// ---------------------------------------------------------------------------
+const FMT_RU: Record<string, string> = { single: 'Сингл', ep: 'EP', album: 'Альбом', snippet: 'Сниппет' };
+const SimLightPanel: React.FC<{
+  proposals: SimProposal[]; setProposals: React.Dispatch<React.SetStateAction<SimProposal[]>>;
+  regenerate: (o?: Partial<SimAutopilotConfig>) => void; autopilot: SimAutopilotConfig; setAuto: <K extends keyof SimAutopilotConfig>(k: K, v: SimAutopilotConfig[K]) => void;
+  simState: SimState; advanceDays: number; setAdvanceDays: (n: number) => void;
+}> = ({ proposals, setProposals, regenerate, autopilot, setAuto, simState, advanceDays, setAdvanceDays }) => {
+  const sel = proposals.filter(p => p.selected);
+  const total = sel.reduce((s, p) => s + (p.estimatedPlays || 0), 0);
+  const best = (n: number) => { const ids = new Set([...proposals].sort((a, b) => (b.estimatedPlays || 0) - (a.estimatedPlays || 0)).slice(0, n).map(p => p.id)); setProposals(ps => ps.map(p => ({ ...p, selected: ids.has(p.id) }))); };
+  const chip = (on: boolean) => `px-3 py-1.5 rounded-xl text-[12px] font-semibold transition-colors cursor-pointer ${on ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.09]'}`;
+  const hl = simState.lastDigest?.highlights || [];
+  return (
+    <div className="space-y-5 max-w-4xl mx-auto">
+      <div className="grid grid-cols-3 gap-2">
+        {[[`${sel.length}`, 'релизов на неделю'], [`≈ ${formatCompact(total)}`, 'прогноз прослушиваний'], [formatSimDate(addDaysISO(simState.currentDate, advanceDays)), 'следующая дата']].map(([v, l]) => (
+          <div key={l} className="rounded-2xl bg-white/[0.03] border border-white/[0.05] px-4 py-3"><div className="text-xl font-black text-white tabular-nums truncate">{v}</div><div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mt-0.5">{l}</div></div>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {([['calm', 'Спокойно'], ['balanced', 'Стандарт'], ['active', 'Активно'], ['mega', 'Мега']] as Array<[SimIntensity, string]>).map(([k, l]) => (
+          <button key={k} type="button" className={chip(autopilot.intensity === k)} onClick={() => { setAuto('intensity', k); regenerate({ intensity: k }); }}>{l}</button>
+        ))}
+        <span className="w-px h-5 bg-white/10 mx-1" />
+        {([['normal', 'Обычная'], ['hot_drops', 'Горячая'], ['collab_fest', 'Фиты'], ['underground_wave', 'Андеграунд'], ['quiet_week', 'Тихая']] as Array<[SimWeekEvent, string]>).map(([k, l]) => (
+          <button key={k} type="button" className={chip(autopilot.weekEvent === k)} onClick={() => { setAuto('weekEvent', k); regenerate({ weekEvent: k }); }}>{l}</button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className={chip(false)} onClick={() => regenerate()}>🎲 Новые кандидаты</button>
+        <button type="button" className={chip(false)} onClick={() => best(5)}>Лучшие 5</button>
+        <button type="button" className={chip(false)} onClick={() => best(8)}>Лучшие 8</button>
+        <button type="button" className={chip(false)} onClick={() => setProposals(ps => ps.map(p => ({ ...p, selected: false })))}>Снять всё</button>
+        <span className="ml-auto flex items-center gap-1 text-[11px] text-zinc-500">шаг
+          {[7, 14, 30].map(d => <button key={d} type="button" onClick={() => setAdvanceDays(d)} className={`px-2 py-1 rounded-lg font-semibold ${advanceDays === d ? 'bg-white/15 text-white' : 'hover:text-white'}`}>{d} дн.</button>)}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {proposals.length === 0 && <div className="text-sm text-zinc-500 py-8">Нажми «Новые кандидаты».</div>}
+        {proposals.map(p => (
+          <button key={p.id} type="button" onClick={() => setProposals(ps => ps.map(x => (x.id === p.id ? { ...x, selected: !x.selected } : x)))}
+            className={`flex items-center gap-3 p-2.5 rounded-2xl border text-left transition-all ${p.selected ? 'bg-white/[0.06] border-white/20' : 'bg-white/[0.015] border-white/[0.05] opacity-60 hover:opacity-100'}`}>
+            <span className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${p.selected ? 'theme-bg-accent border-transparent' : 'border-white/20'}`}>{p.selected && <Check className="w-3 h-3 text-black" />}</span>
+            <CoverArt url={p.coverUrl} title={p.title} className="w-10 h-10 rounded-xl overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-bold text-white truncate">{p.title}</span>
+              <span className="block text-[11px] text-zinc-500 truncate">{p.artistName}{p.featuredArtist ? ` feat. ${p.featuredArtist}` : ''} · {FMT_RU[p.releaseFormat || (p.itemType === 'album' ? 'album' : p.itemType === 'snippet' ? 'snippet' : 'single')]}</span>
+            </span>
+            <span className="text-[11px] text-zinc-400 tabular-nums shrink-0">≈ {formatCompact(p.estimatedPlays || 0)}</span>
+          </button>
+        ))}
+      </div>
+      {hl.length > 0 && (
+        <div className="rounded-2xl bg-white/[0.02] border border-white/[0.05] p-4">
+          <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2">Прошлая неделя</div>
+          <div className="space-y-1">{hl.slice(0, 5).map((h, i) => <div key={i} className="text-[12.5px] text-zinc-300">{h}</div>)}</div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SIM_CALM_CSS = `.sim-calm [class*='bg-emerald-500/'],.sim-calm [class*='bg-amber-500/'],.sim-calm [class*='bg-fuchsia-500/'],.sim-calm [class*='bg-sky-500/'],.sim-calm [class*='bg-violet-500/'],.sim-calm [class*='bg-rose-500/'],.sim-calm [class*='bg-red-500/'],.sim-calm [class*='bg-blue-500/'],.sim-calm [class*='bg-cyan-500/'],.sim-calm [class*='bg-orange-500/'],.sim-calm [class*='bg-purple-500/'],.sim-calm [class*='bg-pink-500/'],.sim-calm [class*='bg-indigo-500/'],.sim-calm [class*='bg-teal-500/'],.sim-calm [class*='bg-yellow-500/'],.sim-calm [class*='bg-lime-500/'],.sim-calm [class*='bg-emerald-400/'],.sim-calm [class*='bg-amber-400/']{background-color:rgba(255,255,255,.045)!important}.sim-calm [class*='border-emerald-'],.sim-calm [class*='border-amber-'],.sim-calm [class*='border-fuchsia-'],.sim-calm [class*='border-sky-'],.sim-calm [class*='border-violet-'],.sim-calm [class*='border-rose-'],.sim-calm [class*='border-red-'],.sim-calm [class*='border-blue-'],.sim-calm [class*='border-cyan-'],.sim-calm [class*='border-orange-'],.sim-calm [class*='border-purple-'],.sim-calm [class*='border-pink-'],.sim-calm [class*='border-indigo-'],.sim-calm [class*='border-teal-'],.sim-calm [class*='border-yellow-']{border-color:rgba(255,255,255,.08)!important}.sim-calm [class*='bg-gradient-to-']:not(.theme-bg-accent){background-image:none!important;background-color:rgba(255,255,255,.035)!important}.sim-calm [class*='shadow-']:not(.theme-bg-accent){box-shadow:none!important}.sim-calm [class*='border-white/1'],.sim-calm [class*='border-white/2']{border-color:rgba(255,255,255,.07)!important}.sim-calm p.text-xs.text-zinc-300,.sim-calm p.text-\\[11px\\].text-zinc-300{color:rgb(113 113 122)!important}.sim-calm .rounded-2xl,.sim-calm .rounded-3xl{transition:background-color .25s ease,border-color .25s ease}`;
 
 export const SimConsoleModal: React.FC<{
@@ -8906,6 +8971,9 @@ export const SimConsoleModal: React.FC<{
   );
 
   const [calmView, setCalmView] = useState<boolean>(() => { try { return localStorage.getItem('musaic.sim.calm') !== '0'; } catch { return true; } });
+  const [lightMode, setLightMode] = useState<boolean>(() => { try { return localStorage.getItem('musaic.sim.light') === '1'; } catch { return false; } });
+  const toggleLight = () => setLightMode(v => { const n = !v; try { localStorage.setItem('musaic.sim.light', n ? '1' : '0'); } catch { /* */ } if (n) setTab('semi'); return n; });
+  useEffect(() => { if (lightMode && tab !== 'semi') setTab('semi'); }, [lightMode, tab]);
   const toggleCalm = () => setCalmView(v => { const n = !v; try { localStorage.setItem('musaic.sim.calm', n ? '1' : '0'); } catch { /* */ } return n; });
   const handleRadarCreateManual = useCallback((art: Artist) => {
     setRadarAssignSignal({ seq: Date.now(), artistId: art.id, genre: art.genre || '' });
@@ -8952,6 +9020,7 @@ export const SimConsoleModal: React.FC<{
           </div>
 
           <div className="flex flex-wrap items-center gap-2 min-w-0">
+            {!lightMode && (
             <div className="flex flex-wrap items-center gap-1 p-1 bg-zinc-900 border border-white/15 rounded-2xl">
               {[
                 { id: 'semi', label: 'Полуавтомат' },
@@ -8972,6 +9041,15 @@ export const SimConsoleModal: React.FC<{
                 </button>
               ))}
             </div>
+            )}
+            <button
+              type="button"
+              onClick={toggleLight}
+              title={lightMode ? 'Вернуть полный пульт со всеми вкладками' : 'Лёгкий режим: один экран, только главное'}
+              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors cursor-pointer shrink-0 ${lightMode ? 'theme-bg-accent text-black border-transparent' : 'border-white/10 text-zinc-300 hover:text-white'}`}
+            >
+              {lightMode ? 'Лёгкий режим' : 'Полный режим'}
+            </button>
             <button
               type="button"
               onClick={toggleCalm}
@@ -8993,7 +9071,10 @@ export const SimConsoleModal: React.FC<{
         {/* Body (instant tab switching, zero AnimatePresence lag) */}
         <div className="relative flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar min-w-0">
           {/* TAB 1: SEMI-AUTO PRODUCER PICKER */}
-          {tab === 'semi' && (
+          {lightMode && (
+            <SimLightPanel proposals={proposals} setProposals={setProposals} regenerate={regenerateProposals} autopilot={autopilot} setAuto={updateAutopilot} simState={simState} advanceDays={advanceDays} setAdvanceDays={setAdvanceDays} />
+          )}
+          {!lightMode && tab === 'semi' && (
             <div className="space-y-4">
               <SimScenarioDeck autopilot={autopilot} setAutopilot={setAutopilot} weekNumber={simState.weekNumber} compact />
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -10340,7 +10421,7 @@ export const SimConsoleModal: React.FC<{
                 type="button"
                 onClick={() => {
                   onRunWeek({ proposals, advanceDays });
-                  setTab('digest');
+                  if (!lightMode) setTab('digest');
                 }}
                 className="px-4 py-2 rounded-xl theme-bg-accent text-black text-xs font-bold flex items-center gap-1.5 hover:opacity-90 cursor-pointer"
               >

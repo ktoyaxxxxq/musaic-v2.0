@@ -11509,17 +11509,6 @@ function ArtistView({
           </button>
 
           <button 
-            onClick={() => navigateTo('compare', { mode: 'artists', leftId: artist.id })}
-            className="px-3.5 py-1.5 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 transition-all duration-300 delay-[40ms] cursor-pointer"
-            title="Сравнить с другим артистом"
-          >
-            <ArrowLeftRight className="w-3.5 h-3.5" />
-            <span>Сравнить</span>
-          </button>
-
-          <ArtistPortfolioButton artist={artist} tracks={tracks} albums={albums} navigateTo={navigateTo} />
-
-          <button 
             onClick={() => onMoreOptionsClick && onMoreOptionsClick(artist)} 
             className="text-zinc-400 hover:text-white transition-all duration-300 delay-[40ms] cursor-pointer p-2 rounded-full border border-transparent hover:border-white/15 hover:bg-white/[0.04]"
             title="Действия с исполнителем"
@@ -12012,7 +12001,14 @@ function ArtistView({
         )}
 
         {/* --- Awards & nominations (Musaic v2.4) --- */}
-        <ArtistAwardsButton artist={artist} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} />
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          <ArtistAwardsButton artist={artist} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} />
+          <button type="button" onClick={() => navigateTo('compare', { mode: 'artists', leftId: artist.id })} title="Сравнить с другим артистом"
+            className="h-9 inline-flex items-center gap-1.5 px-3 rounded-full border border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.07] text-[12px] font-semibold text-zinc-400 hover:text-white transition-colors cursor-pointer">
+            <ArrowLeftRight className="w-3.5 h-3.5" /><span>Сравнить</span>
+          </button>
+          <ArtistPortfolioButton artist={artist} tracks={tracks} albums={albums} navigateTo={navigateTo} />
+        </div>
 
         {/* --- Eras of the artist (Musaic v2.3) --- */}
         <ArtistEras
