@@ -91,25 +91,33 @@ function buildPersonas(artists: Artist[]): Persona[] {
 // ---------------------------------------------------------------------------
 // post model
 // ---------------------------------------------------------------------------
-type PType = 'release' | 'countdown' | 'teaser' | 'cryptic' | 'cover' | 'tracklist' | 'thanks' | 'milestone' | 'chart' | 'award' | 'studio' | 'emotion' | 'life' | 'opinion'
+type PType = 'release' | 'announce' | 'countdown' | 'teaser' | 'cryptic' | 'cover' | 'tracklist' | 'thanks' | 'milestone' | 'chart' | 'award' | 'studio' | 'emotion' | 'life' | 'opinion'
   | 'lyric' | 'poll' | 'throwback' | 'respect' | 'subtweet' | 'beef' | 'collab' | 'tour' | 'merch' | 'delay' | 'producer' | 'city' | 'night'
   | 'news' | 'insider' | 'leak' | 'signing' | 'meme' | 'review' | 'record' | 'celeb';
 export const TYPE_RU: Record<PType, string> = {
-  release: 'Релиз', countdown: 'Отсчёт', teaser: 'Прогрев', cryptic: 'Загадка', cover: 'Обложка', tracklist: 'Треклист', thanks: 'Спасибо', milestone: 'Рубеж', chart: 'Чарт', award: 'Премия',
+  release: 'Релиз', announce: 'Анонс', countdown: 'Отсчёт', teaser: 'Прогрев', cryptic: 'Загадка', cover: 'Обложка', tracklist: 'Треклист', thanks: 'Спасибо', milestone: 'Рубеж', chart: 'Чарт', award: 'Премия',
   studio: 'Студия', emotion: 'Эмоции', life: 'Жизнь', opinion: 'Мнение', lyric: 'Строчка', poll: 'Опрос', throwback: 'Ностальгия', respect: 'Респект', subtweet: 'Намёк', beef: 'Биф',
   collab: 'Коллаб', tour: 'Концерты', merch: 'Мерч', delay: 'Перенос', producer: 'Продюсер', city: 'Город', night: 'Ночь', news: 'Новость', insider: 'Инсайд', leak: 'Утечка',
   signing: 'Подписание', meme: 'Мем', review: 'Рецензия', record: 'Рекорд', celeb: 'Реакция'
 };
 const TYPE_GROUP: Record<string, PType[]> = {
-  'Релизы': ['release', 'countdown', 'teaser', 'cover', 'tracklist', 'delay'], 'Загадки': ['cryptic', 'lyric', 'night'], 'Инсайды': ['insider', 'leak', 'signing'],
+  'Релизы': ['release', 'announce', 'countdown', 'teaser', 'cover', 'tracklist', 'delay'], 'Загадки': ['cryptic', 'lyric', 'night'], 'Инсайды': ['insider', 'leak', 'signing'],
   'Бифы': ['beef', 'subtweet'], 'Мемы': ['meme'], 'Респект': ['respect', 'collab', 'producer'], 'Жизнь': ['emotion', 'life', 'opinion', 'studio', 'city', 'tour', 'merch'],
   'Чарт и премии': ['chart', 'award', 'record', 'milestone', 'thanks', 'review'], 'Опросы': ['poll'], 'Новости': ['news', 'celeb', 'throwback']
 };
 interface Comment { id: string; author: string; text: string; likes: number }
+/** a date/release the author hinted at — can be confirmed and sent to the calendar / simulation */
+export interface Claim { artistId: string; artistName: string; kind: 'single' | 'ep' | 'album' | 'snippet'; date: string; title?: string; feat?: string }
+export interface ConfirmedRumor extends Claim { id: string; postId: string; source: string; text: string; createdAt: number; used?: 'semi' | 'manual' }
+export const CONFIRMED_LS = 'musaic.rumors.confirmed';
+export const loadConfirmed = (): ConfirmedRumor[] => { try { return JSON.parse(localStorage.getItem(CONFIRMED_LS) || '[]'); } catch { return []; } };
+export const saveConfirmed = (l: ConfirmedRumor[]) => { try { localStorage.setItem(CONFIRMED_LS, JSON.stringify(l.slice(-200))); window.dispatchEvent(new Event('musaic-confirmed')); } catch { /* */ } };
+const ANN_KEY = 'musaic.announcements';
+const CLAIM_RU: Record<Claim['kind'], string> = { single: 'Сингл', ep: 'EP', album: 'Альбом', snippet: 'Сниппет' };
 interface Attach { kind: 'track' | 'album'; id: string; title: string; artist: string; cover?: string; label: string }
 export interface Post {
   id: string; author: string; date: string; time: string; type: PType; text: string; big?: boolean;
-  attach?: Attach; poll?: { q?: string; options: string[]; votes: number[] }; mentions: string[];
+  attach?: Attach; poll?: { q?: string; options: string[]; votes: number[] }; mentions: string[]; claim?: Claim;
   likes: number; reposts: number; comments: Comment[]; commentsTotal: number; user?: boolean; fresh?: number; topic?: string
 }
 
@@ -127,6 +135,10 @@ const B: Partial<Record<PType, Bank>> = {
     ironic: ['выпустил «{t}», иду читать ваши разборы', '«{t}». да, опять гениально', 'ну что, «{t}» вышел, можете начинать спорить', 'мама, я выпустил «{t}»'],
     official: ['Релиз «{t}» уже на всех площадках.', 'Встречайте: «{t}». Спасибо команде', 'Сегодня вышел {kind} «{t}»'],
     mysterious: ['«{t}»', 'открыто. «{t}»', 'глава закрыта. «{t}»'], minimal: ['«{t}»', 'вышло.', '{t}.']
+  },
+  announce: {
+    any: ['новый альбом выйдет {d}', 'сингл — {d}. запомните', '{d}. новый трек', 'EP почти готов. ориентир — {d}', 'в эту пятницу?', 'дата: {d}', 'новый трек на этой неделе', 'альбом в этом году. ориентир — {d}', 'фит с @{a2} — {d}', 'готовлю сингл. {d}', 'сниппет завтра, трек — {d}', 'всё сведено. {d}'],
+    hype: ['{d} НОВЫЙ ТРЕК!!!', 'АЛЬБОМ {d}. ГОТОВЬТЕСЬ'], mysterious: ['{d}', '{d}…', '🗝 {d}', 'альбом. {d}'], minimal: ['{d}.', 'сингл {d}.'], calm: ['новый трек выйдет {d}', 'альбом будет {d}. спасибо, что ждёте']
   },
   countdown: {
     any: ['{n} дн. до «{t}»', '«{t}» · {d}', 'обратный отсчёт: {n}', '{d}. запомните дату', 'через {n} дней всё изменится', '«{t}» выходит {d}. пресейв открыт'],
@@ -190,6 +202,7 @@ const NICK_A = ['lera', 'tima', 'dasha', 'kirill', 'alya', 'nikita', 'sonya', 'e
 const NICK_B = ['_vibes', '.808', '_music', '02', '_sad', '_luv', 'xx', '_official', '.beats', '_03', '_night', '_fan', '777', '.wav', '_drip'];
 const C: Record<string, string[]> = {
   release: ['«{t}» на повторе с утра', 'третий трек — шедевр', 'ждал «{t}» как ничего', 'это лучший твой релиз', 'мурашки на втором куплете', 'слушаю «{t}» в пятый раз', 'кто тоже плакал?', 'ну наконец-то', 'это гимн этого года', 'продакшн 🔥', 'не понял, нужно ещё раз', 'ожидал большего, если честно'],
+  announce: ['записал в календарь', 'это точно?', 'сохраню этот пост', 'жду {d}', 'пожалуйста, без переносов', 'фит с кем??'],
   countdown: ['я не доживу', 'пресейв сделан', 'скорее бы {d}', 'считаю дни', 'дайте хоть сниппет'],
   teaser: ['сливай полностью!!!', 'дата?', 'это будет хит', 'залетит в чарт сразу', 'кто на фите??', 'дай ещё 10 секунд', 'уже в голове крутится'],
   cryptic: ['что это значит???', 'альбом?', 'он что-то знает', 'я расшифровал: это дата', 'опять загадки 😭', 'теории в комментах 👇', 'это намёк на {t}?', 'всё, ждём', 'тревожно'],
@@ -256,7 +269,7 @@ const HOURS: Record<Kind, Array<[number, number]>> = {
   artist: [[11, 1], [13, 1], [15, 1.2], [17, 1.4], [19, 1.8], [21, 2.2], [23, 2], [1, 1.4], [3, 0.7]], insider: [[10, 1], [12, 1.5], [15, 1.5], [18, 1.2], [22, 1]],
   media: [[9, 2], [11, 2], [13, 1.5], [16, 1.5], [19, 1]], label: [[12, 2], [15, 1], [18, 1]], page: [[12, 1], [17, 1.4], [21, 2], [23, 1.4]], celeb: [[14, 1], [20, 1.5], [22, 1]]
 };
-const TYPE_K: Partial<Record<PType, number>> = { release: 2.1, countdown: 1.3, teaser: 1.5, cryptic: 1.6, cover: 1.6, tracklist: 1.5, thanks: 1.2, milestone: 1.5, chart: 1.1, award: 1.6, beef: 2.6, subtweet: 1.7, collab: 1.9, meme: 1.6, leak: 1.4, insider: 1.2, poll: 1.1, delay: 1.3, lyric: 1.2, news: 0.8, review: 0.7, record: 0.9 };
+const TYPE_K: Partial<Record<PType, number>> = { release: 2.1, announce: 1.6, countdown: 1.3, teaser: 1.5, cryptic: 1.6, cover: 1.6, tracklist: 1.5, thanks: 1.2, milestone: 1.5, chart: 1.1, award: 1.6, beef: 2.6, subtweet: 1.7, collab: 1.9, meme: 1.6, leak: 1.4, insider: 1.2, poll: 1.1, delay: 1.3, lyric: 1.2, news: 0.8, review: 0.7, record: 0.9 };
 function engagement(p: Persona, type: PType, r: R) {
   const size = Math.max(1000, p.followers);
   const rate = p.kind === 'artist' ? clampN(0.022 * Math.pow(size / 1e5, -0.18), 0.002, 0.05) * (0.55 + (p.hype ?? 50) / 90)
@@ -321,10 +334,23 @@ export function makePost(ix: Index, author: Persona, type: PType, date: string, 
     const txt = reply ? pick(r, ['спасибо 🤝', 'скоро', '🖤', 'увидите', 'люблю вас', 'всё будет', 'тише 🤫']) : fill(pick(r, [...C[ckey], ...(r() < 0.25 ? C.any : [])]), { ...v, o: poll ? pick(r, poll.options) : '' });
     return { id: `c${i}`, author: who, text: txt, likes: Math.round(eng.likes * (0.015 + r() * 0.06) / (i + 1)) };
   });
+  let claim: Claim | undefined;
+  const claimArtist = author.kind === 'artist' ? author : subj;
+  if (claimArtist?.artistId && !rel) {
+    const low = text.toLowerCase();
+    const kindOf = (): Claim['kind'] => (/альбом/.test(low) ? 'album' : /\bep\b|эп/.test(low) ? 'ep' : /сниппет|кусок/.test(low) && type !== 'announce' ? 'snippet' : 'single');
+    const fri = (min: number, span: number) => { let d = msOf(date) + Math.round(min + r() * span) * DAY; for (let i = 0; i < 7 && new Date(d).getUTCDay() !== 5; i++) d += DAY; return isoOf(d); };
+    const said = isoOf(msOf(date) + nDays * DAY);
+    const feat = text.includes(`@${v.a2}`) || /совместн|фит/.test(low) ? other?.name : undefined;
+    if (type === 'announce') claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: kindOf(), date: /пятниц/.test(low) ? fri(1, 0) : /неделе/.test(low) ? fri(1, 0) : said, feat };
+    else if ((type === 'cryptic' || type === 'countdown') && text.includes(v.d)) claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: 'single', date: said };
+    else if (type === 'insider' || type === 'leak') { const k = kindOf(); claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: k, date: /дата/.test(low) && text.includes(v.d) ? said : k === 'album' ? fri(21, 50) : fri(7, 35), feat, title: type === 'leak' && /альбома .+ — «/.test(text) ? v.alb : undefined }; }
+    else if (type === 'collab' && other) claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: 'single', date: fri(10, 35), feat: other.name };
+  }
   const big = text.replace(/[\s.…]/g, '').length <= 12 && !rel && type !== 'poll';
   return {
     id: `p${hash(`${author.id}|${type}|${date}|${text}|${time}`)}`, author: author.id, date, time, type, text, big,
-    attach: rel && type !== 'cryptic' && type !== 'delay' ? attachOf(rel, date) : undefined, poll, mentions, ...eng, comments,
+    attach: rel && type !== 'cryptic' && type !== 'delay' ? attachOf(rel, date) : undefined, poll, mentions, claim, ...eng, comments,
     topic: rel?.title || (type === 'beef' || type === 'collab' ? `${author.name} × ${other?.name}` : subj?.name)
   };
 }
@@ -343,7 +369,7 @@ function artistType(ix: Index, p: Persona, date: string, r: R): { type: PType; c
   const w: Array<[PType, number]> = [
     ['emotion', 2.6], ['studio', 2], ['life', 1.5], ['opinion', 0.9], ['lyric', 1.1], ['poll', 0.9], ['night', 1], ['city', 0.6], ['tour', 0.7], ['merch', 0.35],
     ['respect', 1], ['collab', 0.55], ['subtweet', 0.45 * ag], ['beef', 0.18 * ag], ['producer', 0.45], ['cryptic', (p.cryptic || 0.05) * 14], ['milestone', p.followers > 2e5 ? 0.15 : 0],
-    ['throwback', hasOld ? 0.8 : 0], ['chart', ch ? 2 : 0], ['award', aw ? 3 : 0], ['countdown', up ? 2.4 : 0], ['teaser', up ? 1.6 : 0], ['cover', up ? 0.7 : 0], ['tracklist', up && up.kind === 'album' ? 1 : 0], ['delay', up ? 0.06 : 0]
+    ['announce', up ? 0 : 1.2], ['throwback', hasOld ? 0.8 : 0], ['chart', ch ? 2 : 0], ['award', aw ? 3 : 0], ['countdown', up ? 2.4 : 0], ['teaser', up ? 1.6 : 0], ['cover', up ? 0.7 : 0], ['tracklist', up && up.kind === 'album' ? 1 : 0], ['delay', up ? 0.06 : 0]
   ];
   const type = wpick(r, w);
   const ctx: Ctx = {};
@@ -456,7 +482,24 @@ export const SocialFeed: React.FC<{
   const [compose, setCompose] = useState(false);
   const [showSet, setShowSet] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  useEffect(() => lsSet('musaic.social.seed', seed), [seed]);
+  const [confirmed, setConfirmed] = useState<ConfirmedRumor[]>(() => loadConfirmed());
+  useEffect(() => { const f = () => setConfirmed(loadConfirmed()); window.addEventListener('musaic-confirmed', f); return () => window.removeEventListener('musaic-confirmed', f); }, []);
+  const confirmedIds = useMemo(() => new Set(confirmed.map(c => c.postId)), [confirmed]);
+  const toggleClaim = (post: Post) => {
+    const c = post.claim; if (!c) return;
+    const anns = lsGet<any[]>(ANN_KEY, []);
+    if (confirmedIds.has(post.id)) {
+      const ex = confirmed.find(x => x.postId === post.id);
+      saveConfirmed(confirmed.filter(x => x.postId !== post.id));
+      lsSet(ANN_KEY, anns.filter(a => a.id !== `ann-rum-${ex?.id}`));
+      setToast('Слух снова не подтверждён'); return;
+    }
+    const id = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
+    const src = ix.byId.get(post.author)?.name || 'лента';
+    saveConfirmed([...confirmed, { ...c, id, postId: post.id, source: src, text: post.text, createdAt: Date.now() }]);
+    lsSet(ANN_KEY, [...anns, { id: `ann-rum-${id}`, title: c.title || `${CLAIM_RU[c.kind]} ${c.artistName}`, artistName: c.artistName, artistId: c.artistId, type: c.kind, date: c.date, presaves: 0, createdAt: Date.now(), featuredArtist: c.feat, note: `Слух от ${src}: ${post.text}`, fromRumor: true }]);
+    setToast('Подтверждено: слух в календаре и в пульте симуляции');
+  };
   useEffect(() => lsSet('musaic.social.likes', likedArr.slice(-3000)), [likedArr]);
   useEffect(() => lsSet('musaic.social.votes', votes), [votes]);
   useEffect(() => lsSet('musaic.social.pins', pins.slice(-100)), [pins]);
@@ -608,6 +651,20 @@ export const SocialFeed: React.FC<{
                           <Play className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                         </button>
                       )}
+                      {post.claim && (() => {
+                        const ok = confirmedIds.has(post.id);
+                        return (
+                          <div className="mt-2.5 flex items-center gap-2 text-[11.5px]">
+                            <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/[0.035] text-zinc-400">
+                              <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />{CLAIM_RU[post.claim.kind]} · ≈ {fmtDate(post.claim.date)}{post.claim.feat ? ` · feat. ${post.claim.feat}` : ''}
+                            </span>
+                            <button type="button" onClick={() => toggleClaim(post)} title={ok ? 'Снять подтверждение' : 'Подтвердить слух: добавить в календарь и в пульт симуляции'}
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg font-semibold transition-colors ${ok ? 'theme-bg-accent text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1] hover:text-white'}`}>
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 7" /></svg>{ok ? 'Подтверждено' : 'Подтвердить'}
+                            </button>
+                          </div>
+                        );
+                      })()}
                       {post.poll && (() => {
                         const v = post.poll.votes.map((x, i) => x + (myVote === i ? 1 : 0)); const tot = v.reduce((s, x) => s + x, 0) || 1;
                         return (

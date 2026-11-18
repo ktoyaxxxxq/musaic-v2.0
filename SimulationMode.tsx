@@ -82,6 +82,7 @@ import {
   GENRE_CATALOG
 } from './App';
 import { CoverEditorModal } from './CoverEditorModal';
+import { loadConfirmed, saveConfirmed, type ConfirmedRumor } from './SocialFeed';
 
 // ============================================================================
 // DEFAULT AUTOPILOT CONFIG
@@ -8974,6 +8975,12 @@ export const SimConsoleModal: React.FC<{
   const [lightMode, setLightMode] = useState<boolean>(() => { try { return localStorage.getItem('musaic.sim.light') === '1'; } catch { return false; } });
   const toggleLight = () => setLightMode(v => { const n = !v; try { localStorage.setItem('musaic.sim.light', n ? '1' : '0'); } catch { /* */ } if (n) setTab('semi'); return n; });
   useEffect(() => { if (lightMode && tab !== 'semi') setTab('semi'); }, [lightMode, tab]);
+  const [rumorsOpen, setRumorsOpen] = useState(false);
+  const [rumorMsg, setRumorMsg] = useState<string | null>(null);
+  const [confirmedRumors, setConfirmedRumors] = useState<ConfirmedRumor[]>(() => loadConfirmed());
+  useEffect(() => { const f = () => setConfirmedRumors(loadConfirmed()); window.addEventListener('musaic-confirmed', f); return () => window.removeEventListener('musaic-confirmed', f); }, []);
+  useEffect(() => { if (isOpen) setConfirmedRumors(loadConfirmed()); }, [isOpen]);
+  useEffect(() => { if (!rumorMsg) return; const t = setTimeout(() => setRumorMsg(null), 2600); return () => clearTimeout(t); }, [rumorMsg]);
   const toggleCalm = () => setCalmView(v => { const n = !v; try { localStorage.setItem('musaic.sim.calm', n ? '1' : '0'); } catch { /* */ } return n; });
   const handleRadarCreateManual = useCallback((art: Artist) => {
     setRadarAssignSignal({ seq: Date.now(), artistId: art.id, genre: art.genre || '' });
@@ -8983,6 +8990,38 @@ export const SimConsoleModal: React.FC<{
   if (!isOpen) return null;
 
   const selectedProposalsCount = proposals.filter(p => p.selected).length;
+  const openRumors = confirmedRumors.filter(r => !r.used);
+  const sendRumor = (rm: ConfirmedRumor, target: 'semi' | 'manual') => {
+    const art = simState.artists.find(a => a.id === rm.artistId) || simState.artists.find(a => a.name.toLowerCase() === rm.artistName.toLowerCase());
+    if (!art) { setRumorMsg(`${rm.artistName} нет в симуляции`); return; }
+    const m = metricsMap.get(art.id);
+    const existing = new Set<string>([...simState.tracks.map(t => t.title.toLowerCase()), ...simState.albums.map(a => a.title.toLowerCase()), ...proposals.map(p => p.title.toLowerCase())]);
+    const isBig = rm.kind === 'album' || rm.kind === 'ep';
+    const itemType: 'track' | 'album' | 'snippet' = isBig ? 'album' : rm.kind === 'snippet' ? 'snippet' : 'track';
+    const title = rm.title || generateModernTitle(existing, isBig, m?.namingProfile || false, autopilot.languageMix);
+    const hype = m?.hype ?? art.hype ?? 55;
+    const count = rm.kind === 'ep' ? randInt(4, 6) : randInt(10, 15);
+    const est = forecastReleasePlays({ artist: art, itemType, qualityScore: m?.avgQuality || 70, hype, hasWarmup: Boolean(m?.activeSnippet), hitsCount: m?.topHitsCount || 0, catalogAvgPlays: m?.catalogAvgPlays || 0, albumTracksCount: isBig ? count : undefined } as any);
+    let albumTracks: SimAlbumTrack[] | undefined;
+    if (isBig) { try { albumTracks = generateAlbumTracksWithFeats({ artist: art, allArtists: simState.artists, count, estimatedAlbumPlays: est, existingTitles: existing, namingProfile: m?.namingProfile || false }); } catch { albumTracks = undefined; } }
+    const reason = `Подтверждённый слух (${rm.source}) · ≈ ${formatSimDate(rm.date)}`;
+    if (target === 'semi') {
+      const prop: SimProposal = {
+        id: makeId('prop'), selected: true, itemType, releaseFormat: isBig ? (rm.kind as 'ep' | 'album') : itemType === 'snippet' ? 'snippet' : 'single',
+        artistId: art.id, artistName: art.name, featuredArtist: rm.feat, title, coverUrl: '', duration: itemType === 'snippet' ? `0:${randInt(24, 46)}` : getRandomDuration(), isExplicit: false,
+        genre: art.genre || 'Hip-Hop / Pop', estimatedPlays: est, qualityScore: m?.avgQuality || 70, artistHype: hype, daysSilent: m?.daysSilent ?? 30, hasWarmupBoost: Boolean(m?.activeSnippet), reason,
+        albumTracksCount: isBig ? albumTracks?.length || count : undefined, albumTracks, albumTrackTitles: albumTracks?.map(t => t.title)
+      };
+      setProposals(prev => [prop, ...prev]);
+      if (!lightMode) setTab('semi');
+      setEditingProposal(prop);
+    } else {
+      setManualQueue(q => [...q, { id: makeId('manual'), itemType, artistId: art.id, artistName: art.name, featuredArtist: rm.feat, title, genre: art.genre, plays: est, albumTracksCount: isBig ? albumTracks?.length || count : undefined, albumTracks }]);
+      setLightMode(false); setTab('manual');
+    }
+    saveConfirmed(confirmedRumors.map(x => (x.id === rm.id ? { ...x, used: target } : x)));
+    setRumorMsg(target === 'semi' ? `«${title}» в полуавтомате — открыт редактор` : `«${title}» в ручном батче`);
+  };
 
   const updateAutopilot = <K extends keyof SimAutopilotConfig>(key: K, val: SimAutopilotConfig[K]) => {
     const next = { ...autopilot, [key]: val };
@@ -9044,6 +9083,14 @@ export const SimConsoleModal: React.FC<{
             )}
             <button
               type="button"
+              onClick={() => setRumorsOpen(v => !v)}
+              title="Подтверждённые слухи из ленты"
+              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors cursor-pointer shrink-0 inline-flex items-center gap-1.5 ${rumorsOpen ? 'bg-white text-black border-transparent' : 'border-white/10 text-zinc-300 hover:text-white'}`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />Слухи{openRumors.length > 0 && <span className="tabular-nums">· {openRumors.length}</span>}
+            </button>
+            <button
+              type="button"
               onClick={toggleLight}
               title={lightMode ? 'Вернуть полный пульт со всеми вкладками' : 'Лёгкий режим: один экран, только главное'}
               className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors cursor-pointer shrink-0 ${lightMode ? 'theme-bg-accent text-black border-transparent' : 'border-white/10 text-zinc-300 hover:text-white'}`}
@@ -9071,6 +9118,36 @@ export const SimConsoleModal: React.FC<{
         {/* Body (instant tab switching, zero AnimatePresence lag) */}
         <div className="relative flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar min-w-0">
           {/* TAB 1: SEMI-AUTO PRODUCER PICKER */}
+          {rumorMsg && <div className="mb-3 px-3 py-2 rounded-xl bg-white/[0.06] text-[12px] text-white">{rumorMsg}</div>}
+          {rumorsOpen && (
+            <div className="mb-5 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div><div className="text-[13px] font-bold text-white">Подтверждённые слухи</div><div className="text-[11px] text-zinc-500">Подтверждай посты с датами в «Ленте» — они появляются здесь и в календаре</div></div>
+                <button type="button" onClick={() => setRumorsOpen(false)} className="p-1.5 rounded-lg text-zinc-500 hover:text-white"><X className="w-4 h-4" /></button>
+              </div>
+              {confirmedRumors.length === 0 && <div className="text-[12px] text-zinc-500 py-3">Пока пусто. Открой «Ленту» и нажми «Подтвердить» под анонсом или инсайдом.</div>}
+              <div className="space-y-1.5">
+                {[...confirmedRumors].sort((a, b) => Number(Boolean(a.used)) - Number(Boolean(b.used)) || a.date.localeCompare(b.date)).map(rm => {
+                  const soon = rm.date >= simState.currentDate && rm.date <= addDaysISO(simState.currentDate, advanceDays);
+                  return (
+                    <div key={rm.id} className={`flex flex-wrap items-center gap-3 p-2.5 rounded-xl ${rm.used ? 'opacity-50' : 'bg-white/[0.03]'}`}>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-semibold text-white truncate">{rm.artistName}{rm.feat ? ` feat. ${rm.feat}` : ''} · {rm.kind === 'album' ? 'Альбом' : rm.kind === 'ep' ? 'EP' : rm.kind === 'snippet' ? 'Сниппет' : 'Сингл'}{rm.title ? ` «${rm.title}»` : ''}</div>
+                        <div className="text-[11px] text-zinc-500 truncate">≈ {formatSimDate(rm.date)}{soon ? ' · на этой неделе' : rm.date < simState.currentDate ? ' · дата уже прошла' : ''} · {rm.source}: {rm.text}</div>
+                      </div>
+                      {rm.used ? <span className="text-[11px] text-zinc-500">{rm.used === 'semi' ? 'в полуавтомате' : 'в батче'}</span> : (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button type="button" onClick={() => sendRumor(rm, 'semi')} className="px-2.5 py-1.5 rounded-lg theme-bg-accent text-black text-[11px] font-bold cursor-pointer">В полуавтомат</button>
+                          <button type="button" onClick={() => sendRumor(rm, 'manual')} className="px-2.5 py-1.5 rounded-lg bg-white/[0.07] hover:bg-white/[0.12] text-white text-[11px] font-semibold cursor-pointer">В ручной батч</button>
+                        </div>
+                      )}
+                      <button type="button" title="Убрать" onClick={() => saveConfirmed(confirmedRumors.filter(x => x.id !== rm.id))} className="p-1 rounded-lg text-zinc-600 hover:text-rose-400 cursor-pointer"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {lightMode && (
             <SimLightPanel proposals={proposals} setProposals={setProposals} regenerate={regenerateProposals} autopilot={autopilot} setAuto={updateAutopilot} simState={simState} advanceDays={advanceDays} setAdvanceDays={setAdvanceDays} />
           )}
