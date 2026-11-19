@@ -115,7 +115,7 @@ import './fontsExtra';
 // --- Musaic v2.4: charts, release stage, calendar, awards, eras, cover viewer, batch generators ---
 import { SocialFeed, SocialIcon } from './SocialFeed';
 // --- Musaic v2.5: listen engine, stats, release header, auto-save, export ---
-import { smartDuration, engineManualPlays, engineSetCatalog, estimateMonthlyListeners, requestPersistentStorage, maybeAutoBackup, useFlushOnHide, AutoBackupPanel, exportCatalogFile, exportSimSnapshot, importMediaFromFile, setLabAwards, ReleaseHeroHeader, PlaysStatButton, FeatPicker, ListenEngineButton, AUTO_COVER, offloadDataUrls, displayPeak } from './MusaicLab';
+import { smartDuration, engineManualPlays, engineSetCatalog, estimateMonthlyListeners, requestPersistentStorage, maybeAutoBackup, useFlushOnHide, AutoBackupPanel, exportCatalogFile, exportSimSnapshot, importMediaFromFile, setLabAwards, ReleaseHeroHeader, PlaysStatButton, FeatPicker, ListenEngineButton, AUTO_COVER, offloadDataUrls, displayPeak, InterfaceSettingsPanel } from './MusaicLab';
 import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource, ScoreRing, AlbumReviewsButton, TrackReviewsButton, WeeklyNewsFeed, ArtistPortfolioButton } from './MusaicPlus';
 
 // --- Types & Constants ---
@@ -4660,6 +4660,9 @@ const SettingsModal: React.FC<{
             </div>
           </section>
 
+          {/* v2.5.4: new interface settings (real scaling of everything) */}
+          <InterfaceSettingsPanel />
+
           {/* Typography: Font Family, Font Size & Font Weight */}
           <section className="space-y-5">
             <div className="flex items-center gap-2 text-zinc-300 font-bold text-xs uppercase tracking-wider">
@@ -4685,43 +4688,6 @@ const SettingsModal: React.FC<{
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* Dedicated Text Font Scale */}
-            <div className="space-y-2.5 p-4 rounded-2xl bg-black/30 border border-white/5">
-              <div className="flex justify-between items-center">
-                <label className="text-xs font-bold text-zinc-300">Размер шрифта текста ({Math.round(theme.textScale * 100)}%)</label>
-                <span className="text-[11px] text-zinc-500">Меняет величину букв по сайту</span>
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { label: '90% Мелкий', val: 0.9 },
-                  { label: '100% Стандарт', val: 1.0 },
-                  { label: '115% Крупный', val: 1.15 },
-                  { label: '130% Большой', val: 1.3 },
-                ].map(item => (
-                  <button
-                    key={item.val}
-                    onClick={() => update('textScale', item.val)}
-                    className={`py-2 px-1 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
-                      Math.abs(theme.textScale - item.val) < 0.04
-                        ? 'border-white bg-white text-black'
-                        : 'border-white/5 bg-black/40 text-zinc-300 hover:bg-white/10'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="range"
-                min="0.80"
-                max="1.40"
-                step="0.01"
-                value={theme.textScale}
-                onChange={(e) => update('textScale', parseFloat(e.target.value))}
-                className="w-full accent-[var(--accent-color)] cursor-pointer mt-1"
-              />
             </div>
 
             {/* Dedicated Font Weight Setting */}
@@ -4758,48 +4724,6 @@ const SettingsModal: React.FC<{
                 step="50"
                 value={theme.fontWeight}
                 onChange={(e) => update('fontWeight', parseInt(e.target.value))}
-                className="w-full accent-[var(--accent-color)] cursor-pointer mt-1"
-              />
-            </div>
-          </section>
-
-          {/* Interface Scale (UI and Spacing) */}
-          <section className="space-y-3">
-            <div className="flex items-center gap-2 text-zinc-300 font-bold text-xs uppercase tracking-wider">
-              <Maximize className="w-4 h-4 text-emerald-400" /> Масштаб интерфейса (UI и элементы)
-            </div>
-            <div className="p-4 rounded-2xl bg-black/30 border border-white/5 space-y-2.5">
-              <div className="flex justify-between items-center text-xs font-bold">
-                <span className="text-zinc-300">Плотность сетки и отступы ({Math.round(theme.uiScale * 100)}%)</span>
-                <span className="text-zinc-500 font-normal">Увеличивает или сжимает карточки и блоки</span>
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { label: '85% Компакт', val: 0.85 },
-                  { label: '100% Стандарт', val: 1.0 },
-                  { label: '115% Просторный', val: 1.15 },
-                  { label: '130% Крупный', val: 1.3 },
-                ].map(item => (
-                  <button
-                    key={item.val}
-                    onClick={() => update('uiScale', item.val)}
-                    className={`py-2 px-1 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
-                      Math.abs(theme.uiScale - item.val) < 0.04
-                        ? 'border-white bg-white text-black'
-                        : 'border-white/5 bg-black/40 text-zinc-300 hover:bg-white/10'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="range"
-                min="0.8"
-                max="1.35"
-                step="0.05"
-                value={theme.uiScale}
-                onChange={(e) => update('uiScale', parseFloat(e.target.value))}
                 className="w-full accent-[var(--accent-color)] cursor-pointer mt-1"
               />
             </div>
@@ -6079,7 +6003,7 @@ export default function App() {
   // Apply Theme CSS Variables to DOM only when theme changes (prevents compositor flashes during playback)
   useEffect(() => {
     const root = document.documentElement;
-    root.style.fontSize = `${16 * theme.textScale}px`;
+    root.style.fontSize = '16px'; // v2.5.4: text size lives in «Интерфейс» (scales every size, not only rem)
     root.style.setProperty('--bg-color', theme.bgColor);
     root.style.setProperty('--accent-color', theme.accentColor);
     root.style.setProperty('--accent-glow', `${theme.accentColor}${theme.glowEnabled ? '73' : '00'}`);

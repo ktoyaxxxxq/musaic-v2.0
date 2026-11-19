@@ -1875,3 +1875,142 @@ export function displayPeak(it: any, kind: 'track' | 'album', tracks: Track[], a
   m.set(key, res);
   return res;
 }
+
+// ============================================================================
+// 10. INTERFACE SETTINGS — real scaling of text, spacing, corners, grids, windows
+//     (works with every Tailwind size, including text-[12px]-style classes)
+// ============================================================================
+export interface UiSettings {
+  zoom: number; font: number; density: number; radius: number; grid: number; windows: number;
+  content: 'narrow' | 'normal' | 'wide' | 'full'; dimText: 'normal' | 'bright' | 'max';
+  motion: 'normal' | 'fast' | 'off'; glass: 'full' | 'light'; scrollbar: 'thin' | 'normal' | 'wide';
+}
+export const DEFAULT_UI: UiSettings = { zoom: 1, font: 1, density: 1, radius: 1, grid: 1, windows: 1, content: 'normal', dimText: 'normal', motion: 'normal', glass: 'full', scrollbar: 'normal' };
+const UI_LS = 'musaic.ui.v1';
+const uiStore = createStore<UiSettings>(typeof localStorage !== 'undefined' ? { ...DEFAULT_UI, ...lsGet<Partial<UiSettings>>(UI_LS, {}) } : DEFAULT_UI);
+export const setUi = (n: UiSettings) => { lsSet(UI_LS, n); uiStore.set(n); applyUi(); };
+export const useUi = () => useStore(uiStore);
+export const UI_PRESETS: Array<{ name: string; emoji: string; text: string; s: Partial<UiSettings> }> = [
+  { name: 'Как было', emoji: '↺', text: 'Исходный вид', s: {} },
+  { name: 'Компактно', emoji: '🗜', text: 'Больше помещается на экран', s: { font: 0.94, density: 0.8, grid: 1.2, radius: 0.85 } },
+  { name: 'Крупно', emoji: '🔎', text: 'Крупный текст и отступы', s: { font: 1.15, density: 1.08, dimText: 'bright' } },
+  { name: 'Ноутбук', emoji: '💻', text: 'Чуть мельче для маленького экрана', s: { zoom: 0.9, density: 0.9 } },
+  { name: 'Большой экран', emoji: '🖥', text: 'Шире контент, больше карточек', s: { zoom: 1.1, content: 'wide', grid: 1.15, windows: 1.15 } },
+  { name: 'Максимум места', emoji: '📐', text: 'Во всю ширину, плотная сетка', s: { content: 'full', density: 0.85, grid: 1.35, font: 0.95 } },
+  { name: 'Быстро', emoji: '⚡️', text: 'Без тяжёлого стекла, быстрые анимации', s: { glass: 'light', motion: 'fast' } }
+];
+
+const LEN = /(-?\d*\.?\d+)(px|rem)\b/g;
+const scaleLens = (v: string, k: number, cap = Infinity) => (k === 1 ? v : v.replace(LEN, (m, n, u) => { const x = parseFloat(n); if (Math.abs(x) >= cap) return m; return `${+(x * k).toFixed(3)}${u}`; }));
+const DECL = /([;{\s])(font-size|line-height|padding(?:-top|-right|-bottom|-left|-inline|-block|-inline-start|-inline-end)?|gap|row-gap|column-gap|margin(?:-top|-right|-bottom|-left|-inline|-block)?|border(?:-top-left|-top-right|-bottom-left|-bottom-right|-start-start|-start-end|-end-start|-end-end)?-radius|grid-template-columns)\s*:\s*([^;}]+)/g;
+function transformCss(css: string, u: UiSettings): string {
+  let out = css.replace(DECL, (m, pre, prop, val) => {
+    let v = val;
+    if (prop === 'font-size' || prop === 'line-height') v = scaleLens(v, u.font);
+    else if (prop.startsWith('padding') || prop.startsWith('margin') || prop.endsWith('gap')) v = scaleLens(v, u.density);
+    else if (prop.endsWith('radius')) v = scaleLens(v, u.radius, 999);
+    else if (prop === 'grid-template-columns' && u.grid !== 1) v = v.replace(/repeat\((\d+),/g, (mm, n) => { const c = +n; return c >= 2 ? `repeat(${clamp(Math.round(c * u.grid), 1, 14)},` : mm; });
+    return `${pre}${prop}:${v}`;
+  });
+  if (u.zoom !== 1) out = out.replace(/(-?\d*\.?\d+)(dvh|svh|lvh|vh|vw)\b/g, (m, n, unit) => `${+(parseFloat(n) / u.zoom).toFixed(3)}${unit}`);
+  return out;
+}
+const origCss = new WeakMap<HTMLStyleElement, string>();
+const wroteCss = new WeakMap<HTMLStyleElement, string>();
+let uiObserver: MutationObserver | null = null;
+let uiRaf = 0;
+const isIdentity = (u: UiSettings) => u.font === 1 && u.density === 1 && u.radius === 1 && u.grid === 1 && u.zoom === 1;
+function processStyles() {
+  uiRaf = 0;
+  const u = uiStore.get();
+  document.querySelectorAll('style').forEach(node => {
+    const el = node as HTMLStyleElement;
+    if (el.dataset.musaicUi) return;
+    const cur = el.textContent || '';
+    if (wroteCss.get(el) !== cur) origCss.set(el, cur); // the page (Tailwind) wrote new css
+    const orig = origCss.get(el) ?? cur;
+    const next = isIdentity(u) ? orig : transformCss(orig, u);
+    if (next !== cur) { wroteCss.set(el, next); el.textContent = next; } else wroteCss.set(el, cur);
+  });
+}
+const schedule = () => { if (!uiRaf) uiRaf = requestAnimationFrame(processStyles); };
+export function applyUi() {
+  if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return;
+  const u = uiStore.get();
+  const root = document.documentElement as HTMLElement;
+  (root.style as any).zoom = u.zoom === 1 ? '' : String(u.zoom);
+  let tag = document.getElementById('musaic-ui-overrides') as HTMLStyleElement | null;
+  if (!tag) { tag = document.createElement('style'); tag.id = 'musaic-ui-overrides'; tag.dataset.musaicUi = '1'; document.head.appendChild(tag); }
+  const cw = { narrow: '64rem', normal: '80rem', wide: '96rem', full: 'none' }[u.content];
+  const win = (rem: number) => `${+(rem * u.windows).toFixed(2)}rem`;
+  const dim = u.dimText === 'bright' ? '.text-zinc-600{color:#71717a!important}.text-zinc-500{color:#a1a1aa!important}.text-zinc-400{color:#c4c4cc!important}' : u.dimText === 'max' ? '.text-zinc-600{color:#a1a1aa!important}.text-zinc-500{color:#c4c4cc!important}.text-zinc-400{color:#e4e4e7!important}' : '';
+  const motion = u.motion === 'off' ? '*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}'
+    : u.motion === 'fast' ? '*,*::before,*::after{transition-duration:.12s!important}' : '';
+  const glass = u.glass === 'light' ? '[class*="backdrop-blur"],.glass,.glass-strong,.glass-card,.theme-card,.surface-1,.surface-2,.surface-3{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}' : '';
+  const sb = u.scrollbar === 'thin' ? '*::-webkit-scrollbar{width:4px;height:4px}' : u.scrollbar === 'wide' ? '*::-webkit-scrollbar{width:11px;height:11px}' : '';
+  tag.textContent = [
+    cw !== '80rem' ? `.max-w-7xl{max-width:${cw}!important}` : '',
+    u.windows !== 1 ? `.max-w-lg{max-width:${win(32)}}.max-w-xl{max-width:${win(36)}}.max-w-2xl{max-width:${win(42)}}.max-w-3xl{max-width:${win(48)}}.max-w-4xl{max-width:${win(56)}}.max-w-5xl{max-width:${win(64)}}.max-w-6xl{max-width:${win(72)}}` : '',
+    dim, motion, glass, sb
+  ].join('');
+  if (!uiObserver) {
+    uiObserver = new MutationObserver(muts => { for (const m of muts) { const t = (m.target as any); const el = t.nodeType === 3 ? t.parentElement : t; if (el && (el.tagName === 'STYLE' || el.tagName === 'HEAD')) { schedule(); return; } } });
+    uiObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
+  }
+  schedule();
+}
+if (typeof window !== 'undefined' && typeof MutationObserver !== 'undefined' && typeof document !== 'undefined' && document.head) {
+  // start right away so the first paint already uses the saved interface
+  try { applyUi(); } catch { /* */ }
+}
+
+const UI_SLIDERS: Array<{ k: 'zoom' | 'font' | 'density' | 'radius' | 'grid' | 'windows'; label: string; hint: string; min: number; max: number; ex: (v: number) => string }> = [
+  { k: 'zoom', label: 'Масштаб всего интерфейса', hint: 'Как приближение в браузере: всё сразу больше или меньше', min: 0.7, max: 1.4, ex: v => `окно 1920 px показывает как ${Math.round(1920 / v)} px` },
+  { k: 'font', label: 'Размер текста', hint: 'Только шрифт, отступы остаются', min: 0.8, max: 1.4, ex: v => `текст 13 px → ${(13 * v).toFixed(1).replace('.0', '')} px, заголовки 32 px → ${Math.round(32 * v)} px` },
+  { k: 'density', label: 'Плотность и отступы', hint: 'Меньше — компактнее, больше — просторнее', min: 0.6, max: 1.4, ex: v => `отступ карточки 16 px → ${Math.round(16 * v)} px` },
+  { k: 'grid', label: 'Плотность сетки карточек', hint: 'Сколько альбомов и артистов в ряду', min: 0.6, max: 1.6, ex: v => `ряд из 5 карточек → ${clamp(Math.round(5 * v), 1, 14)}, из 4 → ${clamp(Math.round(4 * v), 1, 14)}` },
+  { k: 'windows', label: 'Размер окон', hint: 'Ширина модальных окон: пульт, настройки, редакторы', min: 0.8, max: 1.5, ex: v => `окно 1152 px → ${Math.round(1152 * v)} px` },
+  { k: 'radius', label: 'Скругление углов', hint: '0 — острые углы, больше — мягче', min: 0, max: 2, ex: v => `углы карточки 16 px → ${Math.round(16 * v)} px` }
+];
+export const InterfaceSettingsPanel: React.FC = () => {
+  const u = useUi();
+  const set = (p: Partial<UiSettings>) => setUi({ ...u, ...p });
+  const changed = (Object.keys(DEFAULT_UI) as Array<keyof UiSettings>).filter(k => u[k] !== DEFAULT_UI[k]).length;
+  return (
+    <section className="space-y-4">
+      <LeCss />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-zinc-300 font-bold text-xs uppercase tracking-wider">Интерфейс: размер, плотность, окна</div>
+          <div className="text-[12px] text-zinc-500 mt-0.5">Меняется сразу и сохраняется. Двойной клик по карточке — вернуть значение.</div>
+        </div>
+        <button type="button" onClick={() => setUi({ ...DEFAULT_UI })} disabled={!changed} className="px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-[12px] font-bold text-zinc-200 disabled:opacity-30">↺ Как было{changed ? ` · ${changed}` : ''}</button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        {UI_PRESETS.map(p => { const on = (Object.keys(DEFAULT_UI) as Array<keyof UiSettings>).every(k => u[k] === ({ ...DEFAULT_UI, ...p.s } as any)[k]); return (
+          <button key={p.name} type="button" onClick={() => setUi({ ...DEFAULT_UI, ...p.s })} className={`text-left rounded-xl p-2.5 border transition-colors ${on ? 'bg-white/[0.1] border-white/30' : 'bg-black/30 border-white/[0.06] hover:bg-white/[0.06]'}`}>
+            <div className="text-[13px] font-bold text-white">{p.emoji} {p.name}</div>
+            <div className="text-[11px] text-zinc-500 leading-snug mt-0.5">{p.text}</div>
+          </button>); })}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {UI_SLIDERS.map(it => <PSlider key={it.k} label={it.label} hint={it.hint} example={it.ex(u[it.k])} value={u[it.k]} def={1} min={it.min} max={it.max} unit="raw" onChange={v => set({ [it.k]: Math.round(v * 100) / 100 } as any)} />)}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {([
+          ['Ширина контента', 'content', [['narrow', 'Узко'], ['normal', 'Обычно'], ['wide', 'Широко'], ['full', 'Во весь экран']], 'Сколько места по бокам на страницах'],
+          ['Второстепенный текст', 'dimText', [['normal', 'Как есть'], ['bright', 'Ярче'], ['max', 'Максимально']], 'Серые подписи читаются лучше'],
+          ['Анимации', 'motion', [['normal', 'Обычные'], ['fast', 'Быстрые'], ['off', 'Выключить']], 'Быстрые или без анимаций — интерфейс отзывчивее'],
+          ['Эффект стекла (размытие)', 'glass', [['full', 'Полный'], ['light', 'Облегчённый']], 'Облегчённый заметно ускоряет слабые компьютеры'],
+          ['Полосы прокрутки', 'scrollbar', [['thin', 'Тонкие'], ['normal', 'Обычные'], ['wide', 'Широкие']], '']
+        ] as Array<[string, keyof UiSettings, Array<[string, string]>, string]>).map(([l, k, opts, hint]) => (
+          <div key={k} className={`rounded-2xl px-3.5 py-3 border ${u[k] !== DEFAULT_UI[k] ? 'bg-white/[0.045] border-white/[0.12]' : 'bg-white/[0.02] border-white/[0.06]'}`}>
+            <div className="text-[14px] font-bold text-white">{l}</div>
+            {hint && <div className="text-[12px] text-zinc-400 mt-0.5 mb-2">{hint}</div>}
+            <Seg value={String(u[k])} onChange={v => set({ [k]: v } as any)} options={opts as any} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+};
