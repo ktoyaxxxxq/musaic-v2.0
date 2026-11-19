@@ -387,7 +387,7 @@ function trackTau(t: any) {
   return tau;
 }
 
-interface ChartRow { e: ChartEnt; v: number }
+interface ChartRow { e: ChartEnt; v: number; score?: number; note?: string }
 interface ChartInfo { rank?: number; last?: number; peak?: number; weeksOn: number; weeksAtOne: number; status: 'new' | 're' | 'up' | 'down' | 'same' | 'none'; delta: number; debutWeek?: number; debutRank?: number }
 
 function buildEntities(artists: Artist[], albums: Album[], tracks: Track[], nowRef: number) {
@@ -432,18 +432,49 @@ function rankChart(ents: Ents, kind: ChartKind, mode: ChartMode, T: number, A = 
   let rows: ChartRow[] = [];
   if (kind === 'artists') {
     const sum = new Map<string, number>();
+    const lead = new Map<string, { tot: number; n: number; top: number[] }>();
+    const feat = new Map<string, { tot: number; n: number }>();
     for (const e of ents.trackEnts) {
       if (e.releaseMs > T) continue;
       const v = val(e);
       if (v <= 0) continue;
-      e.credits!.forEach(([id, w]) => sum.set(id, (sum.get(id) || 0) + v * w));
+      e.credits!.forEach(([id, w]) => {
+        sum.set(id, (sum.get(id) || 0) + v * w);
+        if (mode !== 'all') return;
+        if (w === 1) { const x = lead.get(id) || { tot: 0, n: 0, top: [] }; x.tot += v; x.n++; x.top.push(v); lead.set(id, x); }
+        else { const x = feat.get(id) || { tot: 0, n: 0 }; x.tot += v; x.n++; feat.set(id, x); }
+      });
     }
-    for (const e of ents.artistEnts) {
-      const base = sum.get(e.id) || 0;
-      if (base <= 0) continue;
-      const fol = e.ref.followers || 0;
-      const v = base + fol * (mode === 'now' ? 0.004 : mode === 'all' ? 1.5 : 0.05);
-      rows.push({ e, v });
+    if (mode === 'all') {
+      // v2.5.6: all-time = mostly total plays, plus average per track, the biggest hits,
+      // how successful the feats are and a little of monthly listeners
+      const raw: Array<{ e: ChartEnt; base: number; c: number[]; note: string }> = [];
+      for (const e of ents.artistEnts) {
+        const base = sum.get(e.id) || 0;
+        if (base <= 0) continue;
+        const L = lead.get(e.id) || { tot: 0, n: 0, top: [] };
+        const F = feat.get(e.id) || { tot: 0, n: 0 };
+        const avg = L.tot / (L.n + 2);                    // smoothed: one lucky track does not make a legend
+        const top5 = [...L.top].sort((a, b) => b - a).slice(0, 5).reduce((x, y) => x + y, 0);
+        const featAvg = F.n ? F.tot / (F.n + 1) : 0;
+        const fol = e.ref.followers || 0;
+        const cmp = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} млрд` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} млн` : n >= 1e3 ? `${Math.round(n / 1e3)} тыс.` : `${Math.round(n)}`).replace('.', ',');
+        raw.push({ e, base, c: [base, avg, top5, F.tot, featAvg, fol], note: `ср. ${cmp(L.tot / Math.max(1, L.n))} на трек${F.n ? ` · фиты ${cmp(F.tot)}` : ''}` });
+      }
+      const W = [0.46, 0.15, 0.12, 0.09, 0.06, 0.12];
+      const mx = W.map((_, i) => Math.max(1, ...raw.map(r => r.c[i])));
+      for (const r of raw) {
+        const score = r.c.reduce((acc, x, i) => acc + W[i] * Math.sqrt(x / mx[i]), 0);
+        rows.push({ e: r.e, v: r.base, score, note: r.note });
+      }
+    } else {
+      for (const e of ents.artistEnts) {
+        const base = sum.get(e.id) || 0;
+        if (base <= 0) continue;
+        const fol = e.ref.followers || 0;
+        const v = base + fol * (mode === 'now' ? 0.004 : 0.05);
+        rows.push({ e, v });
+      }
     }
   } else {
     const list = kind === 'tracks' ? ents.trackEnts : ents.albumEnts;
@@ -453,7 +484,7 @@ function rankChart(ents: Ents, kind: ChartKind, mode: ChartMode, T: number, A = 
       if (v > 0.5) rows.push({ e, v });
     }
   }
-  rows.sort((a, b) => b.v - a.v || b.e.total - a.e.total);
+  rows.sort((a, b) => (b.score ?? b.v) - (a.score ?? a.v) || b.v - a.v || b.e.total - a.e.total);
   if (rows.length > limit) rows = rows.slice(0, limit);
   return rows;
 }
@@ -810,7 +841,7 @@ const ChartRowView: React.FC<{
           </div>
           <div className="text-[12px] text-zinc-500 truncate">
             {kind === 'artists' ? (
-              <>{fmtN(e.ref.followers || 0)} слушателей{extra ? ` · ${extra.entries} в топ-100` : ''}{extra?.hit ? ` · хит: ${extra.hit.e.title}` : ''}</>
+              <>{fmtN(e.ref.followers || 0)} слушателей{row.note ? ` · ${row.note}` : ''}{extra ? ` · ${extra.entries} в топ-100` : ''}{extra?.hit ? ` · хит: ${extra.hit.e.title}` : ''}</>
             ) : (
               <ArtistLinks lead={e.ref.artistName} extra={kind === 'tracks' ? e.ref.featuredArtist : e.ref.coArtist} sep={kind === 'tracks' ? ' feat. ' : ' & '} onArtist={onArtist} />
             )}

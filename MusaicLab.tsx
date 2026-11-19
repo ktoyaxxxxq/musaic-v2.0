@@ -2290,7 +2290,9 @@ export const ArtistProfileLayout: React.FC<{ blocks: Record<string, React.ReactN
   return <>{out}</>;
 };
 
-export const ListenersTopModal: React.FC<{ artists: Artist[]; albums: Album[]; tracks: Track[]; highlightId?: string; navigateTo?: (v: string, p?: any) => void; onClose: () => void }> = ({ artists, albums, tracks, highlightId, navigateTo, onClose }) => {
+export const ListenersTopModal: React.FC<{ artists: Artist[]; albums: Album[]; tracks: Track[]; highlightId?: string; navigateTo?: (v: string, p?: any) => void; onClose: () => void; big?: boolean }> = ({ artists, albums, tracks, highlightId, navigateTo, onClose, big = false }) => {
+  const [view, setView] = useState<'list' | 'tiles'>(() => lsGet<'list' | 'tiles'>('musaic.lisTop.view', 'list'));
+  useEffect(() => { lsSet('musaic.lisTop.view', view); }, [view]);
   useEsc(true, onClose);
   const [q, setQ] = useState('');
   const [genre, setGenre] = useState('');
@@ -2308,7 +2310,7 @@ export const ListenersTopModal: React.FC<{ artists: Artist[]; albums: Album[]; t
       <div className="fixed inset-0 z-[620] flex items-center justify-center p-3 md:p-6">
         <motion.div className="absolute inset-0 bg-black/75 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
         <motion.div initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.98 }} transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-          className="relative w-full max-w-4xl h-[90vh] rounded-[30px] bg-[#0e0f13] border border-white/10 shadow-2xl overflow-hidden flex flex-col">
+          className={`relative w-full ${big ? 'max-w-7xl h-[94vh]' : 'max-w-4xl h-[90vh]'} rounded-[30px] bg-[#0e0f13] border border-white/10 shadow-2xl overflow-hidden flex flex-col`}>
           <div className="absolute inset-x-0 top-0 h-48 pointer-events-none opacity-25" style={{ background: 'radial-gradient(70% 100% at 30% 0%, var(--accent-color), transparent 70%)' }} />
           <div className="relative px-6 pt-6 pb-4 border-b border-white/[0.07]">
             <div className="flex items-start justify-between gap-3">
@@ -2322,10 +2324,34 @@ export const ListenersTopModal: React.FC<{ artists: Artist[]; albums: Album[]; t
             <div className="flex flex-wrap items-center gap-2 mt-4">
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Найти артиста…" className="flex-1 min-w-[180px] h-10 px-3.5 rounded-xl bg-black/40 border border-white/10 text-[13px] text-white outline-none" />
               <Seg value={String(limit)} onChange={v => setLimit(+v)} options={[['50', 'Топ-50'], ['100', 'Топ-100'], ['100000', 'Все']]} />
+              <Seg value={view} onChange={setView} options={[['list', '☰ Список'], ['tiles', '▦ Плитки']]} />
             </div>
             {genres.length > 1 && <div className="flex flex-wrap gap-1.5 mt-2">{['', ...genres].map(g => <button key={g || 'all'} type="button" onClick={() => setGenre(g)} className={`px-2.5 py-1 rounded-lg text-[11.5px] font-bold ${genre === g ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-400 hover:text-white'}`}>{g || 'Все жанры'}</button>)}</div>}
           </div>
           <div className="relative flex-1 overflow-y-auto custom-scrollbar px-3 md:px-4 py-3">
+            {view === 'tiles' ? (
+              <div className={`grid grid-cols-2 sm:grid-cols-3 ${big ? 'md:grid-cols-4 xl:grid-cols-5' : 'md:grid-cols-4'} gap-3 p-1`}>
+                {shown.slice(0, limit).map(a => { const r = R.lis.get(a.id) || 0; const m = mv.get(a.id); const now = R.now.get(a.id); const hl = a.id === highlightId;
+                  const medal = r === 1 ? '#fbbf24' : r === 2 ? '#d4d4d8' : r === 3 ? '#d97706' : null; return (
+                  <motion.button key={a.id} type="button" layout="position" whileHover={{ y: -4 }} transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+                    onClick={() => { navigateTo && navigateTo('artist', { id: a.id, artistName: a.name }); onClose(); }}
+                    className={`group relative text-left rounded-[22px] overflow-hidden bg-zinc-900 border ${hl ? 'border-white/50' : 'border-white/[0.07] hover:border-white/20'}`}
+                    style={medal ? { boxShadow: `0 0 0 1.5px ${medal}88, 0 18px 40px -18px ${medal}66` } : undefined}>
+                    <div className="relative aspect-square">
+                      <CoverArt url={a.imageUrl} title={a.name} isArtist className="absolute inset-0 w-full h-full" innerClassName="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.05]" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/25 to-transparent" />
+                      <span className="absolute top-2 left-3 font-black tabular-nums leading-none drop-shadow-[0_2px_10px_rgba(0,0,0,0.7)]"
+                        style={{ fontSize: r <= 3 ? 46 : r <= 10 ? 38 : 30, color: medal || 'rgba(255,255,255,0.92)', WebkitTextStroke: medal ? undefined : '0.5px rgba(0,0,0,0.25)' }}>{r}</span>
+                      {m ? <span className={`absolute top-3 right-3 px-2 py-0.5 rounded-full text-[11px] font-black backdrop-blur-md ${m > 0 ? 'bg-emerald-500/25 text-emerald-300' : 'bg-rose-500/25 text-rose-300'}`}>{m > 0 ? '▲' : '▼'}{Math.abs(m)}</span> : null}
+                      <div className="absolute inset-x-0 bottom-0 p-3">
+                        <div className="flex items-center gap-1.5 min-w-0"><span className="text-[15px] font-black text-white truncate">{a.name}</span>{a.verified && <span className="w-3.5 h-3.5 rounded-full bg-sky-500 text-[8px] text-black font-black flex items-center justify-center shrink-0">✓</span>}</div>
+                        <div className="flex items-baseline justify-between gap-2 mt-0.5"><span className="text-[13px] font-bold text-white/90 tabular-nums">{fmtC(a.followers || 0)}</span><span className="text-[10.5px] text-white/55 truncate">{now && now <= 100 ? `#${now} в чарте` : a.genre || ''}</span></div>
+                        <span className="block h-1 mt-2 rounded-full bg-white/15 overflow-hidden"><span className="block h-full rounded-full theme-bg-accent" style={{ width: `${Math.max(3, ((a.followers || 0) / max) * 100)}%` }} /></span>
+                      </div>
+                    </div>
+                  </motion.button>); })}
+              </div>
+            ) : (<>
             {shown.slice(0, limit).map(a => { const r = R.lis.get(a.id) || 0; const m = mv.get(a.id); const now = R.now.get(a.id); const hl = a.id === highlightId; return (
               <motion.button key={a.id} type="button" layout="position" onClick={() => { navigateTo && navigateTo('artist', { id: a.id, artistName: a.name }); onClose(); }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition-colors ${hl ? 'bg-white/[0.09] ring-1 ring-white/20' : 'hover:bg-white/[0.04]'}`}>
@@ -2341,6 +2367,7 @@ export const ListenersTopModal: React.FC<{ artists: Artist[]; albums: Album[]; t
                   <span className="block text-[11px] text-zinc-500">{now && now <= 100 ? `#${now} в актуальном` : a.genre || ''}</span>
                 </span>
               </motion.button>); })}
+            </>)}
             {!shown.length && <div className="p-10 text-center text-[13px] text-zinc-500">Никого не нашлось</div>}
           </div>
         </motion.div>
@@ -2372,7 +2399,7 @@ export const ListenersTopBanner: React.FC<{ artists: Artist[]; albums: Album[]; 
         </div>
         <span className="px-4 py-2 rounded-full bg-white text-black text-[12.5px] font-black shrink-0">Открыть весь топ · {artists.length}</span>
       </motion.button>
-      <AnimatePresence>{open && <ListenersTopModal key="ltb" artists={artists} albums={albums} tracks={tracks} navigateTo={navigateTo} onClose={() => setOpen(false)} />}</AnimatePresence>
+      <AnimatePresence>{open && <ListenersTopModal key="ltb" big artists={artists} albums={albums} tracks={tracks} navigateTo={navigateTo} onClose={() => setOpen(false)} />}</AnimatePresence>
     </>
   );
 };
