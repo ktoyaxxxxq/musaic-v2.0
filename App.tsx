@@ -16639,12 +16639,9 @@ function AlbumView({
         onArtist={() => navigateTo('artist', { id: album.artistId, artistName: album.artistName })}
         onZoom={() => openLightbox && openLightbox({ url: album.coverUrl, title: album.title, subtitle: album.artistName, type: 'Альбом' })}
         artistLine={album.coArtist ? <CoArtistLinks names={album.coArtist} exclude={album.artistName} artists={artists} navigateTo={navigateTo} className="font-bold text-white" /> : null}
-        badges={album.rating || album.albumValue ? (
-          <>
-            {album.rating && <RatingScoreBadge rating={album.rating} size="lg" />}
-            {album.albumValue && <AlbumValueBadge albumValue={album.albumValue} size="lg" onClick={() => setIsValueModalOpen(true)} />}
-          </>
-        ) : null}
+        rating={album.rating}
+        renderRating={size => (album.rating ? <RatingScoreBadge rating={album.rating} size={size} /> : null)}
+        extraBadges={album.albumValue ? <AlbumValueBadge albumValue={album.albumValue} size="lg" onClick={() => setIsValueModalOpen(true)} /> : null}
         meta={
           <>
             <span className="text-zinc-400">{album.releaseYear}</span>

@@ -1333,10 +1333,13 @@ export interface RelHero {
   bg: 'cover' | 'palette' | 'solid' | 'custom' | 'none'; c1: string; c2: string; bgBlur: number; bgDim: number;
   height: 's' | 'm' | 'l' | 'xl'; titleSize: number; titleCase: 'as' | 'upper' | 'lower'; titleFont: string; titleTracking: number;
   artist: 'link' | 'chip' | 'big' | 'hidden'; align: 'left' | 'center'; grain: boolean; tilt: boolean;
+  scorePos: 'below' | 'beside' | 'above' | 'artist' | 'meta' | 'cover' | 'right' | 'hidden';
+  scoreStyle: 'ring' | 'pill' | 'big' | 'minimal'; scoreSize: number; showValue: boolean;
 }
 export const DEFAULT_REL_HERO: RelHero = {
   layout: 'original', coverSize: 320, coverRadius: 18, coverShadow: 'deep', coverFrame: 'none', bg: 'cover', c1: '#1e1b4b', c2: '#0a0a0f', bgBlur: 80, bgDim: 0.35,
-  height: 'm', titleSize: 84, titleCase: 'as', titleFont: '', titleTracking: -0.035, artist: 'chip', align: 'left', grain: false, tilt: true
+  height: 'm', titleSize: 84, titleCase: 'as', titleFont: '', titleTracking: -0.035, artist: 'chip', align: 'left', grain: false, tilt: true,
+  scorePos: 'below', scoreStyle: 'ring', scoreSize: 1, showValue: true
 };
 const REL_PRESETS: Array<{ name: string; s: Partial<RelHero> }> = [
   { name: 'Как было', s: { layout: 'original' } },
@@ -1364,6 +1367,10 @@ export function useReleaseHero(id: string) {
   const reset = () => { try { localStorage.removeItem(scope === 'release' ? RH_KEY(id) : RH_ALL); } catch { /* */ } bumpRh(); };
   return { s, scope, update, setScope, reset };
 }
+const scoreTierLab = (sc: number) =>
+  sc >= 90 ? { c1: '#fde68a', c2: '#fbbf24', label: 'Шедевр' } : sc >= 80 ? { c1: '#e9d5ff', c2: '#c084fc', label: 'Выдающийся' }
+    : sc >= 70 ? { c1: '#bfdbfe', c2: '#60a5fa', label: 'Сильный' } : sc >= 60 ? { c1: '#a5f3fc', c2: '#22d3ee', label: 'Хороший' }
+      : sc >= 50 ? { c1: '#a7f3d0', c2: '#34d399', label: 'Средний' } : { c1: '#e4e4e7', c2: '#a1a1aa', label: 'Слабый' };
 export const openReleaseHeroSettings = (id: string) => window.dispatchEvent(new CustomEvent('musaic-relhero', { detail: id }));
 const HERO_H = { s: 300, m: 400, l: 500, xl: 620 };
 const TITLE_FONTS = ["'Unbounded', sans-serif", "'Dela Gothic One', sans-serif", "'Playfair Display', serif", "'Prata', serif", "'Oswald', sans-serif", "'Sofia Sans Extra Condensed', sans-serif", "'Russo One', sans-serif", "'Inter Tight', sans-serif", "'Tenor Sans', sans-serif", "'Montserrat Alternates', sans-serif"];
@@ -1371,8 +1378,9 @@ const TITLE_FONTS = ["'Unbounded', sans-serif", "'Dela Gothic One', sans-serif",
 export const ReleaseHeroHeader: React.FC<{
   id: string; cover?: string; title: string; kindLabel: string; artistName: string; artist?: Artist | null;
   palette?: string[]; artistLine?: React.ReactNode; meta?: React.ReactNode; badges?: React.ReactNode;
+  rating?: any; renderRating?: (size: 'sm' | 'md' | 'lg') => React.ReactNode; extraBadges?: React.ReactNode;
   onZoom?: () => void; onArtist?: () => void; legacy: React.ReactNode;
-}> = ({ id, cover, title, kindLabel, artistName, artist, palette, artistLine, meta, badges, onZoom, onArtist, legacy }) => {
+}> = ({ id, cover, title, kindLabel, artistName, artist, palette, artistLine, meta, badges, rating, renderRating, extraBadges, onZoom, onArtist, legacy }) => {
   const { s, scope, update, setScope, reset } = useReleaseHero(id);
   const [panel, setPanel] = useState(false);
   useEffect(() => { const f = (e: Event) => { const d = (e as CustomEvent).detail; if (!d || d === id) setPanel(true); }; window.addEventListener('musaic-relhero', f); return () => window.removeEventListener('musaic-relhero', f); }, [id]);
@@ -1384,12 +1392,36 @@ export const ReleaseHeroHeader: React.FC<{
   const shownTitle = s.titleCase === 'upper' ? title.toUpperCase() : s.titleCase === 'lower' ? title.toLowerCase() : title;
   const shadow = s.coverShadow === 'none' ? 'none' : s.coverShadow === 'soft' ? '0 18px 50px -12px rgba(0,0,0,0.6)' : s.coverShadow === 'glow' ? `0 30px 90px -10px ${c0}, 0 0 0 1px rgba(255,255,255,0.08)` : '0 30px 80px -18px rgba(0,0,0,0.9)';
   const size = s.layout === 'compact' ? Math.min(s.coverSize, 220) : s.coverSize;
+  const score = typeof rating?.totalScore === 'number' ? Math.round(rating.totalScore) : null;
+  const tier = score === null ? null : scoreTierLab(score);
+  const ring = renderRating ? renderRating(s.scoreSize >= 1.25 ? 'lg' : s.scoreSize <= 0.8 ? 'sm' : s.scoreSize < 1 ? 'md' : 'lg') : null;
+  const ringZoom = s.scoreSize >= 1.25 ? s.scoreSize / 1.25 : s.scoreSize <= 0.8 ? 1 : s.scoreSize < 1 ? 1 : s.scoreSize;
+  let scoreEl: React.ReactNode = null;
+  if (s.scorePos !== 'hidden' && (score !== null || badges)) {
+    const z = s.scoreSize;
+    const inner = score === null || !tier ? badges
+      : s.scoreStyle === 'ring' ? (ring ? <span style={{ zoom: ringZoom } as React.CSSProperties} className="inline-flex">{ring}</span> : badges)
+      : s.scoreStyle === 'pill' ? (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-black/35 border border-white/15 backdrop-blur-md font-black" style={{ padding: `${4 * z}px ${12 * z}px`, fontSize: 13 * z }}>
+          <span style={{ color: tier.c2 }}>★</span><span className="text-white tabular-nums">{score}</span><span className="text-white/60 font-bold" style={{ fontSize: 11 * z }}>{tier.label}</span>
+        </span>)
+      : s.scoreStyle === 'big' ? (
+        <span className="inline-flex items-end gap-2 leading-none">
+          <span className="font-black tabular-nums" style={{ fontSize: 40 * z, backgroundImage: `linear-gradient(135deg, ${tier.c1}, ${tier.c2})`, WebkitBackgroundClip: 'text', color: 'transparent' }}>{score}</span>
+          <span className="flex flex-col pb-1"><span className="text-white/50 font-bold" style={{ fontSize: 11 * z }}>/90</span><span className="text-white/80 font-black uppercase tracking-wider" style={{ fontSize: 10 * z }}>{tier.label}</span></span>
+        </span>)
+      : <span className="font-black tabular-nums" style={{ fontSize: 16 * z, color: tier.c2 }}>{score}<span className="text-white/40 font-bold" style={{ fontSize: 11 * z }}> /90</span></span>;
+    scoreEl = <span className="inline-flex items-center gap-3 shrink-0">{inner}{s.showValue && extraBadges}</span>;
+  } else if (s.scorePos !== 'hidden' && s.showValue && extraBadges) scoreEl = <span className="inline-flex items-center gap-3">{extraBadges}</span>;
+  const coverVisible = s.layout !== 'poster';
+  const pos = s.scorePos === 'cover' && !coverVisible ? 'below' : s.scorePos;
   const coverEl = (
     <motion.div layout whileHover={s.tilt ? { rotate: -1.2, scale: 1.015 } : undefined} transition={{ type: 'spring', stiffness: 260, damping: 22 }}
       className={`relative shrink-0 ${s.coverFrame === 'polaroid' ? 'p-3 pb-10 bg-[#f4f2ee]' : s.coverFrame === 'border' ? 'p-1.5 bg-white/10 border border-white/20 backdrop-blur-md' : ''}`}
       style={{ width: `min(${size}px, 72vw)`, borderRadius: s.coverFrame === 'polaroid' ? 6 : s.coverRadius + (s.coverFrame === 'border' ? 6 : 0), boxShadow: shadow }}>
       {s.coverFrame === 'vinyl' && <div aria-hidden className="absolute top-[4%] h-[92%] aspect-square rounded-full left-[34%] -z-0" style={{ background: `radial-gradient(circle, ${c0} 0 15%, #111 15.5% 17%, #0a0a0a 17.5% 100%)`, boxShadow: '0 20px 60px rgba(0,0,0,.6)' }} />}
       <CoverArt url={cover} title={title} onZoom={onZoom} className="relative w-full aspect-square overflow-hidden bg-zinc-800" innerClassName="w-full h-full object-cover" />
+      {pos === 'cover' && scoreEl && <div className="absolute bottom-3 right-3 z-10 drop-shadow-[0_4px_14px_rgba(0,0,0,0.6)]">{scoreEl}</div>}
     </motion.div>
   );
   const artistEl = s.artist === 'hidden' ? null : s.artist === 'link' ? (
@@ -1402,16 +1434,23 @@ export const ReleaseHeroHeader: React.FC<{
         {artist?.verified && <span className="w-3.5 h-3.5 rounded-full bg-sky-500 text-[8px] text-black font-black flex items-center justify-center">✓</span>}
       </span>
       {artistLine && <span className="text-[13px] text-zinc-300">{artistLine}</span>}
+      {pos === 'artist' && scoreEl}
     </div>
   );
   const info = (
     <div className={`relative z-10 min-w-0 flex-1 flex flex-col gap-3 ${center ? 'items-center text-center' : 'items-start text-left'}`}>
-      <span className="text-[11px] font-bold text-white/80 uppercase tracking-[0.2em]">{kindLabel}</span>
-      <h1 className="font-black text-white break-words drop-shadow-[0_4px_30px_rgba(0,0,0,0.45)]"
-        style={{ fontFamily: s.titleFont || undefined, fontSize: `clamp(30px, 6vw, ${s.layout === 'compact' ? Math.min(s.titleSize, 64) : s.titleSize}px)`, letterSpacing: `${s.titleTracking}em`, lineHeight: 1 }}>{shownTitle}</h1>
-      {badges && <div className="flex items-center gap-3">{badges}</div>}
+      <div className={`flex items-center gap-3 ${center ? 'justify-center' : ''}`}>
+        <span className="text-[11px] font-bold text-white/80 uppercase tracking-[0.2em]">{kindLabel}</span>
+        {pos === 'above' && scoreEl}
+      </div>
+      <div className={`flex items-center gap-5 max-w-full ${center ? 'justify-center' : ''}`}>
+        <h1 className="font-black text-white break-words drop-shadow-[0_4px_30px_rgba(0,0,0,0.45)] min-w-0"
+          style={{ fontFamily: s.titleFont || undefined, fontSize: `clamp(30px, 6vw, ${s.layout === 'compact' ? Math.min(s.titleSize, 64) : s.titleSize}px)`, letterSpacing: `${s.titleTracking}em`, lineHeight: 1 }}>{shownTitle}</h1>
+        {pos === 'beside' && scoreEl}
+      </div>
+      {pos === 'below' && scoreEl && <div className="flex items-center gap-3">{scoreEl}</div>}
       {artistEl}
-      {meta && <div className={`flex flex-wrap items-center gap-1.5 md:gap-2 text-xs md:text-sm text-zinc-300 ${center ? 'justify-center' : ''}`}>{meta}</div>}
+      {(meta || (pos === 'meta' && scoreEl)) && <div className={`flex flex-wrap items-center gap-1.5 md:gap-2 text-xs md:text-sm text-zinc-300 ${center ? 'justify-center' : ''}`}>{pos === 'meta' && scoreEl && <span className="mr-1">{scoreEl}</span>}{meta}</div>}
     </div>
   );
   let bg: React.ReactNode = null;
@@ -1433,7 +1472,10 @@ export const ReleaseHeroHeader: React.FC<{
         {s.grain && <div className="absolute inset-0 opacity-[0.12] mix-blend-overlay" style={{ backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")" }} />}
         <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-[var(--bg-color,#09090b)] via-[var(--bg-color,#09090b)]/40 to-transparent" />
       </div>
-      <motion.div layout className="relative w-full max-w-7xl mx-auto px-6 md:px-8 pt-16 pb-8 md:pb-10">{body}</motion.div>
+      <motion.div layout className="relative w-full max-w-7xl mx-auto px-6 md:px-8 pt-16 pb-8 md:pb-10">
+        {body}
+        {pos === 'right' && scoreEl && <div className="hidden md:flex absolute right-8 bottom-10 z-10">{scoreEl}</div>}
+      </motion.div>
       <Portal>{drawer}</Portal>
     </section>
   );
@@ -1442,7 +1484,7 @@ export const ReleaseHeroHeader: React.FC<{
 const RRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => <div className="space-y-1.5"><div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">{label}</div>{children}</div>;
 const RRange: React.FC<{ value: number; min: number; max: number; step?: number; onChange: (v: number) => void }> = ({ value, min, max, step = 1, onChange }) => <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} className="w-full accent-white" />;
 const RelHeroDrawer: React.FC<{ s: RelHero; scope: 'all' | 'release'; setScope: (v: 'all' | 'release') => void; update: (p: Partial<RelHero>) => void; reset: () => void; onClose: () => void }> = ({ s, scope, setScope, update, reset, onClose }) => {
-  const [tab, setTab] = useState<'look' | 'cover' | 'bg' | 'text'>('look');
+  const [tab, setTab] = useState<'look' | 'cover' | 'bg' | 'text' | 'score'>('look');
   useEsc(true, onClose);
   return (
     <div className="fixed inset-0 z-[560]">
@@ -1456,7 +1498,7 @@ const RelHeroDrawer: React.FC<{ s: RelHero; scope: 'all' | 'release'; setScope: 
         </div>
         <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 space-y-4">
           <div className="grid grid-cols-3 gap-1.5">{REL_PRESETS.map(p => <button key={p.name} type="button" onClick={() => update(p.name === 'Как было' ? { layout: 'original' } : { ...DEFAULT_REL_HERO, ...p.s })} className={`py-2 rounded-xl border text-[10.5px] font-bold ${(p.s.layout === s.layout && p.name === 'Как было') ? 'bg-white text-black border-white' : 'bg-white/[0.04] hover:bg-white/[0.09] border-white/[0.06] text-zinc-300'}`}>{p.name}</button>)}</div>
-          <Seg value={tab} onChange={setTab} options={[['look', 'Макет'], ['cover', 'Обложка'], ['bg', 'Фон'], ['text', 'Текст']]} />
+          <Seg value={tab} onChange={setTab} options={[['look', 'Макет'], ['cover', 'Обложка'], ['bg', 'Фон'], ['text', 'Текст'], ['score', 'Оценка']]} />
           {tab === 'look' && <div className="space-y-3">
             <RRow label="Макет"><Seg value={s.layout} onChange={v => update({ layout: v })} options={[['original', 'Как было'], ['big', 'Большая'], ['center', 'Центр'], ['poster', 'Постер'], ['split', 'Журнал'], ['compact', 'Компакт']]} /></RRow>
             <RRow label="Высота"><Seg value={s.height} onChange={v => update({ height: v })} options={[['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL']]} /></RRow>
@@ -1477,6 +1519,14 @@ const RelHeroDrawer: React.FC<{ s: RelHero; scope: 'all' | 'release'; setScope: 
             <RRow label={`Размытие · ${s.bgBlur}px`}><RRange value={s.bgBlur} min={0} max={140} onChange={v => update({ bgBlur: v })} /></RRow>
             <RRow label={`Затемнение · ${Math.round(s.bgDim * 100)}%`}><RRange value={s.bgDim} min={0} max={0.9} step={0.01} onChange={v => update({ bgDim: v })} /></RRow>
             <Toggle on={s.grain} onChange={v => update({ grain: v })} label="Плёночное зерно" />
+          </div>}
+          {tab === 'score' && <div className="space-y-3">
+            <RRow label="Где показывать"><Seg value={s.scorePos} onChange={v => update({ scorePos: v })} options={[['below', 'Под названием'], ['beside', 'Рядом с названием'], ['above', 'Над названием'], ['artist', 'Возле артиста'], ['meta', 'В строке с цифрами'], ['cover', 'На обложке'], ['right', 'Справа'], ['hidden', 'Скрыть']]} /></RRow>
+            <RRow label="Вид"><Seg value={s.scoreStyle} onChange={v => update({ scoreStyle: v })} options={[['ring', 'Кольцо'], ['pill', 'Плашка'], ['big', 'Крупная цифра'], ['minimal', 'Только число']]} /></RRow>
+            <RRow label={`Размер · ${Math.round(s.scoreSize * 100)}%`}><RRange value={s.scoreSize} min={0.6} max={2} step={0.05} onChange={v => update({ scoreSize: v })} /></RRow>
+            <Toggle on={s.showValue} onChange={v => update({ showValue: v })} label="Показывать ценность альбома" hint="Значок рядом с оценкой (серебро, золото, рубин…)" />
+            {s.layout === 'poster' && s.scorePos === 'cover' && <p className="text-[11px] text-zinc-500">В макете «Постер» обложки нет, поэтому оценка будет под названием.</p>}
+            <button type="button" onClick={() => update({ scorePos: DEFAULT_REL_HERO.scorePos, scoreStyle: DEFAULT_REL_HERO.scoreStyle, scoreSize: 1, showValue: true })} className="text-[11px] text-zinc-500 hover:text-white">↺ Вернуть оценку как было</button>
           </div>}
           {tab === 'text' && <div className="space-y-3">
             <RRow label={`Размер названия · ${s.titleSize}px`}><RRange value={s.titleSize} min={36} max={150} onChange={v => update({ titleSize: v })} /></RRow>
