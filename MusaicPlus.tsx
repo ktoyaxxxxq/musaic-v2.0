@@ -20,6 +20,7 @@ import type { ArtistEra, EraRelease } from './profile/ArtistHero';
 import { generateModernTitle, analyzeArtistNamingStyle } from './titleGen';
 import { recomputeAward } from './awards/awardEngine';
 import { computeAllArtistMetrics, forecastReleasePlays, generateAlbumTracksWithFeats, getPromoStrategyConfig, computeFanExpectation } from './SimulationMode';
+import { smartDuration, openReleaseHeroSettings } from './MusaicLab';
 
 // ---------------------------------------------------------------------------
 // shared helpers
@@ -1082,12 +1083,18 @@ export const ReleaseStage: React.FC<{
         </div>
       )}
       <div className={`absolute z-30 flex items-center gap-1.5 ${isArtistPage ? 'top-4 left-4 md:left-6' : 'top-3 right-3 md:top-4 md:right-6'}`}>
-        {on && tag && <span className="hidden sm:inline px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider text-black" style={{ background: c0 }}>{tag}</span>}
-        {on && milestone && <span className="hidden sm:inline px-2.5 py-1 rounded-full text-[10px] font-black bg-black/40 backdrop-blur-md border border-white/15 text-white">{milestone}</span>}
+        {on && tag && <span className="hidden sm:inline px-2 py-0.5 rounded-full text-[9.5px] font-black uppercase tracking-wider text-black" style={{ background: c0 }}>{tag}</span>}
+        {on && milestone && <span className="hidden sm:inline px-2 py-0.5 rounded-full text-[9.5px] font-black bg-black/40 backdrop-blur-md border border-white/15 text-white">{milestone}</span>}
         <button type="button" onClick={() => setStage(on ? 'off' : 'on', isArtistPage)} title={on ? 'Выключить атмосферу' : 'Включить атмосферу'}
-          className={`px-3 py-1.5 rounded-full text-[11px] font-bold backdrop-blur-md border transition-colors ${on ? 'bg-white/[0.12] border-white/20 text-white' : 'bg-black/40 border-white/10 text-zinc-400 hover:text-white'}`}>
+          className={`px-2.5 py-1 rounded-full text-[10px] font-bold backdrop-blur-md border transition-colors ${on ? 'bg-white/[0.12] border-white/20 text-white' : 'bg-black/40 border-white/10 text-zinc-400 hover:text-white'}`}>
           ✦ {on ? `${MOOD_LABEL[mood]} · ${isArtistPage ? 'артист' : kind === 'album' ? 'альбом' : 'трек'}` : 'Атмосфера'}
         </button>
+        {kind === 'album' && (
+          <button type="button" onClick={() => openReleaseHeroSettings(id)} title="Настройки шапки альбома"
+            className="px-2.5 py-1 rounded-full text-[10px] font-bold backdrop-blur-md border bg-black/40 border-white/10 text-zinc-300 hover:text-white hover:bg-white/[0.12] transition-colors">
+            ◐ Шапка
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1321,7 +1328,7 @@ async function shrinkImage(file: File, size = 512): Promise<string> {
     img.src = data;
   });
 }
-const randDuration = () => `${2 + Math.floor(Math.random() * 2)}:${pad2(Math.floor(Math.random() * 60))}`;
+const randDuration = () => smartDuration();
 
 // ---------------------------------------------------------------------------
 // 2. BATCH SMART TOOLS — the simulation's generators inside the batch builder
@@ -1489,6 +1496,7 @@ export const ReleaseCalendarPro: React.FC<{
   onAddTrack?: (t: Track) => void;
   onAddAlbum?: (a: Album, tracks: Track[]) => void;
   onOpen?: (type: 'track' | 'album', id: string) => void;
+  onOpenArtist?: (name: string) => void;
 }> = props => {
   const [open, setOpen] = useState(false);
   return (
@@ -1502,8 +1510,10 @@ export const ReleaseCalendarPro: React.FC<{
   );
 };
 
-const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & { onClose: () => void }> = ({ artists, tracks, albums, todayIso, onRelease, onAddTrack, onAddAlbum, onOpen, onClose }) => {
+const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & { onClose: () => void }> = ({ artists, tracks, albums, todayIso, onRelease, onAddTrack, onAddAlbum, onOpen, onOpenArtist, onClose }) => {
   usePlusCss();
+  const playsMap = useMemo(() => { const m = new Map<string, number>(); tracks.forEach(t => m.set(`t-${t.id}`, t.plays || 0)); albums.forEach(a => m.set(`a-${a.id}`, a.totalPlays || 0)); return m; }, [tracks, albums]);
+  const openArtistByName = onOpenArtist ? (name: string) => { onClose(); onOpenArtist(name); } : undefined;
   useEsc(true, onClose);
   const today = todayIso && /^\d{4}-\d{2}-\d{2}/.test(todayIso) ? todayIso.slice(0, 10) : toISO(Date.now());
   const [ann, setAnn] = useState<Announcement[]>(() => lsGet<Announcement[]>(ANN_LS, []));
@@ -1622,11 +1632,12 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
                   if (!d) return <div key={`p${i}`} />;
                   const its = byDay.get(d) || [];
                   const isSel = selDay === d; const isToday = d === today; const past = d < today;
-                  const cover = its.find(x => x.cover)?.cover;
+                  const KW: Record<string, number> = { album: 4, ep: 3, single: 2, snippet: 1, clip: 0 };
+                  const main = [...its].sort((a, b) => (KW[b.kind] || 0) - (KW[a.kind] || 0) || (playsMap.get(b.key) || 0) - (playsMap.get(a.key) || 0) || Number(Boolean(b.cover)) - Number(Boolean(a.cover)))[0];
                   return (
                     <button key={d} type="button" onClick={() => setSelDay(isSel ? null : d)}
                       className={`relative aspect-square rounded-xl text-[12px] font-bold overflow-hidden transition-all ${isSel ? 'ring-2 ring-white scale-[1.03]' : ''} ${isToday ? 'bg-white text-black' : past ? 'bg-white/[0.02] text-zinc-500 hover:bg-white/[0.06]' : 'bg-white/[0.04] text-zinc-200 hover:bg-white/[0.09]'}`}>
-                      {cover && !isToday && <CoverArt url={cover} title="" className={`absolute inset-0 w-full h-full ${past ? 'opacity-25' : 'opacity-45'}`} innerClassName="w-full h-full object-cover" />}
+                      {main && !isToday && <CoverArt url={main.cover} title={main.title} className={`absolute inset-0 w-full h-full transition-opacity ${past ? 'opacity-30' : 'opacity-50'}`} innerClassName="w-full h-full object-cover" />}
                       <span className="relative drop-shadow">{+d.slice(8)}</span>
                       {its.length > 1 && <span className="absolute top-1 right-1 text-[9px] font-black px-1 rounded bg-black/60 text-white">{its.length}</span>}
                       {its.length > 0 && <span className="absolute bottom-1 left-1/2 -translate-x-1/2 flex gap-0.5">{its.slice(0, 3).map(x => <span key={x.key} className={`w-1 h-1 rounded-full ${x.kind === 'snippet' ? DOT.snippet : DOT[x.source]}`} />)}</span>}
@@ -1655,7 +1666,7 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
             <div className="p-4 sm:p-5 overflow-y-auto custom-scrollbar space-y-5">
               {list ? (
                 <>
-                  <CalSection title={fmtDay(refToMs(selDay!))} items={list} empty="В этот день ничего. Нажми «+ Добавить»." now={now} today={today} artistOf={artistOf} setAnn={setAnn} setForm={setForm} onReleaseAnn={releaseAnn} onOpen={onOpen ? (t, id) => { onClose(); onOpen(t, id); } : undefined} />
+                  <CalSection title={fmtDay(refToMs(selDay!))} items={list} empty="В этот день ничего. Нажми «+ Добавить»." now={now} today={today} artistOf={artistOf} setAnn={setAnn} setForm={setForm} onReleaseAnn={releaseAnn} onArtist={openArtistByName} onOpen={onOpen ? (t, id) => { onClose(); onOpen(t, id); } : undefined} />
                   <IdeaDeck target={selDay} artists={artists} tracks={tracks} albums={albums} today={today}
                     onEdit={i => setForm({ mode: i.kind === 'snippet' ? (onAddTrack ? 'snippet' : 'announce') : 'announce', type: i.kind, artistName: i.artist.name, title: i.title, date: i.date, featuredArtist: i.feat || '', note: i.teaser })}
                     onAccept={i => {
@@ -1707,7 +1718,7 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
                         onSaved(i.date, `Анонс «${i.title}» добавлен`);
                       }
                     }} />
-                  <CalSection title="Скоро" items={upcoming} empty="Пока ничего не запланировано." now={now} today={today} artistOf={artistOf} setAnn={setAnn} setForm={setForm} onReleaseAnn={releaseAnn} onOpen={onOpen ? (t, id) => { onClose(); onOpen(t, id); } : undefined} />
+                  <CalSection title="Скоро" items={upcoming} empty="Пока ничего не запланировано." now={now} today={today} artistOf={artistOf} setAnn={setAnn} setForm={setForm} onReleaseAnn={releaseAnn} onArtist={openArtistByName} onOpen={onOpen ? (t, id) => { onClose(); onOpen(t, id); } : undefined} />
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">{selDay ? `Слухи на ${fmtDay(refToMs(selDay))}` : 'Слухи индустрии'}</div>
@@ -1759,7 +1770,8 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
 const CalSection: React.FC<{
   title: string; items: CalItem[]; empty: string; now: number; today: string; artistOf: (n: string) => Artist | undefined;
   setAnn: React.Dispatch<React.SetStateAction<Announcement[]>>; setForm: (f: any) => void; onReleaseAnn: (a: Announcement) => void; onOpen?: (t: 'track' | 'album', id: string) => void;
-}> = ({ title, items, empty, now, today, artistOf, setAnn, setForm, onReleaseAnn, onOpen }) => (
+  onArtist?: (name: string) => void;
+}> = ({ title, items, empty, now, today, artistOf, setAnn, setForm, onReleaseAnn, onOpen, onArtist }) => (
   <div>
     <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2">{title}</div>
     {items.length === 0 && <div className="text-xs text-zinc-500 py-6 text-center">{empty}</div>}
@@ -1778,8 +1790,17 @@ const CalSection: React.FC<{
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${it.kind === 'snippet' ? 'bg-sky-400/15 text-sky-300' : a ? 'bg-amber-400/15 text-amber-300' : 'bg-emerald-400/15 text-emerald-300'}`}>{TYPE_RU[it.kind] || it.kind}{a ? ' · анонс' : ''}</span>
                 <span className="text-[10px] text-zinc-500">{fmtDay(refToMs(it.date))}{it.time ? ` · ${it.time}` : ''}</span>
               </div>
-              <div className="text-[14px] font-black text-white truncate mt-0.5">{it.title}</div>
-              <div className="text-[11px] text-zinc-400 truncate">{it.artist}</div>
+              <div className="text-[14px] font-black text-white truncate mt-0.5">
+                {it.refId && onOpen ? <span onClick={() => onOpen(it.refType!, it.refId!)} className="cursor-pointer hover:underline" title="Открыть релиз">{it.title}</span> : it.title}
+              </div>
+              <div className="text-[11px] text-zinc-400 truncate">
+                {splitNames(it.artist).map((nm, i) => (
+                  <React.Fragment key={`${nm}-${i}`}>
+                    {i > 0 && <span className="text-zinc-600">{i === 1 && /feat\./i.test(it.artist) ? ' feat. ' : ', '}</span>}
+                    {onArtist ? <span onClick={() => onArtist(nm)} className="cursor-pointer hover:text-white hover:underline" title={`Открыть артиста ${nm}`}>{nm}</span> : nm}
+                  </React.Fragment>
+                ))}
+              </div>
               {(a?.note || it.teaser) && <div className="text-[11px] text-zinc-300/80 italic line-clamp-2 mt-0.5">«{a?.note || it.teaser}»</div>}
               <div className="flex flex-wrap items-center gap-2 mt-1">
                 {!isPast ? <span className="text-[11px] font-black text-emerald-300 tabular-nums">через {leftStr(target, now)}</span>
@@ -2316,6 +2337,16 @@ function genReviews(c: ReviewCtx) {
   if (waitDays !== null && waitDays > 300 && q < 80) q -= 3;          // long wait raises the bar
   if (waitDays !== null && waitDays < 25 && !single) q -= 2;          // rushed
   if (guests.length > 5) q -= 2;
+  // v2.5: an album is close to the average of its rated tracks (± its own cohesion)
+  const ratedT = at.filter(t => t.rating?.totalScore).map(t => (t.rating!.totalScore / 90) * 100);
+  if (!single && ratedT.length >= 2) q = q * 0.55 + (ratedT.reduce((x, y) => x + y, 0) / ratedT.length + (r() - 0.5) * 10) * 0.45;
+  // v2.5: less predictable reception; big numbers / a strong artist raise the chance of praise
+  const swR = seeded(hashStr(album.id + '|swing') + seed * 131);
+  const g2 = () => (swR() + swR() + swR() + swR() - 2) / 0.58;
+  let swing = g2() * (single ? 7.5 : 5.5);
+  if (swR() < 0.12) swing += (swR() < 0.5 ? -1 : 1) * (7 + swR() * 9); // over- / underrated
+  const hot = clamp(Math.log2(Math.max(0.2, perf)) * 2.2, -4, 6) + clamp(Math.log10(Math.max(1, plays)) - 6.3, -1.5, 2.5) * 2 + (artistAvg !== null ? clamp((artistAvg - 62) * 0.12, -3, 4) : 0);
+  q += rating?.totalScore ? swing * 0.55 + hot * 0.4 : swing + hot;
   q = clamp(q, 10, 100);
   const critScore = typeof c.anchor === 'number' ? c.anchor + (c.shift || 0) : 38 + (q - 38) * 0.88; // a track of an album follows the album
   const nRev = clamp(Math.round((single ? 2 : 3) + Math.log10(followers + 10) - 4.2 + Math.log10(Math.max(1, plays)) / 3.2 + r() * 1.6), single ? 3 : 4, single ? 5 : 7);
@@ -2328,12 +2359,12 @@ function genReviews(c: ReviewCtx) {
   const usedGlobal = new Set<string>();
   const once = (arr: string[]) => { const free = arr.filter(x => !usedGlobal.has(x)); const v = pick(free.length ? free : arr); usedGlobal.add(v); return v; };
   const reviews = outlets.map(o => {
-    let sc = critScore + o.bias + gauss() * o.sd;
+    let sc = critScore + o.bias + gauss() * o.sd * 1.2;
     o.likes.forEach(k => { if (typeof rating?.[k] === 'number') sc += (rating[k] - 6.5) * 1.1; });
     sc += o.pop * clamp(Math.log10(Math.max(1, followers)) - 5.5, -1.5, 1.5) * 2 - o.under * clamp(Math.log10(Math.max(1, followers)) - 5.5, -1.5, 1.5) * 1.5;
     if (!single && at.length >= 16) sc -= o.longHate * 2.5;
     if (guests.length) sc += o.featLove * (guests.length <= 3 ? 1.5 : -1);
-    if (r() < 0.06) sc += (r() < 0.5 ? -1 : 1) * (10 + r() * 12);        // contrarian take
+    if (r() < 0.085) sc += (r() < 0.5 ? -1 : 1) * (10 + r() * 12);       // contrarian take
     if (sc > 93 && !(q >= 94 && r() < 0.45)) sc = 89 + r() * 4;          // 95+ is earned, not given
     sc = Math.round(clamp(sc, 12, 100));
     const band = sc >= 92 ? 's' : sc >= 75 ? 'hi' : sc >= 55 ? 'mid' : sc >= 35 ? 'lo' : 'x';
@@ -2414,7 +2445,10 @@ export const AlbumReviewsButton: React.FC<{ album: Album; tracks: Track[]; album
       const avg = sib.length ? sib.reduce((x, t) => x + (t.plays || 0), 0) / sib.length : single!.plays || 1;
       const share = (single!.plays || 1) / Math.max(1, avg);
       const own = single!.rating?.totalScore ? (single!.rating.totalScore / 90) * 100 : null;
-      const shift = clamp(Math.log2(share) * 3.2, -7, 7) + (own !== null ? clamp((own - pData.meta) * 0.35, -8, 8) : 0);
+      const tr = seeded(hashStr(single!.id + '|trk') + seed * 977);
+      const w = -0.4 + tr() * 1.8; // sometimes the most played track is loved more, sometimes less
+      const standout = tr() < 0.14 ? (tr() < 0.55 ? 1 : -1) * (5 + tr() * 8) : 0;
+      const shift = clamp(Math.log2(share) * 3.2 * w, -8, 8) + (tr() - 0.5) * 7 + standout + (own !== null ? clamp((own - pData.meta) * 0.35, -8, 8) : 0);
       return genReviews({ ...ctx, anchor: pData.meta, shift, parent: parent.title });
     }
     return genReviews(ctx);

@@ -114,6 +114,8 @@ import {
 import './fontsExtra';
 // --- Musaic v2.4: charts, release stage, calendar, awards, eras, cover viewer, batch generators ---
 import { SocialFeed, SocialIcon } from './SocialFeed';
+// --- Musaic v2.5: listen engine, stats, release header, auto-save, export ---
+import { smartDuration, engineManualPlays, engineSetCatalog, estimateMonthlyListeners, requestPersistentStorage, maybeAutoBackup, useFlushOnHide, AutoBackupPanel, exportCatalogFile, exportSimSnapshot, importMediaFromFile, setLabAwards, ReleaseHeroHeader, PlaysStatButton, FeatPicker, ListenEngineButton, AUTO_COVER, offloadDataUrls } from './MusaicLab';
 import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource, ScoreRing, AlbumReviewsButton, TrackReviewsButton, WeeklyNewsFeed, ArtistPortfolioButton } from './MusaicPlus';
 
 // --- Types & Constants ---
@@ -336,7 +338,8 @@ export const GENRE_CATALOG: GenreItem[] = [
 // --- Helpers ---
 
 // Smart random plays generator scaled by artist popularity (monthly listeners/followers)
-const getRandomPlays = (artistFollowers?: number, isAlbum = false): string => {
+const getRandomPlays = (artistFollowers?: number, isAlbum = false): string => engineManualPlays(getRandomPlaysCore(artistFollowers, isAlbum), artistFollowers, isAlbum);
+const getRandomPlaysCore = (artistFollowers?: number, isAlbum = false): string => {
   const viralChance = Math.random() < 0.04; 
   // Base multiplier: albums naturally have more cumulative plays
   const baseMultiplier = isAlbum ? 2.8 : 1.2;
@@ -554,12 +557,7 @@ const getRandomValue = (min: number, max: number) => {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 };
 
-export const getRandomDuration = () => {
-  const totalSec = Math.floor(Math.random() * (255 - 75 + 1)) + 75; // 1:15 to 4:15
-  const min = Math.floor(totalSec / 60);
-  const sec = (totalSec % 60).toString().padStart(2, '0');
-  return `${min}:${sec}`;
-};
+export const getRandomDuration = (featuredArtist?: string) => smartDuration(featuredArtist);
 
 const calcTotalDuration = (tracksList: Track[]) => {
   let totalSeconds = 0;
@@ -684,11 +682,18 @@ export const getEntitySlug = (artistName?: string, title?: string): string => {
   return `${a}___${t}`;
 };
 
+let dbConnPromise: Promise<IDBDatabase> | null = null;
 export const openDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
+  if (dbConnPromise) return dbConnPromise;
+  dbConnPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => { dbConnPromise = null; reject(request.error); };
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => { db.close(); dbConnPromise = null; };
+      (db as any).onclose = () => { dbConnPromise = null; };
+      resolve(db);
+    };
     request.onupgradeneeded = (event: any) => {
       const db = event.target.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -702,21 +707,32 @@ export const openDB = (): Promise<IDBDatabase> => {
       }
     };
   });
+  return dbConnPromise;
 };
 
 export const dbGet = async (key: string): Promise<any> => {
+  // v2.5: retry IndexedDB first — the localStorage copy can be a reduced one (no covers / 400 tracks),
+  // reading it by mistake and auto-saving it back was the main way covers got lost
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const db = await openDB();
+      return await new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(key);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+      });
+    } catch (e) {
+      dbConnPromise = null;
+      if (attempt < 2) await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
+    }
+  }
   try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction(STORE_NAME, 'readonly');
-      const store = transaction.objectStore(STORE_NAME);
-      const request = store.get(key);
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
-    });
-  } catch (e) {
     const item = localStorage.getItem(key);
     return item ? JSON.parse(item) : null;
+  } catch {
+    return null;
   }
 };
 
@@ -834,6 +850,7 @@ export const resolveMedia = (
   url?: string,
   meta?: { title?: string; albumTitle?: string; isArtist?: boolean; artistName?: string; id?: string }
 ): string => {
+  if (url && url.startsWith('auto:')) return ''; // cover removed on purpose → generated cover
   if (url) {
     if (url.startsWith('idb:')) {
       const id = url.slice(4);
@@ -1936,7 +1953,9 @@ const EditTrackModal: React.FC<{
     composer: track.composer || '',
     isExplicit: Boolean(track.isExplicit),
     coverUrl: track.coverUrl || '',
-    rating: track.rating
+    rating: track.rating,
+    promoStrategy: track.promoStrategy as ReleasePromoStrategy | undefined,
+    releaseHype: track.releaseHype as number | undefined
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1964,7 +1983,9 @@ const EditTrackModal: React.FC<{
       genre: form.genre.trim() || undefined,
       composer: form.composer.trim() || undefined,
       isExplicit: form.isExplicit,
-      coverUrl: form.coverUrl.trim() || track.coverUrl,
+      coverUrl: form.coverUrl.trim() || (track.coverUrl ? AUTO_COVER : ''),
+      promoStrategy: form.promoStrategy,
+      releaseHype: form.releaseHype,
       rating: form.rating
     };
     onSave(updated);
@@ -2042,10 +2063,10 @@ const EditTrackModal: React.FC<{
                 >
                   <Pencil className="w-3 h-3" />
                 </button>
-                {form.coverUrl && (
+                {form.coverUrl && form.coverUrl !== AUTO_COVER && (
                   <button
                     type="button"
-                    onClick={() => setForm({ ...form, coverUrl: '' })}
+                    onClick={() => setForm({ ...form, coverUrl: AUTO_COVER })}
                     title="Удалить обложку и вернуть сгенерированную"
                     className="w-6 h-6 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-rose-400 hover:text-rose-300 flex items-center justify-center transition-all cursor-pointer"
                   >
@@ -2104,13 +2125,23 @@ const EditTrackModal: React.FC<{
               </div>
 
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1.5">Приглашенный артист (Фит)</label>
-                <input 
-                  type="text" 
-                  placeholder="Имя приглашенного артиста" 
-                  value={form.featuredArtist} 
-                  onChange={e => setForm({ ...form, featuredArtist: e.target.value })} 
-                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-xs md:text-sm font-semibold text-white placeholder:text-zinc-500 outline-none focus:border-white/30"
+                <label className="text-xs font-bold text-zinc-300 block mb-1.5">Приглашённые артисты (фиты)</label>
+                <FeatPicker
+                  value={form.featuredArtist}
+                  onChange={v => setForm(f => ({ ...f, featuredArtist: v }))}
+                  artists={artists}
+                  mainArtistName={artists.find(a => a.id === form.artistId)?.name || form.artistName}
+                  placeholder="Начни вводить имя или нажми 🎲"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold text-zinc-300 block mb-1.5">Хайп и промо релиза</label>
+                <ReleaseHypeControl
+                  promoStrategy={form.promoStrategy}
+                  releaseHype={form.releaseHype}
+                  defaultHype={artists.find(a => a.id === form.artistId)?.hype ?? 70}
+                  onChange={(st, h) => setForm(f => ({ ...f, promoStrategy: st, releaseHype: h }))}
+                  compact
                 />
               </div>
             </div>
@@ -2180,7 +2211,7 @@ const EditTrackModal: React.FC<{
                 <label className="text-xs font-bold text-zinc-300">Длительность</label>
                 <button 
                   type="button" 
-                  onClick={() => setForm({ ...form, duration: getRandomDuration() })}
+                  onClick={() => setForm({ ...form, duration: getRandomDuration(form.featuredArtist) })}
                   className="text-[10px] text-zinc-400 hover:text-white font-bold flex items-center gap-1 cursor-pointer"
                 >
                   <Dices className="w-3.5 h-3.5" /> Рандом
@@ -2339,7 +2370,7 @@ const EditAlbumModal: React.FC<{
       peakChartPosition: form.peakChartPosition ? parseInt(form.peakChartPosition) : undefined,
       producer: form.producer.trim() || undefined,
       label: form.label.trim() || undefined,
-      coverUrl: form.coverUrl.trim() || album.coverUrl,
+      coverUrl: form.coverUrl.trim() || (album.coverUrl ? AUTO_COVER : ''),
       rating: form.rating
     };
     onSave(updated);
@@ -2415,10 +2446,10 @@ const EditAlbumModal: React.FC<{
                 >
                   <Pencil className="w-3 h-3" />
                 </button>
-                {form.coverUrl && (
+                {form.coverUrl && form.coverUrl !== AUTO_COVER && (
                   <button
                     type="button"
-                    onClick={() => setForm({ ...form, coverUrl: '' })}
+                    onClick={() => setForm({ ...form, coverUrl: AUTO_COVER })}
                     title="Удалить обложку и вернуть сгенерированную"
                     className="w-6 h-6 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-rose-400 hover:text-rose-300 flex items-center justify-center transition-all cursor-pointer"
                   >
@@ -2613,49 +2644,10 @@ export function calculateRecommendedArtistListeners(
   tierClass: string;
   basisText: string;
 } {
-  const artName = (artist.name || '').toLowerCase().trim();
-  const artId = artist.id;
-  const myTracks = allTracks.filter(t => 
-    (artId && t.artistId === artId) || 
-    (t.artistName && t.artistName.toLowerCase().trim() === artName)
-  );
-
-  const playsList = myTracks.map(t => t.plays || 0).sort((a, b) => b - a);
-  const totalCatalogPlays = playsList.reduce((acc, p) => acc + p, 0);
-  const formatCompactNum = (n: number) => {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} млн`;
-    if (n >= 1_000) return `${Math.round(n / 1_000)} тыс.`;
-    return n.toString();
-  };
-
-  const topTrackPlays = playsList[0] || 0;
-  const avgTrackPlays = playsList.length > 0 ? Math.round(totalCatalogPlays / playsList.length) : 0;
-
-  let rec = 120_000;
-  let basis = 'По средним значениям новичка';
-
-  if (playsList.length >= 1) {
-    if (topTrackPlays > 15_000_000 || totalCatalogPlays > 40_000_000) {
-      rec = Math.round(Math.max(4_500_000, Math.min(12_000_000, topTrackPlays * 0.25 + totalCatalogPlays * 0.04)));
-      basis = `На основе каталога (${playsList.length} тр., топ ${formatCompactNum(topTrackPlays)})`;
-    } else if (topTrackPlays > 4_000_000 || totalCatalogPlays > 12_000_000) {
-      rec = Math.round(Math.max(1_800_000, Math.min(4_500_000, topTrackPlays * 0.28 + totalCatalogPlays * 0.06)));
-      basis = `На основе каталога (${playsList.length} тр., топ ${formatCompactNum(topTrackPlays)})`;
-    } else if (topTrackPlays > 500_000 || totalCatalogPlays > 1_500_000) {
-      rec = Math.round(Math.max(220_000, Math.min(1_800_000, topTrackPlays * 0.30 + avgTrackPlays * 0.5)));
-      basis = `По стримам треков (${playsList.length} тр., ср. ${formatCompactNum(avgTrackPlays)})`;
-    } else {
-      rec = Math.round(Math.max(25_000, Math.min(280_000, topTrackPlays * 0.35 + avgTrackPlays * 0.4)));
-      basis = `По каталогу начинающего (${playsList.length} тр.)`;
-    }
-  } else if (artist.followers && artist.followers > 0) {
-    rec = artist.followers;
-    basis = 'Текущее значение артиста';
-  }
-
-  if (artist.verified && rec < 200_000) {
-    rec = Math.round(rec * 1.4);
-  }
+  // v2.5: realistic estimate from fresh plays, feats, catalog and hype, kept close to the current value
+  const est = estimateMonthlyListeners(artist as any, allTracks, allAlbums);
+  let rec = est.value;
+  const basis = est.basis;
 
   // Round to clean readable number
   if (rec >= 1_000_000) {
@@ -5347,7 +5339,8 @@ export default function App() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [awards, setAwards] = useState<AwardItem[]>([]);
   useEffect(() => { setTitleGenCatalog({ artists, tracks, albums }); }, [artists, tracks, albums]);
-  useEffect(() => { setArtistAwardsSource(awards as any); }, [awards]);
+  useEffect(() => { setArtistAwardsSource(awards as any); setLabAwards(awards as any); }, [awards]);
+  useEffect(() => { requestPersistentStorage(); }, []);
   const [history, setHistory] = useState<Array<NavigationState & { scrollY: number }>>([]);
   const [forwardHistory, setForwardHistory] = useState<Array<NavigationState & { scrollY: number }>>([]);
   const contentScrollRef = useRef<HTMLDivElement>(null);
@@ -5746,7 +5739,8 @@ export default function App() {
         const parsed = JSON.parse(String(ev.target?.result || '{}'));
         const st = parsed.state || parsed;
         if (st && Array.isArray(st.artists) && Array.isArray(st.tracks) && st.currentDate) {
-          setSimState({ ...st, isActive: true });
+          importMediaFromFile(parsed).catch(() => 0);
+          setSimState({ ...st, isActive: true, undoStack: Array.isArray(st.undoStack) ? st.undoStack : [] });
           showToast(`Загружена симуляция от ${formatSimDate(st.currentDate)}`);
         } else {
           showToast('Неверный формат файла симуляции');
@@ -6011,7 +6005,9 @@ export default function App() {
   useEffect(() => {
     if (!hasHydratedMasterRef.current) return;
     const timer = setTimeout(() => {
-      dbSet('musaic_master_db', { artists, albums, tracks, theme, followedArtistIds });
+      const payload = { artists, albums, tracks, theme, followedArtistIds };
+      dbSet('musaic_master_db', payload);
+      maybeAutoBackup('master', payload);
     }, 650);
     return () => clearTimeout(timer);
   }, [artists, albums, tracks, theme, followedArtistIds]);
@@ -6022,9 +6018,63 @@ export default function App() {
     const timer = setTimeout(() => {
       const { undoStack: _omitUndo, ...lightState } = simState;
       dbSet('musaic_sim_active', { ...lightState, undoStack: [] }).catch(console.error);
+      maybeAutoBackup('sim', lightState);
     }, 500);
     return () => clearTimeout(timer);
   }, [simState]);
+
+  // v2.5: write the very latest state when the tab is hidden or closed
+  useFlushOnHide(() => [
+    ['musaic_master_db', hasHydratedMasterRef.current ? { artists, albums, tracks, theme, followedArtistIds } : undefined],
+    ['musaic_sim_active', simState ? (() => { const { undoStack: _u, ...l } = simState; return { ...l, undoStack: [] }; })() : undefined]
+  ]);
+  useEffect(() => { engineSetCatalog(viewArtists, viewTracks); }, [viewArtists, viewTracks]);
+  // v2.5: covers pasted into the simulation as data:image move to the media store once — the saved state stays small and fast
+  useEffect(() => {
+    if (!simState) return;
+    const isData = (u?: string) => Boolean(u && u.startsWith('data:image/'));
+    const urls = [...simState.tracks.map(t => t.coverUrl), ...simState.albums.map(a => a.coverUrl), ...simState.artists.map(a => a.imageUrl)].filter(isData) as string[];
+    if (!urls.length) return;
+    const timer = setTimeout(async () => {
+      try {
+        const map = await offloadDataUrls(urls);
+        if (!map.size) return;
+        const sw = (u?: string) => (u && map.get(u)) || u;
+        setSimState(prev => prev ? {
+          ...prev,
+          tracks: prev.tracks.map(t => (isData(t.coverUrl) && map.has(t.coverUrl!) ? { ...t, coverUrl: sw(t.coverUrl) } : t)),
+          albums: prev.albums.map(a => (isData(a.coverUrl) && map.has(a.coverUrl) ? { ...a, coverUrl: sw(a.coverUrl)! } : a)),
+          artists: prev.artists.map(a => (isData(a.imageUrl) && map.has(a.imageUrl) ? { ...a, imageUrl: sw(a.imageUrl)! } : a))
+        } : prev);
+      } catch (e) { console.warn('offload covers', e); }
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [simState]);
+  const handleRestoreAutoBackup = (kind: 'master' | 'sim', data: any) => {
+    if (!data || !Array.isArray(data.tracks)) { showToast('Автокопия пуста'); return; }
+    if (kind === 'sim') {
+      setSimState({ ...data, isActive: true, undoStack: [] });
+      showToast(`Симуляция восстановлена (неделя ${data.weekNumber || '?'})`);
+    } else {
+      setArtists(data.artists || []); setAlbums(data.albums || []); setTracks(data.tracks || []);
+      if (data.theme) setTheme({ ...DEFAULT_THEME, ...data.theme });
+      showToast('База восстановлена из автокопии');
+    }
+  };
+  const handleSetArtistFollowers = (map: Record<string, number>) => {
+    const apply = (list: Artist[]) => list.map(a => (map[a.id] !== undefined ? { ...a, followers: map[a.id] } : a));
+    if (simState) setSimState(prev => (prev ? { ...prev, artists: apply(prev.artists) } : prev));
+    else setArtists(prev => apply(prev));
+  };
+  const handleExportSimAsCatalog = async (mode: 'light' | 'full' | 'media') => {
+    if (!simState) return;
+    try { showToast(await exportCatalogFile({ artists: simState.artists, albums: simState.albums, tracks: simState.tracks, theme, followedArtistIds, label: `sim_w${simState.weekNumber}` }, mode)); }
+    catch (e) { console.error(e); showToast('Ошибка экспорта базы'); }
+  };
+  const handleExportSimSnapshot = async (withMedia: boolean) => {
+    if (!simState) return;
+    try { showToast(await exportSimSnapshot(simState, withMedia)); } catch (e) { console.error(e); showToast('Ошибка экспорта снимка'); }
+  };
 
   // Apply Theme CSS Variables to DOM only when theme changes (prevents compositor flashes during playback)
   useEffect(() => {
@@ -6757,6 +6807,7 @@ export default function App() {
               onAddTrack={(t) => activeSetTracks((prev: any) => [...prev, t])}
               onAddAlbum={(al, ts) => { activeSetAlbums((prev: any) => [...prev, al]); if (ts.length) activeSetTracks((prev: any) => [...prev, ...ts]); }}
               onOpen={(type, id) => navigateTo(type, { id })}
+              onOpenArtist={(name) => { const a = viewArtists.find(x => x.name.toLowerCase().trim() === name.toLowerCase().trim()); navigateTo('artist', a ? { id: a.id, artistName: a.name } : { id: `guest_${name}`, artistName: name }); }}
               onRelease={(a) => activeSetTracks((prev: any) => [...prev, {
                 id: Math.random().toString(36).slice(2, 11), title: a.title,
                 artistId: a.artistId || viewArtists.find(x => x.name.toLowerCase() === a.artistName.toLowerCase())?.id || '', artistName: a.artistName,
@@ -7162,6 +7213,10 @@ export default function App() {
               return response.text?.trim() || '';
             }}
             onCommitSimToMaster={handleCommitSimToMaster}
+            onSetArtistFollowers={handleSetArtistFollowers}
+            onExportSimAsCatalog={handleExportSimAsCatalog}
+            onExportSimSnapshot={handleExportSimSnapshot}
+            onRestoreBackup={handleRestoreAutoBackup}
             onExitSim={handleExitSimulation}
             onOpenRelease={(itemType, id, weekNumber) => {
               setPendingSimReturn({
@@ -13333,6 +13388,23 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
             </div>
 
             {/* Section 1: Export Options */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <AutoBackupPanel
+                kind="both"
+                onRestore={(k, d) => {
+                  if (k === 'master' && d && Array.isArray(d.tracks)) { setArtists(d.artists || []); setAlbums(d.albums || []); setTracks(d.tracks || []); showToast('База восстановлена из автокопии'); }
+                  else showToast('Копию симуляции восстанавливай в пульте симуляции → «Итоги и слоты»');
+                }}
+              />
+              <div className="rounded-2xl bg-white/[0.03] border border-white/[0.07] p-4 flex flex-col gap-3 justify-between">
+                <div>
+                  <div className="text-[12px] font-bold text-white">Движок прослушиваний</div>
+                  <div className="text-[11px] text-zinc-500 mt-0.5 leading-snug">Влияет на «Рандом» прослушиваний, симуляцию, чарты и рост. Здесь же — авто-слушатели артистов.</div>
+                </div>
+                <ListenEngineButton artists={artists} tracks={tracks} albums={albums} onApplyListeners={map => setArtists((prev: Artist[]) => prev.map(a => (map[a.id] !== undefined ? { ...a, followers: map[a.id] } : a)))} />
+              </div>
+            </div>
+
             <div className="space-y-4">
               <div className="flex items-center gap-2 px-1">
                 <Download className="w-4 h-4 theme-accent" />
@@ -16156,7 +16228,7 @@ function TrackPage({
               <span className="text-zinc-400">{track.duration}</span>
 
               <span className="text-zinc-500">•</span>
-              <span className="text-zinc-300 font-medium tabular-nums">{track.plays.toLocaleString('ru-RU')} прослушиваний</span>
+              <PlaysStatButton kind="track" track={track} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} className="text-zinc-300 font-medium tabular-nums">{track.plays.toLocaleString('ru-RU')} прослушиваний</PlaysStatButton>
 
               {track.peakChartPosition && (
                 <>
@@ -16373,7 +16445,7 @@ function TrackPage({
                   )}
                   <div className="flex justify-between items-center py-1 border-b border-white/5">
                     <span className="text-zinc-400">Всего прослушиваний</span>
-                    <span className="text-white font-bold text-sm md:text-base tabular-nums">{track.plays.toLocaleString('ru-RU')}</span>
+                    <PlaysStatButton kind="track" track={track} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} className="text-white font-bold text-sm md:text-base tabular-nums">{track.plays.toLocaleString('ru-RU')}</PlaysStatButton>
                   </div>
                   <div className="flex justify-between items-center py-1">
                     <span className="text-zinc-400">В медиатеках / Лайки</span>
@@ -16448,7 +16520,7 @@ function TrackPage({
                   )}
                   <div className="flex justify-between items-center py-1 border-b border-white/5">
                     <span className="text-zinc-400">Всего прослушиваний</span>
-                    <span className="text-white font-bold text-sm md:text-base tabular-nums">{track.plays.toLocaleString('ru-RU')}</span>
+                    <PlaysStatButton kind="track" track={track} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} className="text-white font-bold text-sm md:text-base tabular-nums">{track.plays.toLocaleString('ru-RU')}</PlaysStatButton>
                   </div>
                   <div className="flex justify-between items-center py-1">
                     <span className="text-zinc-400">В медиатеках / Лайки</span>
@@ -16554,6 +16626,35 @@ function AlbumView({
       style={coverColorsOn ? ({ ['--page-accent' as any]: pageAccent } as React.CSSProperties) : undefined}
     >
       <ReleaseStage kind="album" id={album.id} cover={album.coverUrl} title={album.title} artistName={album.artistName} genre={album.genre} releaseDate={album.releaseDate} plays={totalAlbumPlays} />
+      <ReleaseHeroHeader
+        id={album.id}
+        cover={album.coverUrl}
+        title={album.title}
+        kindLabel={albumHeroOn ? releaseKind : 'Альбом'}
+        artistName={album.artistName}
+        artist={artists.find((a: Artist) => a.id === album.artistId) || null}
+        palette={albumPalette}
+        onArtist={() => navigateTo('artist', { id: album.artistId, artistName: album.artistName })}
+        onZoom={() => openLightbox && openLightbox({ url: album.coverUrl, title: album.title, subtitle: album.artistName, type: 'Альбом' })}
+        artistLine={album.coArtist ? <CoArtistLinks names={album.coArtist} exclude={album.artistName} artists={artists} navigateTo={navigateTo} className="font-bold text-white" /> : null}
+        badges={album.rating || album.albumValue ? (
+          <>
+            {album.rating && <RatingScoreBadge rating={album.rating} size="lg" />}
+            {album.albumValue && <AlbumValueBadge albumValue={album.albumValue} size="lg" onClick={() => setIsValueModalOpen(true)} />}
+          </>
+        ) : null}
+        meta={
+          <>
+            <span className="text-zinc-400">{album.releaseYear}</span>
+            <span className="text-zinc-500">•</span>
+            <span className="text-zinc-400">{rawAlbumTracks.length} {rawAlbumTracks.length === 1 ? 'трек' : (rawAlbumTracks.length < 5 ? 'трека' : 'треков')}, {calcTotalDuration(rawAlbumTracks)}</span>
+            <span className="text-zinc-500">•</span>
+            <PlaysStatButton kind="album" album={album} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} className="text-zinc-300 font-medium tabular-nums">{totalAlbumPlays.toLocaleString('ru-RU')} прослушиваний</PlaysStatButton>
+            {album.peakChartPosition && (<><span className="text-zinc-500">•</span><span className="theme-accent font-bold">Пик в чарте: #{album.peakChartPosition}</span></>)}
+          </>
+        }
+        legacy={
+          <>
       {/* Top Banner (Spotify style with rich gradient & larger cover) */}
       <div className={`${coverColorsOn ? '' : 'bg-gradient-to-b from-indigo-950/35 via-zinc-900/65 to-[var(--bg-color)] backdrop-blur-xl'} px-6 md:px-8 ${albumHeroOn ? 'pt-10 pb-10 md:pt-14 md:pb-12' : 'pt-8 pb-8'} relative overflow-hidden`}>
         {coverColorsOn && (
@@ -16640,9 +16741,9 @@ function AlbumView({
               </span>
 
               <span className="text-zinc-500">•</span>
-              <span className="text-zinc-300 font-medium tabular-nums">
+              <PlaysStatButton kind="album" album={album} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} className="text-zinc-300 font-medium tabular-nums">
                 {totalAlbumPlays.toLocaleString('ru-RU')} прослушиваний
-              </span>
+              </PlaysStatButton>
 
               {album.peakChartPosition && (
                 <>
@@ -16654,6 +16755,9 @@ function AlbumView({
           </div>
         </div>
       </div>
+          </>
+        }
+      />
 
       {/* Album Value Banner removed per request - info now in badge popover */}
 

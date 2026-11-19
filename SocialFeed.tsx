@@ -93,17 +93,21 @@ function buildPersonas(artists: Artist[]): Persona[] {
 // ---------------------------------------------------------------------------
 type PType = 'release' | 'announce' | 'countdown' | 'teaser' | 'cryptic' | 'cover' | 'tracklist' | 'thanks' | 'milestone' | 'chart' | 'award' | 'studio' | 'emotion' | 'life' | 'opinion'
   | 'lyric' | 'poll' | 'throwback' | 'respect' | 'subtweet' | 'beef' | 'collab' | 'tour' | 'merch' | 'delay' | 'producer' | 'city' | 'night'
-  | 'news' | 'insider' | 'leak' | 'signing' | 'meme' | 'review' | 'record' | 'celeb';
+  | 'news' | 'insider' | 'leak' | 'signing' | 'meme' | 'review' | 'record' | 'celeb'
+  | 'fact' | 'stats' | 'reaction' | 'hottake' | 'versus' | 'rumor' | 'featTease' | 'listening' | 'recap' | 'question' | 'fanart' | 'chartWatch';
 export const TYPE_RU: Record<PType, string> = {
   release: 'Релиз', announce: 'Анонс', countdown: 'Отсчёт', teaser: 'Прогрев', cryptic: 'Загадка', cover: 'Обложка', tracklist: 'Треклист', thanks: 'Спасибо', milestone: 'Рубеж', chart: 'Чарт', award: 'Премия',
   studio: 'Студия', emotion: 'Эмоции', life: 'Жизнь', opinion: 'Мнение', lyric: 'Строчка', poll: 'Опрос', throwback: 'Ностальгия', respect: 'Респект', subtweet: 'Намёк', beef: 'Биф',
   collab: 'Коллаб', tour: 'Концерты', merch: 'Мерч', delay: 'Перенос', producer: 'Продюсер', city: 'Город', night: 'Ночь', news: 'Новость', insider: 'Инсайд', leak: 'Утечка',
-  signing: 'Подписание', meme: 'Мем', review: 'Рецензия', record: 'Рекорд', celeb: 'Реакция'
+  signing: 'Подписание', meme: 'Мем', review: 'Рецензия', record: 'Рекорд', celeb: 'Реакция',
+  fact: 'Факт', stats: 'Цифры', reaction: 'Реакция фанатов', hottake: 'Горячее мнение', versus: 'Батл', rumor: 'Слух', featTease: 'Слух о фите',
+  listening: 'Прослушка', recap: 'Итоги недели', question: 'Вопрос', fanart: 'Фан-арт', chartWatch: 'Чарт-прогноз'
 };
 const TYPE_GROUP: Record<string, PType[]> = {
   'Релизы': ['release', 'announce', 'countdown', 'teaser', 'cover', 'tracklist', 'delay'], 'Загадки': ['cryptic', 'lyric', 'night'], 'Инсайды': ['insider', 'leak', 'signing'],
   'Бифы': ['beef', 'subtweet'], 'Мемы': ['meme'], 'Респект': ['respect', 'collab', 'producer'], 'Жизнь': ['emotion', 'life', 'opinion', 'studio', 'city', 'tour', 'merch'],
-  'Чарт и премии': ['chart', 'award', 'record', 'milestone', 'thanks', 'review'], 'Опросы': ['poll'], 'Новости': ['news', 'celeb', 'throwback']
+  'Чарт и премии': ['chart', 'award', 'record', 'milestone', 'thanks', 'review', 'chartWatch', 'stats'], 'Опросы': ['poll', 'versus', 'question'], 'Новости': ['news', 'celeb', 'throwback', 'fact', 'recap'],
+  'Слухи и фиты': ['rumor', 'featTease', 'listening'], 'Фанаты': ['reaction', 'fanart', 'hottake']
 };
 interface Comment { id: string; author: string; text: string; likes: number }
 /** a date/release the author hinted at — can be confirmed and sent to the calendar / simulation */
@@ -194,6 +198,7 @@ const LINES = ['я падал, но не туда, куда вы ждали', '�
 const CITIES = ['Москве', 'Питере', 'Казани', 'Екатеринбурге', 'Новосибирске', 'Сочи', 'Минске', 'Алматы', 'Краснодаре', 'Самаре', 'Ростове', 'Владивостоке'];
 const PRODS = ['Kaze', 'Mars Beat', 'Грусть', 'Nevoy', 'Lowkey Lab', 'Сэнси', 'Ocean Drive', 'Dr. Haze', 'Тимур Кэш', 'Pyramid'];
 const POLL: Array<[RegExp, (v: Record<string, string>, tops: string[]) => string[]]> = [
+  [/«.+» (или|против) «.+»|батл|чартовая гонка/, v => [v.t, v.t2 || 'Другой']], [/ждёт|чего ждёте|ждёте/, () => ['Очень жду', 'Послушаю', 'Мимо']], [/топ-10\?|следующим синглом|клип или/, () => ['Да', 'Нет', 'Посмотрим']],
   [/альбом или сингл/, () => ['Альбом', 'Сингл', 'EP']], [/трек лучший/, (_, tops) => (tops.length >= 2 ? tops.slice(0, 4) : ['Новый', 'Старый'])],
   [/фит с кем/, v => [v.a2 || 'С тем самым', 'С андеграундом', 'С поп-звездой']], [/тур/, () => ['Москва', 'Питер', 'Казань', 'Екатеринбург']], [/наушниках/, () => ['Наушники', 'Машина', 'Колонка']]
 ];
@@ -220,6 +225,57 @@ const C: Record<string, string[]> = {
   news: ['давно пора', 'кто слушал?', 'неожиданно', 'ну такое', 'ждём'], review: ['слишком низко', 'справедливо', 'критики опять ничего не поняли', 'соглашусь'],
   any: ['🔥', '❤️', 'лучший', 'ждём новое', 'база', '👀']
 };
+
+// ---------------------------------------------------------------------------
+// v2.5: many more texts (merged into the banks above)
+// ---------------------------------------------------------------------------
+const B_MORE: Partial<Record<PType, Bank>> = {
+  release: { any: ['«{t}». слушайте громко, читайте тексты', 'долго держал «{t}» в себе. теперь он ваш', '«{t}» — это я без фильтров', 'пятница. «{t}». всё', 'выдохнул. «{t}» вышел'], hype: ['«{t}» УЖЕ ТУТ. КТО ПЕРВЫЙ?', 'залетаем в «{t}» всей толпой 🔥'], minimal: ['наконец.', '«{t}» →'] },
+  announce: { any: ['{d}. запоминайте дату', 'новый {kind} готов. осталось чуть-чуть', 'сводим последние треки. скоро', 'пятница будет громкой', 'у меня для вас кое-что есть. {d}', 'дата в закрепе. {d}'], mysterious: ['{d}.', '…{d}'] },
+  countdown: { any: ['{n} дней', 'осталось {n}', 'через {n} дней всё изменится', 'обратный отсчёт: {n}', '{n}. {n}. {n}.'] },
+  teaser: { any: ['кусочек «{t}» — в сторис', 'вот вам 15 секунд «{t}»', 'это из «{t}». угадаете припев?', 'кто узнал бит — тот свой', 'отрывок. полная версия — {d}'] },
+  studio: { any: ['7 часов в студии и одна строчка, которая всё решила', 'сегодня записали то, что я боялся писать', 'новый звук. вам понравится (надеюсь)', 'с {prod} опять до утра', 'студия, чай, тишина'] },
+  emotion: { any: ['спасибо, что вы есть', 'иногда музыка — единственное, что держит', 'сегодня хороший день', 'устал, но счастлив', 'вы не представляете, как я вас люблю'] },
+  opinion: { any: ['музыка не обязана быть удобной', 'лучшие треки пишутся за 20 минут', 'альбомы > синглы. спорьте', 'хватит гнаться за чартами', 'в {city} лучшая публика, без вариантов'] },
+  news: { any: ['{a}: «{t}» стартовал с {plays}', 'Что известно о «{t}»: дата, гости, продюсеры', '{a} готовит новый релиз — выход {d}', 'Обложка «{t}» уже обсуждается', '«{t}» — главный релиз недели? Разбираем'] },
+  insider: { any: ['Слышали, что у {a} уже готов клип', '{a} и {a2} снова в одной студии', 'На следующей неделе от {a} будет сюрприз', '{a} меняет команду перед альбомом', 'Грядёт что-то большое от {a}. Ждите пятницы'] },
+  meme: { any: ['я после «{t}» пытаюсь слушать что-то ещё: не получается', 'когда {a} выпустил «{t}», а у тебя завтра экзамен', '«{t}» на репите, соседи уже знают текст', 'мой плейлист: 90% {a}, 10% тишина', 'спотифай врапд у всех фанатов {a}: «{t}» 400 раз'] },
+  poll: { any: ['какой трек сделать следующим синглом?', 'клип или живое выступление?', 'громче бит или громче голос?'] },
+  fact: { any: ['Факт: «{t}» записан всего за {n} дней', '«{t}» — {n}-й релиз {a} за карьеру', 'Интересно: бит «{t}» спродюсировал {prod}', 'В «{t}» есть отсылка к старому треку {a}', 'Обложку «{t}» снимали в {city}', '«{t}» — первый релиз {a} на {lbl}'] },
+  stats: { any: ['«{t}» — уже {plays} прослушиваний', '{a}: «{t}» набирает быстрее прошлого релиза', 'Цифры недели: «{t}» — {plays}', '«{t}» обогнал прошлый релиз {a} за 3 дня', 'Каждый пятый слушатель «{t}» переслушал его 3+ раза'] },
+  reaction: { any: ['фанаты {a} после «{t}»: 🫠', 'комменты под «{t}» — отдельный жанр искусства', '«{t}»: вы уже переслушали? делитесь любимой строчкой', 'реакция интернета на «{t}» — смотрим в карусели', 'кто плакал на «{t}», ставьте ❤️'] },
+  hottake: { any: ['Непопулярное мнение: «{t}» — лучший релиз {a}', 'Скажем честно: «{t}» переоценён', '«{t}» через год будут считать классикой', '«{t}» — это ответ всем, кто списал {a}', 'Хайпа больше, чем музыки? «{t}» под вопросом'] },
+  versus: { any: ['«{t}» или «{t2}»?', 'Батл недели: «{t}» против «{t2}»', 'Что слушаете чаще: «{t}» или «{t2}»?'] },
+  rumor: { any: ['Слух: {a} выпускает новый {kind} уже {d}', 'Говорят, {a} готовит релиз к {d}', 'Инсайд: дата нового релиза {a} — {d}', 'Источники называют дату: {a}, {d}', 'Похоже, у {a} релиз в эту пятницу'] },
+  featTease: { any: ['Слух: {a} и {a2} записали совместку', 'Инсайд: на новом релизе {a} будет {a2}', '{a} × {a2}? Источники говорят — да', 'Кажется, {a} и {a2} готовят фит. Ставки?', 'скоро с @{a2}. держитесь'] },
+  listening: { any: ['закрытая прослушка «{t}» прошла. гости в шоке', 'вчера дал послушать «{t}» друзьям. молчали минуту', 'прослушка нового в {city}: билеты закончились за час', 'играл «{t}» в машине у {a2}. одобрено'] },
+  recap: { any: ['Итоги недели: главные релизы, рекорды и скандалы', 'Неделя в музыке: кто выстрелил, кто провалился', 'Что вышло за неделю — короткий дайджест', 'Главное за 7 дней: {a} — «{t}» и не только'] },
+  question: { any: ['Кто ждёт «{t}» от {a}?', 'Чего ждёте от «{t}»?', 'Как думаете, «{t}» попадёт в топ-10?', 'Вы ждёте релиз {a}?'] },
+  fanart: { any: ['Фан-арт по «{t}» — подписчики, вы лучшие', 'Нарисовали обложку «{t}» в стиле аниме', 'Ваши рисунки по «{t}» — подборка', 'кто-то сделал татуировку со строчкой из «{t}»'] },
+  chartWatch: { any: ['Прогноз: «{t}» дебютирует в топ-10', 'Чарт-вотч: «{t}» может забрать №1', '«{t}» поднимется в чарте? Цифры говорят — да', 'Чартовая гонка: «{t}» против «{t2}»'] }
+};
+for (const [k, bank] of Object.entries(B_MORE) as Array<[PType, Bank]>) {
+  const cur: Bank = B[k] || {};
+  for (const [st, arr] of Object.entries(bank) as Array<[keyof Bank, string[]]>) cur[st] = [...(cur[st] || []), ...arr];
+  B[k] = cur;
+}
+const C_MORE: Record<string, string[]> = {
+  fact: ['не знал!', 'вот это деталь', 'теперь слушаю по-другому', 'интересно 👀'],
+  stats: ['заслуженно', 'а будет ещё больше', 'цифры не врут', 'вот это темп'],
+  reaction: ['это я', 'плакал(а) на втором куплете', 'лучшая строчка: «{t}»', '❤️❤️❤️', 'на репите'],
+  hottake: ['не согласен', 'полностью поддерживаю', 'смелое заявление', 'спорно, но база'],
+  versus: ['{o}!!!', 'однозначно {o}', 'оба топ', 'а можно оба?'],
+  rumor: ['ждём', 'опять фейк?', 'если правда — я счастлив', 'источник?', 'дата не сходится'],
+  featTease: ['ЧТО', 'это будет разнос', 'не верю, пока не увижу', 'мечта сбывается'],
+  listening: ['хочу на прослушку', 'когда для всех?', 'завидую'],
+  recap: ['лучший дайджест', 'пропустил половину, спасибо', 'а где {a}?'],
+  question: ['очень жду', 'ждём {d}', 'ну наконец'],
+  fanart: ['талант', 'хочу так же', 'срочно в мерч'],
+  chartWatch: ['будет №1', 'не залетит', 'ставлю на топ-5']
+};
+for (const [k, arr] of Object.entries(C_MORE)) C[k] = [...(C[k] || []), ...arr];
+Object.assign(C, { release: [...C.release, 'слушаю на повторе весь день', 'лучший релиз года без вопросов', 'этот бит…'], meme: [...C.meme, 'я каждую пятницу', 'слишком жизненно'] });
+
 
 // ---------------------------------------------------------------------------
 // index of the catalog
@@ -320,7 +376,7 @@ export function makePost(ix: Index, author: Persona, type: PType, date: string, 
   if (text.includes(`@${v.a2}`) && other) mentions.push(other.id);
   if (type === 'signing' && subj) { text = text.replace(`@${v.a}`, `@${subj.name}`); if (text.includes(`@${subj.name}`)) mentions.push(subj.id); }
   let poll: Post['poll'];
-  if (type === 'poll') { const m = POLL.find(([re]) => re.test(text.toLowerCase())); const opts = m ? m[1](v, tMine.slice(0, 4).map(t => t.title)) : ['Да', 'Нет']; poll = { options: opts, votes: opts.map((_, i) => Math.round(100 + r() * 900 / (i + 1))) }; }
+  if (type === 'poll' || type === 'versus' || type === 'question') { const m = POLL.find(([re]) => re.test(text.toLowerCase())); const opts = m ? m[1](v, tMine.slice(0, 4).map(t => t.title)) : ['Да', 'Нет']; poll = { options: opts, votes: opts.map((_, i) => Math.round(100 + r() * 900 / (i + 1))) }; }
   const eng = engagement(author, type, r);
   const hour = wpick(r, HOURS[author.kind]) + Math.floor(r() * 2);
   const time = ctx.time || `${pad(hour % 24)}:${pad(Math.floor(r() * 60))}`;
@@ -344,7 +400,7 @@ export function makePost(ix: Index, author: Persona, type: PType, date: string, 
     const feat = text.includes(`@${v.a2}`) || /совместн|фит/.test(low) ? other?.name : undefined;
     if (type === 'announce') claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: kindOf(), date: /пятниц/.test(low) ? fri(1, 0) : /неделе/.test(low) ? fri(1, 0) : said, feat };
     else if ((type === 'cryptic' || type === 'countdown') && text.includes(v.d)) claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: 'single', date: said };
-    else if (type === 'insider' || type === 'leak') { const k = kindOf(); claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: k, date: /дата/.test(low) && text.includes(v.d) ? said : k === 'album' ? fri(21, 50) : fri(7, 35), feat, title: type === 'leak' && /альбома .+ — «/.test(text) ? v.alb : undefined }; }
+    else if (type === 'insider' || type === 'leak' || type === 'rumor' || type === 'featTease') { const k = kindOf(); claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: k, date: /дата/.test(low) && text.includes(v.d) ? said : k === 'album' ? fri(21, 50) : fri(7, 35), feat, title: type === 'leak' && /альбома .+ — «/.test(text) ? v.alb : undefined }; }
     else if (type === 'collab' && other) claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: 'single', date: fri(10, 35), feat: other.name };
   }
   const big = text.replace(/[\s.…]/g, '').length <= 12 && !rel && type !== 'poll';
@@ -358,10 +414,18 @@ export function makePost(ix: Index, author: Persona, type: PType, date: string, 
 // ---------------------------------------------------------------------------
 // one day of the feed
 // ---------------------------------------------------------------------------
-export interface FeedSettings { density: 'low' | 'normal' | 'high'; mix: 'artists' | 'balanced'; memes: boolean; topComment: boolean; liveSpeed: 'slow' | 'normal' | 'fast'; compact: boolean }
-export const DEFAULT_SETTINGS: FeedSettings = { density: 'normal', mix: 'artists', memes: true, topComment: true, liveSpeed: 'normal', compact: false };
-function artistType(ix: Index, p: Persona, date: string, r: R): { type: PType; ctx: Ctx } {
+export interface FeedSettings {
+  density: 'low' | 'normal' | 'high'; mix: 'artists' | 'balanced'; memes: boolean; topComment: boolean; liveSpeed: 'slow' | 'normal' | 'fast'; compact: boolean;
+  announce: 'low' | 'normal' | 'more' | 'max'; insiders: 'low' | 'normal' | 'more'; context: 'less' | 'normal' | 'more' | 'max'; featRumors: boolean; look: 'classic' | 'soft';
+}
+export const DEFAULT_SETTINGS: FeedSettings = { density: 'normal', mix: 'artists', memes: true, topComment: true, liveSpeed: 'normal', compact: false, announce: 'normal', insiders: 'normal', context: 'normal', featRumors: true, look: 'classic' };
+const ANN_K = { low: 0.5, normal: 1, more: 1.8, max: 2.8 } as const;
+const INS_K = { low: 0.5, normal: 1, more: 1.9 } as const;
+const CTX_K = { less: 0.5, normal: 1, more: 1.7, max: 2.6 } as const;
+function artistType(ix: Index, p: Persona, date: string, r: R, st?: FeedSettings): { type: PType; ctx: Ctx } {
   const up = upcomingOf(ix, p.artistId, date, 14);
+  const AF = ANN_K[st?.announce || 'normal'] ?? 1;
+  const own = recentOf(ix, p.artistId, date, 7);
   const ch = (ix.charted.get(p.artistId || '') || []).filter(t => (t.previousChartPosition || 99) <= 40)[0];
   const aw = (ix.awardsByMonth.get(date.slice(0, 7)) || []).find(a => norm(a.winner.type === 'artist' ? a.winner.title : a.winner.artistName).includes(norm(p.name)));
   const hasOld = (ix.tops.get(p.artistId || '') || []).some(t => t.releaseDate && msOf(date) - msOf(t.releaseDate.slice(0, 10)) > 300 * DAY);
@@ -369,14 +433,16 @@ function artistType(ix: Index, p: Persona, date: string, r: R): { type: PType; c
   const w: Array<[PType, number]> = [
     ['emotion', 2.6], ['studio', 2], ['life', 1.5], ['opinion', 0.9], ['lyric', 1.1], ['poll', 0.9], ['night', 1], ['city', 0.6], ['tour', 0.7], ['merch', 0.35],
     ['respect', 1], ['collab', 0.55], ['subtweet', 0.45 * ag], ['beef', 0.18 * ag], ['producer', 0.45], ['cryptic', (p.cryptic || 0.05) * 14], ['milestone', p.followers > 2e5 ? 0.15 : 0],
-    ['announce', up ? 0 : 1.2], ['throwback', hasOld ? 0.8 : 0], ['chart', ch ? 2 : 0], ['award', aw ? 3 : 0], ['countdown', up ? 2.4 : 0], ['teaser', up ? 1.6 : 0], ['cover', up ? 0.7 : 0], ['tracklist', up && up.kind === 'album' ? 1 : 0], ['delay', up ? 0.06 : 0]
+    ['announce', up ? 0 : 1.2 * AF], ['throwback', hasOld ? 0.8 : 0], ['chart', ch ? 2 : 0], ['award', aw ? 3 : 0], ['countdown', up ? 2.4 * AF : 0], ['teaser', up ? 1.6 * AF : 0], ['cover', up ? 0.7 * AF : 0], ['tracklist', up && up.kind === 'album' ? 1 * AF : 0], ['delay', up ? 0.06 : 0],
+    ['listening', up ? 0.5 * AF : 0], ['featTease', st?.featRumors === false ? 0 : 0.22 * AF], ['hottake', 0.25], ['question', up ? 0.35 : 0.12], ['stats', own ? 0.6 : 0]
   ];
   const type = wpick(r, w);
   const ctx: Ctx = {};
-  if (['countdown', 'teaser', 'cover', 'tracklist', 'delay'].includes(type)) ctx.rel = up;
+  if (['countdown', 'teaser', 'cover', 'tracklist', 'delay', 'listening', 'question'].includes(type)) ctx.rel = up;
+  if (type === 'stats') ctx.rel = own;
   if (type === 'chart' && ch) { ctx.pos = ch.previousChartPosition; ctx.rel = { kind: 'track', id: ch.id, title: ch.title, artistId: ch.artistId, artistName: ch.artistName, cover: ch.coverUrl, plays: ch.plays, date: (ch.releaseDate || '').slice(0, 10) }; }
   if (type === 'award' && aw) ctx.nom = aw.nominationTitle;
-  if (['respect', 'collab', 'subtweet', 'beef'].includes(type)) {
+  if (['respect', 'collab', 'subtweet', 'beef', 'featTease', 'hottake'].includes(type)) {
     const near = ix.artistP.filter(o => o.id !== p.id && Math.abs(Math.log10(o.followers) - Math.log10(p.followers)) < 0.7 && (type === 'respect' || norm(o.genre) === norm(p.genre) || r() < 0.35));
     ctx.other = near.length ? pick(r, near.slice(0, 40)) : undefined;
     if (!ctx.other && type !== 'subtweet') return { type: 'emotion', ctx: {} };
@@ -405,18 +471,38 @@ function genDay(ix: Index, date: string, seed: number, st: FeedSettings): Post[]
     if (ap && r() < 0.4 / k) push(makePost(ix, ap, 'thanks', date, r, { rel }), 3);
     if (r() < 0.22) { const m = pk('media'); const base = rel.rating ? (rel.rating / 90) * 10 : 5.6 + r() * 3; if (m) push(makePost(ix, m, 'review', date, r, { rel, subject: ap, score: `${Math.min(9.8, Math.max(3.5, base + (r() - 0.5) * 1.6)).toFixed(1)}/10` })); }
   }
+  // 2b. context: posts about drops in the next days and releases of the last week
+  const ctxK = CTX_K[st.context || 'normal'] ?? 1;
+  for (let k = 1; k <= 10; k++) for (const rel of (ix.relByDay.get(isoOf(msOf(date) + k * DAY)) || []).slice(0, 6)) {
+    if (r() > (0.32 / Math.sqrt(k)) * ctxK) continue;
+    const ap = ix.byId.get(`a:${rel.artistId}`);
+    const roll = r();
+    if (roll < 0.34) { const ins = pk('insider'); if (ins) push(makePost(ix, ins, rel.feat && st.featRumors !== false && r() < 0.5 ? 'featTease' : 'rumor', date, r, { rel, subject: ap })); }
+    else if (roll < 0.58 && ap) push(makePost(ix, ap, k <= 3 ? 'countdown' : wpick<PType>(r, [['teaser', 2], ['listening', 1], ['cover', 1]]), date, r, { rel }), 3);
+    else if (roll < 0.8) { const pg = pk('page'); if (pg) push(makePost(ix, pg, 'question', date, r, { rel, subject: ap })); }
+    else { const m = pk('media'); if (m) push(makePost(ix, m, r() < 0.5 ? 'news' : 'chartWatch', date, r, { rel, subject: ap })); }
+  }
+  for (let k = 1; k <= 7; k++) for (const rel of (ix.relByDay.get(isoOf(msOf(date) - k * DAY)) || []).slice(0, 6)) {
+    if (rel.kind === 'snippet' || r() > (0.36 / Math.sqrt(k)) * ctxK) continue;
+    const ap = ix.byId.get(`a:${rel.artistId}`);
+    const t = wpick<PType>(r, [['reaction', 2.2], ['fact', 1.4], ['stats', 1.2], ['versus', 0.9], ['hottake', 0.9], ['meme', st.memes ? 1.2 : 0], ['fanart', 0.5], ['chartWatch', 0.7]]);
+    const who = t === 'reaction' || t === 'meme' || t === 'versus' || t === 'fanart' ? pk('page') : t === 'hottake' ? (r() < 0.5 ? pk('insider') : pk('media')) : pk('media');
+    if (who) push(makePost(ix, who, t, date, r, { rel, subject: ap }));
+  }
+  if (new Date(msOf(date)).getUTCDay() === 1) { const m = pk('media'); if (m) push(makePost(ix, m, 'recap', date, r, {})); }
   // 3. the rest of the day
   const base = st.density === 'low' ? 12 : st.density === 'high' ? 34 : 22;
   const n = base + Math.floor(r() * base * 0.4);
   const mix: Array<[Kind, number]> = st.mix === 'artists'
     ? [['artist', 76], ['insider', 9], ['media', 6], ['page', st.memes ? 5 : 0], ['label', 2.5], ['celeb', 1.5]]
     : [['artist', 58], ['insider', 13], ['media', 11], ['page', st.memes ? 9 : 0], ['label', 5], ['celeb', 4]];
+  mix.forEach(m => { if (m[0] === 'insider') m[1] *= INS_K[st.insiders || 'normal'] ?? 1; });
   for (let i = 0; i < n; i++) {
     const kind = wpick(r, mix);
-    if (kind === 'artist') { const p = pickArtist(ix, r); const { type, ctx } = artistType(ix, p, date, r); push(makePost(ix, p, type, date, r, ctx)); continue; }
+    if (kind === 'artist') { const p = pickArtist(ix, r); const { type, ctx } = artistType(ix, p, date, r, st); push(makePost(ix, p, type, date, r, ctx)); continue; }
     const p = pk(kind); if (!p) continue;
     const subj = pickArtist(ix, r);
-    if (kind === 'insider') { const up = upcomingOf(ix, subj.artistId, date, 30); const t: PType = up && r() < 0.5 ? 'leak' : 'insider'; push(makePost(ix, p, t, date, r, { subject: subj, rel: t === 'leak' ? up : undefined })); }
+    if (kind === 'insider') { const up = upcomingOf(ix, subj.artistId, date, 30); const t: PType = up && r() < 0.45 ? 'leak' : st.featRumors !== false && r() < 0.22 ? 'featTease' : up && r() < 0.4 ? 'rumor' : 'insider'; push(makePost(ix, p, t, date, r, { subject: subj, rel: t === 'leak' || t === 'rumor' ? up : undefined })); }
     else if (kind === 'media') { const rec = recentOf(ix, subj.artistId, date, 10); const t = wpick<PType>(r, [['news', rec ? 3 : 0.8], ['record', 0.8], ['insider', 0.6], ['meme', st.memes ? 0.3 : 0]]); push(makePost(ix, p, t, date, r, { subject: subj, rel: t === 'news' || t === 'record' ? rec : undefined })); }
     else if (kind === 'page') push(makePost(ix, p, wpick<PType>(r, [['meme', 5], ['lyric', 1.2], ['throwback', 0.8]]), date, r, { subject: subj }));
     else if (kind === 'label') push(makePost(ix, p, r() < 0.4 ? 'signing' : 'news', date, r, { subject: subj, rel: recentOf(ix, subj.artistId, date, 14) }));
@@ -582,11 +668,12 @@ export const SocialFeed: React.FC<{
           <div className="relative">
             <button type="button" onClick={() => setShowSet(v => !v)} className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${showSet ? 'bg-white text-black' : 'bg-white/[0.04] text-zinc-400 hover:text-white'}`} title="Настройки ленты"><Settings2 className="w-4 h-4" /></button>
             <AnimatePresence>{showSet && (
-              <motion.div initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -6 }} className="absolute right-0 top-11 z-30 w-72 rounded-2xl border border-white/10 bg-[#121317]/95 backdrop-blur-xl p-4 space-y-3 shadow-2xl">
-                {([['Сколько постов', 'density', [['low', 'Меньше'], ['normal', 'Норма'], ['high', 'Больше']]], ['Кто пишет', 'mix', [['artists', 'В основном артисты'], ['balanced', 'Все поровну']]], ['Живая лента', 'liveSpeed', [['slow', 'Медленно'], ['normal', 'Норма'], ['fast', 'Быстро']]]] as Array<[string, keyof FeedSettings, Array<[string, string]>]>).map(([l, k, o]) => (
+              <motion.div initial={{ opacity: 0, y: -6, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -6 }} className="absolute right-0 top-11 z-30 w-80 max-h-[70vh] overflow-y-auto custom-scrollbar rounded-2xl border border-white/10 bg-[#121317]/95 backdrop-blur-xl p-4 space-y-3 shadow-2xl">
+                <div className="flex items-center justify-between"><span className="text-[12px] font-black text-white">Настройки ленты</span><button type="button" onClick={() => setSt({ ...DEFAULT_SETTINGS })} className="text-[11px] text-zinc-500 hover:text-white">↺ как было</button></div>
+                {([['Сколько постов', 'density', [['low', 'Меньше'], ['normal', 'Норма'], ['high', 'Больше']]], ['Кто пишет', 'mix', [['artists', 'В основном артисты'], ['balanced', 'Все поровну']]], ['Анонсы артистов', 'announce', [['low', 'Реже'], ['normal', 'Норма'], ['more', 'Чаще'], ['max', 'Очень часто']]], ['Инсайды и слухи', 'insiders', [['low', 'Реже'], ['normal', 'Норма'], ['more', 'Чаще']]], ['Посты о свежих и будущих релизах', 'context', [['less', 'Реже'], ['normal', 'Норма'], ['more', 'Чаще'], ['max', 'Максимум']]], ['Вид', 'look', [['classic', 'Классика'], ['soft', 'Мягкие карточки']]], ['Живая лента', 'liveSpeed', [['slow', 'Медленно'], ['normal', 'Норма'], ['fast', 'Быстро']]]] as Array<[string, keyof FeedSettings, Array<[string, string]>]>).map(([l, k, o]) => (
                   <div key={k}><div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-1.5">{l}</div><Seg value={String(st[k])} onChange={v => setSt(s => ({ ...s, [k]: v }))} options={o} /></div>
                 ))}
-                {([['Мемы и паблики', 'memes'], ['Топ-комментарий под постом', 'topComment'], ['Компактный вид', 'compact']] as Array<[string, keyof FeedSettings]>).map(([l, k]) => (
+                {([['Мемы и паблики', 'memes'], ['Слухи о фитах', 'featRumors'], ['Топ-комментарий под постом', 'topComment'], ['Компактный вид', 'compact']] as Array<[string, keyof FeedSettings]>).map(([l, k]) => (
                   <button key={k} type="button" onClick={() => setSt(s => ({ ...s, [k]: !s[k] }))} className="w-full flex items-center justify-between text-[12px] text-zinc-300">
                     <span>{l}</span><span className={`w-8 h-[18px] rounded-full p-0.5 transition-colors ${st[k] ? 'theme-bg-accent' : 'bg-white/10'}`}><span className={`block w-[14px] h-[14px] rounded-full bg-white transition-transform ${st[k] ? 'translate-x-[14px]' : ''}`} /></span>
                   </button>
@@ -618,7 +705,7 @@ export const SocialFeed: React.FC<{
             </div>
           </div>
 
-          <div className="rounded-3xl bg-white/[0.02] border border-white/[0.06] overflow-hidden divide-y divide-white/[0.05]">
+          <div className={st.look === 'soft' ? 'space-y-2.5' : 'rounded-3xl bg-white/[0.02] border border-white/[0.06] overflow-hidden divide-y divide-white/[0.05]'}>
             {posts.length === 0 && <div className="py-16 text-center text-sm text-zinc-500">Тишина. Смени дату или нажми «Случайный».</div>}
             <AnimatePresence initial={false}>
               {posts.map(post => {
@@ -626,8 +713,9 @@ export const SocialFeed: React.FC<{
                 const myVote = votes[post.id];
                 const top = st.topComment && openC !== post.id ? post.comments[0] : undefined;
                 return (
-                  <motion.article key={post.id} layout="position" initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-                    className={`group/post flex gap-3 ${st.compact ? 'px-4 py-3' : 'px-4 sm:px-5 py-4'} hover:bg-white/[0.015] transition-colors`}>
+                  <motion.article key={post.id} layout="position" initial={st.look === 'soft' ? { opacity: 0, y: 14, scale: 0.985 } : { opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }}
+                    transition={st.look === 'soft' ? { type: 'spring', stiffness: 260, damping: 28, mass: 0.8 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+                    className={`group/post flex gap-3 ${st.compact ? 'px-4 py-3' : 'px-4 sm:px-5 py-4'} ${st.look === 'soft' ? 'rounded-[22px] bg-white/[0.035] border border-white/[0.06] hover:bg-white/[0.055] shadow-[0_12px_32px_-20px_rgba(0,0,0,0.9)] transition-[background-color,transform] duration-300 hover:-translate-y-[1px]' : 'hover:bg-white/[0.015] transition-colors'}`}>
                     <button type="button" onClick={() => openPersona(p)} className="shrink-0 self-start mt-0.5"><Av p={p} size={st.compact ? 34 : 42} /></button>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 min-w-0">
@@ -755,7 +843,7 @@ export const SocialFeed: React.FC<{
   );
 };
 
-const Composer: React.FC<{ ix: Index; date: string; st: FeedSettings; onClose: () => void; onPost: (p: Post) => void }> = ({ ix, date, onClose, onPost }) => {
+const Composer: React.FC<{ ix: Index; date: string; st: FeedSettings; onClose: () => void; onPost: (p: Post) => void }> = ({ ix, date, st, onClose, onPost }) => {
   const [who, setWho] = useState('');
   const [author, setAuthor] = useState<Persona | null>(null);
   const [type, setType] = useState<PType>('emotion');
@@ -767,6 +855,19 @@ const Composer: React.FC<{ ix: Index; date: string; st: FeedSettings; onClose: (
   const ctx = (): Ctx => { const r = rels.find(x => x.id === rel); return r ? { rel: r } : author?.kind === 'artist' ? artistType(ix, author, d, rng(hash(type + d))).ctx : {}; };
   const gen = () => { if (author) setText(makePost(ix, author, type, d, rng((Date.now() & 0x7fffffff) ^ hash(text)), ctx()).text); };
   const post = () => { if (!author) return; const base = makePost(ix, author, type, d, rng(hash(text + d + Date.now())), ctx()); const n = new Date(); onPost({ ...base, id: `u${Date.now()}`, time: `${pad(n.getHours())}:${pad(n.getMinutes())}`, date: d, text: text.trim() || base.text, big: (text.trim() || base.text).replace(/[\s.…]/g, '').length <= 12 && !base.attach, mentions: text.trim() ? [] : base.mentions }); };
+  const kindFor = (t: PType): Kind => (['insider', 'leak', 'rumor', 'featTease'].includes(t) ? 'insider' : ['news', 'review', 'record', 'fact', 'stats', 'recap', 'chartWatch', 'hottake'].includes(t) ? 'media' : ['meme', 'question', 'versus', 'reaction', 'fanart'].includes(t) ? 'page' : t === 'signing' ? 'label' : t === 'celeb' ? 'celeb' : 'artist');
+  const batch = () => {
+    const r = rng((Date.now() & 0x7fffffff) ^ hash(type));
+    const k = kindFor(type); const n = new Date();
+    for (let i = 0; i < 3; i++) {
+      const who = author || (k === 'artist' ? pickArtist(ix, r) : ix.byKind[k].length ? pick(r, ix.byKind[k]) : pickArtist(ix, r));
+      if (!who) continue;
+      const subj = pickArtist(ix, r);
+      const c: Ctx = who.kind === 'artist' ? artistType(ix, who, d, r, st).ctx : { subject: subj, rel: recentOf(ix, subj?.artistId, d, 10) || upcomingOf(ix, subj?.artistId, d, 14) };
+      const base = makePost(ix, who, type, d, r, c);
+      onPost({ ...base, id: `u${Date.now()}${i}${Math.floor(r() * 1e4)}`, time: `${pad(n.getHours())}:${pad(Math.max(0, n.getMinutes() - i * 3))}`, date: d });
+    }
+  };
   const inp = 'h-9 px-3 rounded-xl bg-white/[0.04] border border-white/[0.06] text-xs text-white outline-none focus:border-white/20';
   return (
     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
@@ -787,6 +888,7 @@ const Composer: React.FC<{ ix: Index; date: string; st: FeedSettings; onClose: (
         <textarea value={text} onChange={e => setText(e.target.value)} rows={3} placeholder="Текст поста или «Сгенерировать» — в стиле автора" className="w-full px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.06] text-sm text-white outline-none focus:border-white/20 resize-none" />
         <div className="flex items-center justify-end gap-2">
           <button type="button" onClick={onClose} className="w-9 h-9 rounded-xl text-zinc-400 hover:text-white flex items-center justify-center"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={batch} title="Три поста выбранного вида (автор — выбранный или подходящий)" className="px-3 h-9 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-xs font-semibold text-zinc-200 inline-flex items-center gap-1.5">×3 «{TYPE_RU[type]}»</button>
           <button type="button" onClick={gen} disabled={!author} className="px-3 h-9 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-xs font-semibold text-zinc-200 disabled:opacity-30 inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" />Сгенерировать</button>
           <button type="button" onClick={post} disabled={!author} className="px-4 h-9 rounded-xl bg-white text-black text-xs font-black disabled:opacity-30 inline-flex items-center gap-1.5"><Send className="w-3.5 h-3.5" />Опубликовать</button>
         </div>

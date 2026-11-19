@@ -4,7 +4,8 @@ import type { TitleMood, ArtistNamingProfile } from './titleGen';
 import { TitleMoodPicker } from './TitleMoodPicker';
 export type { TitleMood } from './titleGen';
 import { createPortal } from 'react-dom';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+import { engineDebut, engineGrowth, engineSleeper, engineChart, engineListeners, engineHype, engineSetCatalog, engineActive, smartDuration, WeekBuzzStrip, SimDigestPro, SimDigestFullscreen, ListenEngineButton, AutoBackupPanel } from './MusaicLab';
 import {
   Play,
   FastForward,
@@ -1413,7 +1414,7 @@ export const ReleaseHypeControl: React.FC<{
   );
 };
 
-export function forecastReleasePlays(params: {
+function forecastReleasePlaysCore(params: {
   artist: Artist;
   featArtist?: Artist | null;
   featuredNames?: string;
@@ -1528,6 +1529,14 @@ export function forecastReleasePlays(params: {
   const singlePlays = Math.round(compressedReach * detFactor * randomFactor * singleRatio + tail);
   const singleFloor = Math.round((deterministic ? 680_000 : randRange(520_000, 880_000)) + (deterministic ? 2400 : randInt(213, 8917)));
   return Math.max(singleFloor, singlePlays);
+}
+
+/** every plays generator goes through here: the listen engine adjusts the result */
+export function forecastReleasePlays(params: Parameters<typeof forecastReleasePlaysCore>[0]): number {
+  const raw = forecastReleasePlaysCore(params);
+  if (!engineActive()) return raw;
+  const det = params.deterministic ? raw : forecastReleasePlaysCore({ ...params, deterministic: true });
+  return engineDebut(raw, det, { artist: params.artist, itemType: params.itemType, hasFeat: Boolean(params.featArtist || params.featuredNames), deterministic: params.deterministic });
 }
 
 // ============================================================================
@@ -1737,7 +1746,7 @@ export function generateAlbumTracksWithFeats(params: {
     const rawWeight = Math.max(0.32, trackRoleMult * featMult * randRange(0.84, 1.18));
     drafts.push({
       title,
-      duration: getRandomDuration(),
+      duration: smartDuration(featuredArtist),
       rawWeight,
       featuredArtist,
       isExplicit: Math.random() < 0.45,
@@ -2173,7 +2182,7 @@ function rankTracksForChart(tracks: Track[], dateStr: string): Track[] {
       const rvAt = (t as any).revivalAt as string | undefined;
       const rvLeft = rvAt && diffDays > 120 ? Math.max(0, 1 - Math.max(0, (nowMs - new Date(rvAt).getTime()) / 86400000) / 35) : 0;
       const revivalMult = rvLeft > 0 ? 1 + ((t as any).revivalPower || 10) * rvLeft : 1;
-      const hotScore = Math.round(((t.plays || 0) * recencyBoost * longevityMult * revivalMult * 12) / Math.pow(diffDays + 5, 0.66));
+      const hotScore = Math.round(((t.plays || 0) * recencyBoost * longevityMult * revivalMult * engineChart(t.artistId, diffDays) * 12) / Math.pow(diffDays + 5, 0.66));
       return { track: t, hotScore };
     })
     .sort((a, b) => b.hotScore - a.hotScore)
@@ -2256,6 +2265,7 @@ export function advanceSimulationStep(params: {
   const artistMap = new Map<string, Artist>();
   simState.artists.forEach(a => artistMap.set(a.id, { ...a }));
 
+  engineSetCatalog(simState.artists, simState.tracks);
   const newTracks: Track[] = [];
   const newAlbums: Album[] = [];
   const weeklyDropsSummary: SimWeeklyDropSummary[] = [];
@@ -2570,7 +2580,7 @@ export function advanceSimulationStep(params: {
             ? 1.5
             : 1.0;
     const isSleeperHit =
-      !t.isSnippet && ageDays > 28 && ageDays <= 270 && Math.random() < sleeperChance * promoSleeperBoost;
+      !t.isSnippet && ageDays > 28 && ageDays <= 270 && Math.random() < sleeperChance * promoSleeperBoost * engineSleeper(art, !t.simGenerated);
     const randomMult = isSleeperHit ? randRange(1.55, 2.25) : randRange(0.86, 1.14);
 
     // Slower weekly growth ceiling anchored to sublinear reach + catalog averages
@@ -2609,7 +2619,7 @@ export function advanceSimulationStep(params: {
       effectiveBase * ageDecayRate * catalogDamping * qualityBoost * hypeBoost * randomMult * stepFactor
     );
     const hardCap = Math.round(tierWeeklyCeiling * (t.simGenerated ? 0.88 : 0.38) * (isSleeperHit ? 1.60 : 1.0) * stepFactor);
-    const deltaPlays = clamp(rawDelta, Math.round(350 * stepFactor), Math.max(1_600, hardCap));
+    const deltaPlays = engineGrowth(clamp(rawDelta, Math.round(350 * stepFactor), Math.max(1_600, hardCap)), { artist: art, ageDays, catalog: !t.simGenerated });
 
     const nextPlays = (t.plays || 0) + deltaPlays;
     const nextLikes = (t.likes || 0) + Math.round(deltaPlays * randRange(0.03, 0.06));
@@ -2760,10 +2770,10 @@ export function advanceSimulationStep(params: {
       }
     }
 
-    const scaledPct = clamp(pctChange * stepFactor, -0.04, 0.085);
+    const scaledPct = engineListeners(pctChange, art, stepFactor);
     const delta = Math.round(baseFollowers * scaledPct);
     const nextFollowers = Math.max(15_000, baseFollowers + delta);
-    const nextHype = clamp(Math.round(currentHype + hypeDelta * Math.min(1.5, stepFactor)), 8, 99);
+    const nextHype = clamp(Math.round(currentHype + engineHype(hypeDelta, art) * Math.min(1.5, stepFactor)), 8, 99);
 
     listenerChanges.push({
       artistId: art.id,
@@ -7528,7 +7538,7 @@ const SimManualTab = memo(({
     const nextTrack: SimAlbumTrack = {
       id: makeId('mtrk'),
       title: childTrTitle.trim(),
-      duration: childTrDur.trim() || getRandomDuration(),
+      duration: childTrDur.trim() || smartDuration(childTrFeat),
       plays: parsedPlays > 0 ? parsedPlays : Math.round(defaultPerTrack * randRange(0.75, 1.35)),
       featuredArtist: childTrFeat.trim() || undefined,
       isExplicit: false
@@ -7641,7 +7651,11 @@ const SimManualTab = memo(({
       duration:
         manualItemType === 'album'
           ? undefined
-          : manualDuration.trim() || (manualItemType === 'snippet' ? '0:32' : '2:34'),
+          : manualItemType === 'snippet'
+            ? manualDuration.trim() || '0:32'
+            : !manualDuration.trim() || manualDuration.trim() === '2:34'
+              ? smartDuration(manualFeat)
+              : manualDuration.trim(),
       isExplicit: false,
       genre: manualGenre.trim() || selectedArt?.genre || 'Hip-Hop / Pop',
       plays: resolvedPlays,
@@ -7870,13 +7884,23 @@ const SimManualTab = memo(({
                     }
                   />
                 ) : (
-                  <input
-                    type="text"
-                    value={manualDuration}
-                    onChange={e => setManualDuration(e.target.value)}
-                    placeholder={manualItemType === 'snippet' ? '0:32' : '2:34'}
-                    className="w-full bg-black/40 border border-white/10 focus:border-white/30 rounded-2xl px-3.5 py-2.5 text-xs font-mono font-bold text-white text-center outline-none"
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={manualDuration}
+                      onChange={e => setManualDuration(e.target.value)}
+                      placeholder={manualItemType === 'snippet' ? '0:32' : 'авто'}
+                      className="w-full bg-black/40 border border-white/10 focus:border-white/30 rounded-2xl px-3.5 py-2.5 text-xs font-mono font-bold text-white text-center outline-none"
+                    />
+                    <button
+                      type="button"
+                      title="Случайная длительность (с учётом фитов)"
+                      onClick={() => setManualDuration(smartDuration(manualFeat, { snippet: manualItemType === 'snippet' }))}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 text-xs"
+                    >
+                      🎲
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -8605,6 +8629,10 @@ export const SimConsoleModal: React.FC<{
   onOpenRelease?: (itemType: 'track' | 'album' | 'snippet', id: string, weekNumber?: number) => void;
   onOpenArtist?: (artistId: string) => void;
   onExitSim: () => void;
+  onSetArtistFollowers?: (map: Record<string, number>) => void;
+  onExportSimAsCatalog?: (mode: 'light' | 'full' | 'media') => void;
+  onExportSimSnapshot?: (withMedia: boolean) => void;
+  onRestoreBackup?: (kind: 'master' | 'sim', data: any) => void;
 }> = ({
   isOpen,
   onClose,
@@ -8627,9 +8655,14 @@ export const SimConsoleModal: React.FC<{
   onGenerateArtistBio,
   onOpenRelease,
   onOpenArtist,
-  onExitSim
+  onExitSim,
+  onSetArtistFollowers,
+  onExportSimAsCatalog,
+  onExportSimSnapshot,
+  onRestoreBackup
 }) => {
   const [tab, setTab] = useState<SimModeType | 'radar' | 'digest'>(initialTab);
+  const [digestFull, setDigestFull] = useState(false);
   const [autopilot, setAutopilot] = useState<SimAutopilotConfig>(() => ({ ...DEFAULT_AUTOPILOT_CONFIG, ...loadScenarioConfig() }));
   const [advanceDays, setAdvanceDays] = useState<number>(7);
   const [proposals, setProposals] = useState<SimProposal[]>([]);
@@ -9081,6 +9114,7 @@ export const SimConsoleModal: React.FC<{
               ))}
             </div>
             )}
+            <ListenEngineButton artists={simState.artists} tracks={simState.tracks} albums={simState.albums} refIso={simState.currentDate} onApplyListeners={onSetArtistFollowers} label="Движок" />
             <button
               type="button"
               onClick={() => setRumorsOpen(v => !v)}
@@ -9150,6 +9184,9 @@ export const SimConsoleModal: React.FC<{
           )}
           {lightMode && (
             <SimLightPanel proposals={proposals} setProposals={setProposals} regenerate={regenerateProposals} autopilot={autopilot} setAuto={updateAutopilot} simState={simState} advanceDays={advanceDays} setAdvanceDays={setAdvanceDays} />
+          )}
+          {(tab === 'semi' || tab === 'manual') && (
+            <WeekBuzzStrip simState={simState} rumors={confirmedRumors} onUse={id => { const rm = confirmedRumors.find(x => x.id === id); if (rm) sendRumor(rm, tab === 'manual' ? 'manual' : 'semi'); }} />
           )}
           {!lightMode && tab === 'semi' && (
             <div className="space-y-4">
@@ -10192,107 +10229,29 @@ export const SimConsoleModal: React.FC<{
           {/* TAB 5: WEEKLY DIGEST & SAFE DATABASE SLOTS */}
           {tab === 'digest' && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              <div className="lg:col-span-6 space-y-4">
-                <h3 className="text-[15px] font-extrabold text-white">Итоги последней недели</h3>
-                {!simState.lastDigest ? (
-                  <div className="p-6 rounded-2xl bg-zinc-900/65 border border-white/12 text-xs text-zinc-300">
-                    Промотайте хотя бы одну неделю, чтобы увидеть сводку по чартам, дебютам и динамике слушателей.
-                  </div>
-                ) : (
-                  <div className="p-5 rounded-2xl bg-zinc-900/75 border border-white/12 space-y-4">
-                    <div className="flex items-center justify-between text-xs text-zinc-400 tabular-nums border-b border-white/[0.06] pb-3">
-                      <span className="font-bold text-white">Неделя {simState.lastDigest.weekNumber}</span>
-                      <span>
-                        {formatSimDate(simState.lastDigest.fromDate)} → {formatSimDate(simState.lastDigest.toDate)}
-                      </span>
-                    </div>
-
-                    {simState.lastDigest.topDebut && (
-                      <div className="p-3 rounded-xl bg-black/35 border border-white/[0.06] flex items-center gap-3">
-                        <CoverArt
-                          url={simState.lastDigest.topDebut.coverUrl}
-                          title={simState.lastDigest.topDebut.title}
-                          className="w-12 h-12 rounded-xl shrink-0"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-[10px] font-bold uppercase tracking-wider theme-accent">Главный дебют</p>
-                          <p className="text-xs font-extrabold text-white truncate">
-                            {simState.lastDigest.topDebut.artistName} — {simState.lastDigest.topDebut.title}
-                          </p>
-                          <p className="text-[11px] text-zinc-400 tabular-nums">
-                            {formatCompact(simState.lastDigest.topDebut.plays)} просл.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {(simState.lastDigest.weeklyDrops && simState.lastDigest.weeklyDrops.length > 0 || (simState.digestHistory && simState.digestHistory.length > 0)) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedDigestWeekNumber(simState.lastDigest?.weekNumber ?? null);
-                          setWeeklyDropsFilter('all');
-                          setWeeklyDropsQuery('');
-                          setShowWeeklyDropsModal(true);
-                        }}
-                        className="w-full py-2.5 px-3.5 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] border border-white/10 text-xs font-bold text-white flex items-center justify-between transition-colors cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Disc className="w-4 h-4 theme-accent" />
-                          <span>Все релизы и сниппеты по неделям</span>
-                        </div>
-                        <span className="text-xs font-bold theme-accent flex items-center gap-1 whitespace-nowrap">
-                          <span>{(simState.lastDigest.weeklyDrops || []).length} на этой нед.</span>
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </span>
-                      </button>
-                    )}
-
-                    {simState.lastDigest.highlights.length > 0 && (
-                      <ul className="space-y-1.5 text-xs text-zinc-300">
-                        {simState.lastDigest.highlights.map((h, i) => (
-                          <li key={i} className="leading-relaxed">• {h}</li>
-                        ))}
-                      </ul>
-                    )}
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/[0.06]">
-                      <div>
-                        <p className="text-[11px] font-bold text-emerald-400 mb-1.5">Рост слушателей</p>
-                        {simState.lastDigest.topListenersGainers.length === 0 ? (
-                          <p className="text-[11px] text-zinc-500">Нет значимого роста</p>
-                        ) : (
-                          <div className="space-y-1">
-                            {simState.lastDigest.topListenersGainers.map(g => (
-                              <div key={g.artistId} className="flex items-center justify-between text-xs tabular-nums">
-                                <span className="text-zinc-200 truncate">{g.name}</span>
-                                <span className="text-emerald-400 font-semibold">+{formatCompact(g.delta)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-[11px] font-bold text-rose-400 mb-1.5">Спад слушателей</p>
-                        {simState.lastDigest.topListenersLosers.length === 0 ? (
-                          <p className="text-[11px] text-zinc-500">Без заметных падений</p>
-                        ) : (
-                          <div className="space-y-1">
-                            {simState.lastDigest.topListenersLosers.map(l => (
-                              <div key={l.artistId} className="flex items-center justify-between text-xs tabular-nums">
-                                <span className="text-zinc-200 truncate">{l.name}</span>
-                                <span className="text-rose-400 font-semibold">{formatCompact(l.delta)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
+              <div className="lg:col-span-7 space-y-4 min-w-0">
+                <SimDigestPro
+                  simState={simState}
+                  onExpand={() => setDigestFull(true)}
+                  onOpenRelease={onOpenRelease}
+                  onOpenArtist={onOpenArtist}
+                  onShowAllDrops={w => { setSelectedDigestWeekNumber(w ?? null); setWeeklyDropsFilter('all'); setWeeklyDropsQuery(''); setShowWeeklyDropsModal(true); }}
+                />
+                <AnimatePresence>
+                  {digestFull && (
+                    <SimDigestFullscreen
+                      key="digest-full"
+                      simState={simState}
+                      onClose={() => setDigestFull(false)}
+                      onOpenRelease={(t, id, w) => { setDigestFull(false); onOpenRelease && onOpenRelease(t, id, w); }}
+                      onOpenArtist={id => { setDigestFull(false); onOpenArtist && onOpenArtist(id); }}
+                      onShowAllDrops={w => { setDigestFull(false); setSelectedDigestWeekNumber(w ?? null); setWeeklyDropsFilter('all'); setWeeklyDropsQuery(''); setShowWeeklyDropsModal(true); }}
+                    />
+                  )}
+                </AnimatePresence>
               </div>
 
-              <div className="lg:col-span-6 space-y-4">
+              <div className="lg:col-span-5 space-y-4 min-w-0">
                 <h3 className="text-sm font-extrabold text-white">Сохранение и управление базами</h3>
 
                 <div className="p-4 rounded-2xl bg-zinc-900/60 border border-white/[0.08] space-y-3">
@@ -10358,6 +10317,21 @@ export const SimConsoleModal: React.FC<{
                       Сбросить к {formatSimDate(simState.startDate)}
                     </button>
                   </div>
+
+                  {(onExportSimSnapshot || onExportSimAsCatalog) && (
+                    <div className="pt-3 border-t border-white/[0.06] space-y-2">
+                      <p className="text-[11px] font-bold text-zinc-300">Сохранить базу симуляции файлом</p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {onExportSimSnapshot && <button type="button" onClick={() => onExportSimSnapshot(false)} className="px-2.5 py-2 rounded-xl bg-violet-500/10 hover:bg-violet-500/20 border border-violet-400/20 text-[11px] font-bold text-violet-200 text-left leading-tight">Снимок симуляции<span className="block text-[10px] font-medium text-violet-300/70">для загрузки в режиме симуляции</span></button>}
+                        {onExportSimSnapshot && <button type="button" onClick={() => onExportSimSnapshot(true)} className="px-2.5 py-2 rounded-xl bg-violet-500/10 hover:bg-violet-500/20 border border-violet-400/20 text-[11px] font-bold text-violet-200 text-left leading-tight">Снимок + фото<span className="block text-[10px] font-medium text-violet-300/70">только используемые обложки</span></button>}
+                        {onExportSimAsCatalog && <button type="button" onClick={() => onExportSimAsCatalog('light')} className="px-2.5 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-[11px] font-bold text-zinc-100 text-left leading-tight">Как обычная БД · лёгкая<span className="block text-[10px] font-medium text-zinc-500">без фото, формат настроек</span></button>}
+                        {onExportSimAsCatalog && <button type="button" onClick={() => onExportSimAsCatalog('full')} className="px-2.5 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-[11px] font-bold text-zinc-100 text-left leading-tight">Как обычная БД · полная<span className="block text-[10px] font-medium text-zinc-500">с фото, формат настроек</span></button>}
+                        {onExportSimAsCatalog && <button type="button" onClick={() => onExportSimAsCatalog('media')} className="col-span-2 px-2.5 py-1.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.07] text-[11px] font-semibold text-zinc-300">Только фото симуляции (медиа-пак)</button>}
+                      </div>
+                      <p className="text-[10.5px] text-zinc-500 leading-snug">Снимок открывается через «Импорт JSON» здесь, обычная БД — через импорт в настройках. Картинки без дублей, файл компактный.</p>
+                    </div>
+                  )}
+                  {onRestoreBackup && <AutoBackupPanel kind="both" compact onRestore={onRestoreBackup} />}
 
                   {onCommitSimToMaster && (
                     <div className="pt-3 border-t border-white/[0.06] space-y-2">
