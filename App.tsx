@@ -115,7 +115,7 @@ import './fontsExtra';
 // --- Musaic v2.4: charts, release stage, calendar, awards, eras, cover viewer, batch generators ---
 import { SocialFeed, SocialIcon } from './SocialFeed';
 // --- Musaic v2.5: listen engine, stats, release header, auto-save, export ---
-import { smartDuration, engineManualPlays, engineSetCatalog, estimateMonthlyListeners, requestPersistentStorage, maybeAutoBackup, useFlushOnHide, AutoBackupPanel, exportCatalogFile, exportSimSnapshot, importMediaFromFile, setLabAwards, ReleaseHeroHeader, PlaysStatButton, FeatPicker, ListenEngineButton, AUTO_COVER, offloadDataUrls } from './MusaicLab';
+import { smartDuration, engineManualPlays, engineSetCatalog, estimateMonthlyListeners, requestPersistentStorage, maybeAutoBackup, useFlushOnHide, AutoBackupPanel, exportCatalogFile, exportSimSnapshot, importMediaFromFile, setLabAwards, ReleaseHeroHeader, PlaysStatButton, FeatPicker, ListenEngineButton, AUTO_COVER, offloadDataUrls, displayPeak } from './MusaicLab';
 import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource, ScoreRing, AlbumReviewsButton, TrackReviewsButton, WeeklyNewsFeed, ArtistPortfolioButton } from './MusaicPlus';
 
 // --- Types & Constants ---
@@ -9874,7 +9874,7 @@ function HomeView({
       }
     }
 
-    const peakPos = (activeHero.raw as Track | Album).peakChartPosition;
+    const peakPos = displayPeak(activeHero.raw as any, (activeHero.raw as any).plays !== undefined ? 'track' : 'album', tracks, albums).pos;
     const weeksOnChart = (activeHero.raw as Track | Album).weeksOnChart;
 
     // 1. Chart peak or catalog rank
@@ -16121,6 +16121,7 @@ function TrackPage({
 
   const isCurrentPlaying = isPlaying && currentTrackId === track.id;
 
+  const trackPeak = displayPeak(track, 'track', tracks, albums);
   return (
     <div className="min-h-full pb-24 relative isolate">
       <ReleaseStage kind="track" id={track.id} cover={track.coverUrl} title={track.title} artistName={track.artistName} genre={track.genre || album?.genre} releaseDate={track.releaseDate || album?.releaseDate} plays={track.plays} />
@@ -16230,10 +16231,10 @@ function TrackPage({
               <span className="text-zinc-500">•</span>
               <PlaysStatButton kind="track" track={track} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} className="text-zinc-300 font-medium tabular-nums">{track.plays.toLocaleString('ru-RU')} прослушиваний</PlaysStatButton>
 
-              {track.peakChartPosition && (
+              {trackPeak.pos && (
                 <>
                   <span className="text-zinc-500">•</span>
-                  <span className="text-[#1ed760] font-bold">Пик в чарте: #{track.peakChartPosition}</span>
+                  <span className="text-[#1ed760] font-bold">Пик в чарте: {trackPeak.est ? '≈' : ''}#{trackPeak.pos}</span>
                 </>
               )}
             </div>
@@ -16425,10 +16426,10 @@ function TrackPage({
                     <span className="text-zinc-400">Дата выпуска</span>
                     <span className="text-white font-semibold">{formatDateDisplay(track.releaseDate) || '01-01-2026'}</span>
                   </div>
-                  {track.peakChartPosition && (
+                  {trackPeak.pos && (
                     <div className="flex justify-between items-center py-1 border-b border-white/5">
                       <span className="text-zinc-400">Пик в чарте</span>
-                      <span className="theme-accent font-black text-base">#{track.peakChartPosition}</span>
+                      <span className="theme-accent font-black text-base">{trackPeak.est ? '≈' : ''}#{trackPeak.pos}</span>
                     </div>
                   )}
                   {album && track.albumId !== 'single' && (
@@ -16500,10 +16501,10 @@ function TrackPage({
                     <span className="text-zinc-400">Дата выпуска</span>
                     <span className="text-white font-semibold">{formatDateDisplay(track.releaseDate) || '01-01-2026'}</span>
                   </div>
-                  {track.peakChartPosition && (
+                  {trackPeak.pos && (
                     <div className="flex justify-between items-center py-1 border-b border-white/5">
                       <span className="text-zinc-400">Пик в чарте</span>
-                      <span className="theme-accent font-black text-base">#{track.peakChartPosition}</span>
+                      <span className="theme-accent font-black text-base">{trackPeak.est ? '≈' : ''}#{trackPeak.pos}</span>
                     </div>
                   )}
                   {album && track.albumId !== 'single' && (
@@ -16620,6 +16621,7 @@ function AlbumView({
   const pageAccent = readableAccent(albumPalette[0]);
   const releaseKind = rawAlbumTracks.length <= 1 ? 'Сингл' : rawAlbumTracks.length <= 6 ? 'EP' : 'Альбом';
 
+  const albumPeak = displayPeak(album, 'album', tracks, albums);
   return (
     <div
       className={`min-h-full pb-20 relative isolate ${coverColorsOn ? 'page-accent-scope' : ''}`}
@@ -16650,7 +16652,7 @@ function AlbumView({
             <span className="text-zinc-400">{rawAlbumTracks.length} {rawAlbumTracks.length === 1 ? 'трек' : (rawAlbumTracks.length < 5 ? 'трека' : 'треков')}, {calcTotalDuration(rawAlbumTracks)}</span>
             <span className="text-zinc-500">•</span>
             <PlaysStatButton kind="album" album={album} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} className="text-zinc-300 font-medium tabular-nums">{totalAlbumPlays.toLocaleString('ru-RU')} прослушиваний</PlaysStatButton>
-            {album.peakChartPosition && (<><span className="text-zinc-500">•</span><span className="theme-accent font-bold">Пик в чарте: #{album.peakChartPosition}</span></>)}
+            {albumPeak.pos && (<><span className="text-zinc-500">•</span><span className="theme-accent font-bold">Пик в чарте: {albumPeak.est ? '≈' : ''}#{albumPeak.pos}</span></>)}
           </>
         }
         legacy={
@@ -16745,10 +16747,10 @@ function AlbumView({
                 {totalAlbumPlays.toLocaleString('ru-RU')} прослушиваний
               </PlaysStatButton>
 
-              {album.peakChartPosition && (
+              {albumPeak.pos && (
                 <>
                   <span className="text-zinc-500">•</span>
-                  <span className="theme-accent font-bold">Пик в чарте: #{album.peakChartPosition}</span>
+                  <span className="theme-accent font-bold">Пик в чарте: {albumPeak.est ? '≈' : ''}#{albumPeak.pos}</span>
                 </>
               )}
             </div>

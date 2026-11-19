@@ -78,34 +78,6 @@ const Toggle: React.FC<{ on: boolean; onChange: (v: boolean) => void; label: Rea
   </button>
 );
 
-/** slider for a multiplier: shows ×1.25 / −20 %, double click resets */
-const MultSlider: React.FC<{ label: string; hint?: string; value: number; def?: number; min?: number; max?: number; step?: number; onChange: (v: number) => void; unit?: 'x' | 'pct' | 'raw' }> = memo(({ label, hint, value, def = 1, min = 0.2, max = 3, step = 0.01, onChange, unit = 'x' }) => {
-  const changed = Math.abs(value - def) > 1e-6;
-  const shown = unit === 'raw' ? value.toFixed(2) : unit === 'pct' ? `${Math.round(value * 100)}%` : `×${value.toFixed(2)}`;
-  const delta = unit === 'x' && changed ? `${value > def ? '+' : '−'}${Math.round(Math.abs(value / def - 1) * 100)}%` : '';
-  const pct = ((value - min) / (max - min)) * 100;
-  const defPct = ((def - min) / (max - min)) * 100;
-  return (
-    <div className="group/ms" onDoubleClick={() => onChange(def)}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[12px] font-semibold text-zinc-200 truncate">{label}</span>
-        <span className="flex items-center gap-1.5 shrink-0">
-          {delta && <span className={`text-[10px] font-bold ${value > def ? 'text-emerald-400' : 'text-rose-400'}`}>{delta}</span>}
-          <span className={`text-[11px] font-mono font-bold tabular-nums ${changed ? 'text-white' : 'text-zinc-500'}`}>{shown}</span>
-          {changed && <button type="button" title="Вернуть" onClick={() => onChange(def)} className="text-[11px] text-zinc-500 hover:text-white">↺</button>}
-        </span>
-      </div>
-      <div className="relative h-5 flex items-center">
-        <div className="absolute inset-x-0 h-1 rounded-full bg-white/[0.07]" />
-        <div className="absolute h-1 rounded-full theme-bg-accent opacity-70" style={{ left: `${Math.min(pct, defPct)}%`, width: `${Math.abs(pct - defPct)}%` }} />
-        <div className="absolute w-px h-2.5 bg-white/30" style={{ left: `${defPct}%` }} />
-        <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} className="relative w-full accent-white opacity-90 cursor-pointer" />
-      </div>
-      {hint && <div className="text-[10.5px] text-zinc-500 leading-snug -mt-0.5">{hint}</div>}
-    </div>
-  );
-});
-
 // ============================================================================
 // 1. LISTEN ENGINE
 // ============================================================================
@@ -114,7 +86,7 @@ export interface ListenParams {
   variance: number; viralChance: number; manualMult: number;
   growthMult: number; growthEarly: number; growthMid: number; growthLate: number; sleeperMult: number;
   catGrowth: number; catFresh: number; catMid: number; catOld: number; catSleeper: number;
-  chartNew: number; chartLong: number; chartArtist: number;
+  chartNew: number; chartMid: number; chartLong: number; chartDecay: number; chartFeat: number; chartArtist: number; chartAlbumNew: number; chartAlbumLong: number;
   lisGain: number; lisLoss: number; lisDrift: number; lisCap: number;
   hypeGain: number; hypeLoss: number;
 }
@@ -122,7 +94,7 @@ export const DEFAULT_LISTEN: ListenParams = {
   debutMult: 1, singleMult: 1, albumMult: 1, snippetMult: 1, featMult: 1, variance: 1, viralChance: 1, manualMult: 1,
   growthMult: 1, growthEarly: 1, growthMid: 1, growthLate: 1, sleeperMult: 1,
   catGrowth: 1, catFresh: 1, catMid: 1, catOld: 1, catSleeper: 1,
-  chartNew: 1, chartLong: 1, chartArtist: 1,
+  chartNew: 1, chartMid: 1, chartLong: 1, chartDecay: 1, chartFeat: 1, chartArtist: 1, chartAlbumNew: 1, chartAlbumLong: 1,
   lisGain: 1, lisLoss: 1, lisDrift: 0, lisCap: 1, hypeGain: 1, hypeLoss: 1
 };
 type PK = keyof ListenParams;
@@ -132,58 +104,65 @@ const ADDITIVE: PK[] = ['lisDrift'];
 interface ParamMeta { k: PK; label: string; hint: string; min: number; max: number; unit?: 'x' | 'raw' }
 const PARAM_GROUPS: Array<{ id: string; title: string; icon: string; sub: string; items: ParamMeta[] }> = [
   {
-    id: 'debut', title: 'Дебют', icon: '🚀', sub: 'Сколько прослушиваний релиз получает на старте: автопилот, полуавтомат, ручной батч, идеи, ручное создание',
+    id: 'debut', title: 'Дебют', icon: '🚀', sub: 'Сколько релиз набирает в первую неделю. Работает везде: автопилот, полуавтомат, ручной батч, идеи и «Рандом» в студии.',
     items: [
-      { k: 'debutMult', label: 'Общий масштаб дебюта', hint: 'Умножает стартовые прослушивания всех релизов', min: 0.3, max: 3 },
-      { k: 'singleMult', label: 'Синглы', hint: 'Только треки-синглы', min: 0.3, max: 3 },
-      { k: 'albumMult', label: 'Альбомы и EP', hint: 'Сумма по альбому на старте', min: 0.3, max: 3 },
-      { k: 'snippetMult', label: 'Сниппеты', hint: 'Отрывки и тизеры', min: 0.2, max: 3 },
-      { k: 'featMult', label: 'Бонус за фит', hint: 'Дополнительно для релизов с гостями', min: 0.5, max: 2.5 },
-      { k: 'variance', label: 'Разброс (рандом)', hint: '0 — всегда прогноз, 1 — как сейчас, 2 — очень непредсказуемо', min: 0, max: 2.5, unit: 'raw' },
-      { k: 'viralChance', label: 'Шанс вирусного взрыва', hint: 'Как часто релиз внезапно выстреливает', min: 0, max: 4 },
-      { k: 'manualMult', label: 'Ручное создание (вне симуляции)', hint: 'Кнопка «Рандом» прослушиваний в студии и редакторе', min: 0.3, max: 3 }
+      { k: 'debutMult', label: 'Общий масштаб дебюта', hint: 'Все релизы стартуют выше или ниже', min: 0.3, max: 3 },
+      { k: 'singleMult', label: 'Синглы', hint: 'Только отдельные треки', min: 0.3, max: 3 },
+      { k: 'albumMult', label: 'Альбомы и EP', hint: 'Сумма прослушиваний всего альбома на старте', min: 0.3, max: 3 },
+      { k: 'snippetMult', label: 'Сниппеты', hint: 'Отрывки и тизеры перед релизом', min: 0.2, max: 3 },
+      { k: 'featMult', label: 'Бонус за фит', hint: 'Сверху для релизов с гостями', min: 0.5, max: 2.5 },
+      { k: 'variance', label: 'Разброс (рандом)', hint: '0 — всегда ровно по прогнозу, 1 — как сейчас, 2 — очень непредсказуемо', min: 0, max: 2.5, unit: 'raw' },
+      { k: 'viralChance', label: 'Шанс вирусного взрыва', hint: 'Как часто релиз внезапно выстреливает в 2–3 раза выше прогноза', min: 0, max: 4 },
+      { k: 'manualMult', label: '«Рандом» вне симуляции', hint: 'Кнопка «Рандом» прослушиваний в студии и редакторе трека', min: 0.3, max: 3 }
     ]
   },
   {
-    id: 'growth', title: 'Рост новых', icon: '📈', sub: 'Как быстро и как долго набирают релизы, вышедшие в симуляции',
+    id: 'growth', title: 'Рост новых', icon: '📈', sub: 'Сколько релизы, вышедшие в симуляции, добирают каждую неделю после выхода.',
     items: [
-      { k: 'growthMult', label: 'Общий рост за неделю', hint: 'Все недельные приросты новых релизов', min: 0.2, max: 3 },
-      { k: 'growthEarly', label: 'Первые 2 недели', hint: 'Скорость разгона сразу после выхода', min: 0.2, max: 3 },
+      { k: 'growthMult', label: 'Общая скорость роста', hint: 'Все недельные приросты новых релизов', min: 0.2, max: 3 },
+      { k: 'growthEarly', label: 'Первые 2 недели', hint: 'Разгон сразу после выхода', min: 0.2, max: 3 },
       { k: 'growthMid', label: '3–8 неделя', hint: 'Середина жизни релиза', min: 0.2, max: 3 },
-      { k: 'growthLate', label: 'После 2 месяцев', hint: 'Длинный хвост: «вечнозелёные» треки', min: 0.1, max: 3 },
-      { k: 'sleeperMult', label: 'Шанс «спящего хита»', hint: 'Старый трек внезапно начинает расти', min: 0, max: 4 }
+      { k: 'growthLate', label: 'После 2 месяцев', hint: 'Длинный хвост: сколько добирают «вечнозелёные» треки', min: 0.1, max: 3 },
+      { k: 'sleeperMult', label: '«Спящие хиты»', hint: 'Шанс, что трек через 1–9 месяцев внезапно пойдёт в рост', min: 0, max: 4 }
     ]
   },
   {
-    id: 'catalog', title: 'Каталог', icon: '🗂', sub: 'Треки, которые уже были в исходной базе. У них большие цифры, поэтому растут медленнее',
+    id: 'catalog', title: 'Каталог', icon: '🗂', sub: 'Треки из исходной базы. У них уже большие цифры, поэтому по умолчанию они растут медленно.',
     items: [
       { k: 'catGrowth', label: 'Общий рост каталога', hint: 'Все треки исходной базы', min: 0, max: 3 },
       { k: 'catFresh', label: 'Свежие (до 4 месяцев)', hint: 'Недавно вышедшие треки базы', min: 0, max: 3 },
-      { k: 'catMid', label: 'Средние (4–12 месяцев)', hint: '', min: 0, max: 3 },
+      { k: 'catMid', label: 'Средние (4–12 месяцев)', hint: 'Треки этого года', min: 0, max: 3 },
       { k: 'catOld', label: 'Старые (больше года)', hint: 'Классика каталога', min: 0, max: 3 },
       { k: 'catSleeper', label: 'Возвращения старых хитов', hint: 'Шанс, что старый трек снова «оживёт»', min: 0, max: 4 }
     ]
   },
   {
-    id: 'charts', title: 'Чарты', icon: '🏆', sub: 'Как легко попасть в чарт и как долго в нём держаться',
+    id: 'charts', title: 'Чарты', icon: '🏆', sub: 'Как легко попасть в чарт, как высоко влетают новинки и как долго держатся хиты. Примеры посчитаны на твоём каталоге.',
     items: [
-      { k: 'chartNew', label: 'Вес новинок (до 3 недель)', hint: 'Больше — новые релизы чаще влетают высоко', min: 0.3, max: 3 },
-      { k: 'chartLong', label: 'Вес старых (после 3 месяцев)', hint: 'Больше — хиты дольше держатся в чарте', min: 0.2, max: 3 },
-      { k: 'chartArtist', label: 'Чартовый вес артиста', hint: 'Полезно для групп: «звёзды» / «андеграунд»', min: 0.3, max: 3 }
+      { k: 'chartNew', label: 'Новинки (первые 3 недели)', hint: 'Больше — свежие релизы чаще влетают в топ', min: 0.3, max: 3 },
+      { k: 'chartMid', label: 'Середина (3 недели – 3 месяца)', hint: 'Больше — хиты дольше держатся после дебюта', min: 0.3, max: 3 },
+      { k: 'chartLong', label: 'Старые хиты (после 3 месяцев)', hint: 'Больше — старые хиты не уходят из чарта', min: 0.2, max: 3 },
+      { k: 'chartDecay', label: 'Скорость выпадения', hint: 'Больше — треки быстрее падают с возрастом, чарт обновляется чаще', min: 0.5, max: 1.6 },
+      { k: 'chartFeat', label: 'Треки с фитами', hint: 'Больше — совместки выше в чарте', min: 0.5, max: 2 },
+      { k: 'chartArtist', label: 'Вес артиста', hint: 'Удобно для групп: поднять или опустить конкретных артистов', min: 0.3, max: 3 },
+      { k: 'chartAlbumNew', label: 'Альбомы: новинки (до месяца)', hint: 'Как высоко влетают свежие альбомы', min: 0.3, max: 3 },
+      { k: 'chartAlbumLong', label: 'Альбомы: старые', hint: 'Как долго держатся альбомы', min: 0.2, max: 3 }
     ]
   },
   {
-    id: 'listeners', title: 'Слушатели и хайп', icon: '👥', sub: 'Как меняются месячные слушатели и хайп артистов каждую неделю',
+    id: 'listeners', title: 'Слушатели и хайп', icon: '👥', sub: 'Как каждую неделю меняются месячные слушатели и хайп артистов.',
     items: [
-      { k: 'lisGain', label: 'Рост слушателей', hint: 'После релизов, фитов, чартов', min: 0, max: 3 },
-      { k: 'lisLoss', label: 'Спад слушателей', hint: 'Когда артист долго молчит', min: 0, max: 3 },
-      { k: 'lisDrift', label: 'Случайные колебания', hint: '0 — нет, 1 — лёгкие ±, 3 — сильные', min: 0, max: 3, unit: 'raw' },
-      { k: 'lisCap', label: 'Предел изменения за неделю', hint: 'Максимальный скачок вверх и вниз', min: 0.3, max: 3 },
-      { k: 'hypeGain', label: 'Рост хайпа', hint: '', min: 0, max: 3 },
-      { k: 'hypeLoss', label: 'Спад хайпа', hint: '', min: 0, max: 3 }
+      { k: 'lisGain', label: 'Рост слушателей', hint: 'После релизов, фитов и попаданий в чарт', min: 0, max: 3 },
+      { k: 'lisLoss', label: 'Спад слушателей', hint: 'Когда артист долго ничего не выпускает', min: 0, max: 3 },
+      { k: 'lisDrift', label: 'Случайные колебания', hint: '0 — нет, 1 — лёгкие, 3 — сильные', min: 0, max: 3, unit: 'raw' },
+      { k: 'lisCap', label: 'Предел за неделю', hint: 'Максимальный скачок вверх и вниз', min: 0.3, max: 3 },
+      { k: 'hypeGain', label: 'Рост хайпа', hint: 'После релизов и чартов', min: 0, max: 3 },
+      { k: 'hypeLoss', label: 'Спад хайпа', hint: 'Пока артист молчит', min: 0, max: 3 }
     ]
   }
 ];
+/** the most important parameters first (groups show them in this order) */
+const IMPORTANCE: PK[] = ['debutMult', 'growthMult', 'lisGain', 'chartArtist', 'singleMult', 'albumMult', 'featMult', 'chartNew', 'chartMid', 'chartLong', 'lisLoss', 'hypeGain', 'growthEarly', 'growthMid', 'growthLate', 'catGrowth', 'catFresh', 'catMid', 'catOld', 'variance', 'viralChance', 'sleeperMult', 'catSleeper', 'chartDecay', 'chartFeat', 'chartAlbumNew', 'chartAlbumLong', 'snippetMult', 'lisDrift', 'lisCap', 'hypeLoss', 'manualMult'];
 
 export interface ListenRule {
   id: string; name: string; enabled: boolean; color: string;
@@ -219,7 +198,10 @@ export const LISTEN_PRESETS: Array<{ id: string; name: string; emoji: string; te
   { id: 'fast-charts', name: 'Быстрые чарты', emoji: '⚡️', text: 'Резкие дебюты, быстрое выпадение', p: { chartNew: 1.25, chartLong: 0.82, growthEarly: 1.2, growthLate: 0.85 } },
   { id: 'stable', name: 'Стабильные слушатели', emoji: '🪨', text: 'Слушатели меняются медленно', p: { lisGain: 0.7, lisLoss: 0.6, lisCap: 0.7, lisDrift: 0 } },
   { id: 'volatile', name: 'Живые слушатели', emoji: '🌊', text: 'Слушатели заметно колеблются каждую неделю', p: { lisGain: 1.2, lisLoss: 1.15, lisDrift: 1.2, lisCap: 1.25 } },
-  { id: 'feats', name: 'Сила фитов', emoji: '🤝', text: 'Совместные релизы заметно сильнее', p: { featMult: 1.3, lisGain: 1.05 } }
+  { id: 'feats', name: 'Сила фитов', emoji: '🤝', text: 'Совместные релизы заметно сильнее', p: { featMult: 1.3, chartFeat: 1.15, lisGain: 1.05 } },
+  { id: 'hard-chart', name: 'Жёсткий чарт', emoji: '🔥', text: 'Новинки влетают высоко, старое быстро уходит', p: { chartNew: 1.3, chartDecay: 1.15, chartLong: 0.8 } },
+  { id: 'long-hits', name: 'Долгожители', emoji: '⏳', text: 'Хиты держатся в чарте месяцами', p: { chartMid: 1.2, chartLong: 1.3, chartDecay: 0.88, growthLate: 1.1 } },
+  { id: 'albums', name: 'Эра альбомов', emoji: '💿', text: 'Альбомы сильнее на старте и в чарте альбомов', p: { albumMult: 1.2, chartAlbumNew: 1.25, chartAlbumLong: 1.1 } }
 ];
 
 // --- catalog stats used for groups (filled by the simulation and by App) ---
@@ -234,7 +216,7 @@ export function engineSetCatalog(artists: Artist[], tracks: Track[]) {
     if (!t || t.isSnippet) continue;
     const x = acc.get(t.artistId) || { s: 0, n: 0, best: 999 };
     x.s += t.plays || 0; x.n++;
-    const pos = t.previousChartPosition || 0;
+    const pos = currentChartPos(t) || 0;
     if (pos > 0 && pos < x.best) x.best = pos;
     acc.set(t.artistId, x);
   }
@@ -244,6 +226,28 @@ export function engineSetCatalog(artists: Artist[], tracks: Track[]) {
     m.set(a.id, { id: a.id, name: a.name, followers: a.followers || 0, hype: a.hype ?? 50, genre: a.genre || '', verified: Boolean(a.verified), rising: Boolean(a.isRisingStar), avg: x && x.n ? x.s / x.n : 0, best: x ? x.best : 999 });
   }
   statMap = m; engineVersion++; engineCache.clear();
+  catalogTracks = tracks;
+  refs = null;
+}
+/** current chart position: last weekly rank (top 100 only) */
+export const currentChartPos = (t: { chartHistory?: number[] }): number | undefined => { const h = t.chartHistory; const v = h && h.length ? h[h.length - 1] : undefined; return v && v > 0 && v <= 100 ? v : undefined; };
+let catalogTracks: Track[] = [];
+interface Refs { medFol: number; debut: number; refMs: number; pool: Array<{ p: number; d: number; f: boolean; a: string }> }
+let refs: Refs | null = null;
+/** reference numbers from the current catalog — used for the examples in the engine */
+function getRefs(): Refs {
+  if (refs) return refs;
+  const t = catalogTracks.filter(x => !x.isSnippet && (x.plays || 0) > 0);
+  const fol = [...statMap.values()].map(x => x.followers).filter(Boolean).sort((a, b) => a - b);
+  const medFol = fol.length ? fol[Math.floor(fol.length / 2)] : 1_000_000;
+  const dates = t.map(x => msOf(x.releaseDate)).filter(x => !isNaN(x)).sort((a, b) => a - b);
+  const refMs = dates.length ? dates[dates.length - 1] : Date.now();
+  const recent = t.filter(x => refMs - msOf(x.releaseDate) <= 60 * DAY).map(x => x.plays).sort((a, b) => a - b);
+  const all = t.map(x => x.plays).sort((a, b) => a - b);
+  const debut = recent.length >= 3 ? recent[Math.floor(recent.length / 2)] : all.length ? all[Math.floor(all.length / 2)] * 0.35 : 900_000;
+  const pool = t.map(x => ({ p: x.plays, d: Math.max(1, Math.round((refMs - (msOf(x.releaseDate) || refMs - 400 * DAY)) / DAY)), f: Boolean(x.featuredArtist), a: x.artistId }));
+  refs = { medFol, debut: Math.max(150_000, debut), refMs, pool };
+  return refs;
 }
 const ruleMatches = (r: ListenRule, a: ArtStat): boolean => {
   if (!r.enabled) return false;
@@ -313,9 +317,14 @@ export function engineGrowth(delta: number, o: { artist: ArtistLike; ageDays: nu
   return Math.max(0, Math.round(delta * m));
 }
 export const engineSleeper = (a: ArtistLike, catalog: boolean) => { const P = engineParamsFor(a); return catalog ? P.catSleeper : P.sleeperMult; };
-export function engineChart(artistId: string | undefined, diffDays: number): number {
+export function engineChart(artistId: string | undefined, diffDays: number, feat = false): number {
   const P = engineParamsFor(artistId ? { id: artistId } : null);
-  return P.chartArtist * (diffDays <= 21 ? P.chartNew : diffDays > 90 ? P.chartLong : 1);
+  return P.chartArtist * (diffDays <= 21 ? P.chartNew : diffDays > 90 ? P.chartLong : P.chartMid) * (feat ? P.chartFeat : 1);
+}
+export const engineChartDecay = (artistId?: string) => engineParamsFor(artistId ? { id: artistId } : null).chartDecay;
+export function engineAlbumChart(artistId: string | undefined, diffDays: number): number {
+  const P = engineParamsFor(artistId ? { id: artistId } : null);
+  return P.chartArtist * (diffDays <= 30 ? P.chartAlbumNew : diffDays > 90 ? P.chartAlbumLong : 1);
 }
 export function engineListeners(pct: number, a: ArtistLike, step: number): number {
   const P = engineParamsFor(a);
@@ -335,39 +344,62 @@ export function engineManualPlays(formatted: string, followers?: number, isAlbum
 }
 
 // --- monthly listeners estimator (replaces the old profile script) ---
-export interface ListenerEstimate { value: number; basis: string; monthlyStreams: number; raw: number }
-export function estimateMonthlyListeners(artist: { id?: string; name: string; followers?: number; verified?: boolean; hype?: number }, tracks: Track[], _albums: Album[], refIso?: string, keep = 0.45): ListenerEstimate {
-  const now = refIso ? msOf(refIso) || Date.now() : Date.now();
+export interface ListenerEstimate { value: number; basis: string; monthlyStreams: number; raw: number; hits: number }
+type AL = { id?: string; name: string; followers?: number; verified?: boolean; hype?: number };
+/** weights of the factors (1 = normal) */
+export interface ListenerWeights { fresh: number; hits: number; feats: number; hype: number; verified: number; keep: number }
+export const DEFAULT_LW: ListenerWeights = { fresh: 1, hits: 1, feats: 1, hype: 1, verified: 1, keep: 0.45 };
+function monthlyOf(artist: AL, tracks: Track[], now: number, w: ListenerWeights) {
   const nm = norm(artist.name);
   const mine = tracks.filter(t => !t.isSnippet && ((artist.id && t.artistId === artist.id) || norm(t.artistName) === nm));
   const asGuest = tracks.filter(t => !t.isSnippet && t.artistId !== artist.id && splitNames(t.featuredArtist).some(n => norm(n) === nm));
-  const share = (t: Track) => {
-    const age = Math.max(1, (now - (msOf(t.releaseDate) || now - 400 * DAY)) / DAY);
-    // share of all-time plays that happened in the last 30 days
-    return age <= 30 ? 0.55 : age <= 90 ? 0.24 : age <= 180 ? 0.12 : age <= 365 ? 0.07 : age <= 730 ? 0.035 : 0.02;
-  };
-  let monthly = 0;
-  for (const t of mine) monthly += (t.plays || 0) * share(t);
-  for (const t of asGuest) monthly += (t.plays || 0) * share(t) * 0.35;
-  const top = Math.max(0, ...mine.map(t => t.plays || 0));
-  // catalog-heavy artists keep listeners even when silent
-  monthly = Math.max(monthly, top * 0.018);
-  const perListener = 3.4 + clamp((artist.hype ?? 50) / 100, 0, 1) * 1.6; // fans of hyped artists replay more
-  let est = monthly / perListener;
-  if (artist.verified) est *= 1.08;
-  if (!mine.length && !asGuest.length) est = artist.followers || 120_000;
+  const ageOf = (t: Track) => Math.max(1, (now - (msOf(t.releaseDate) || now - 400 * DAY)) / DAY);
+  // share of all-time plays that happened in the last 30 days
+  const share = (age: number) => (age <= 30 ? 0.55 : age <= 90 ? 0.24 : age <= 180 ? 0.12 : age <= 365 ? 0.07 : age <= 730 ? 0.035 : 0.02);
+  let fresh = 0, old = 0, feats = 0;
+  for (const t of mine) { const a = ageOf(t); const v = (t.plays || 0) * share(a); if (a <= 180) fresh += v; else old += v; }
+  for (const t of asGuest) feats += (t.plays || 0) * share(ageOf(t)) * 0.35;
+  // big old hits keep bringing listeners (the «до сих пор слушают» effect)
+  const top = [...mine].sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, 5);
+  const hits = top.reduce((s, t, i) => s + (t.plays || 0) * (ageOf(t) > 180 ? 0.012 : 0.004) / (1 + i * 0.6), 0);
+  let monthly = fresh * w.fresh + old + feats * w.feats + hits * w.hits;
+  monthly = Math.max(monthly, (top[0]?.plays || 0) * 0.012 * Math.max(0.3, w.hits));
+  const perListener = 3.4 + clamp((artist.hype ?? 50) / 100, 0, 1) * 1.6 * w.hype; // fans of hyped artists replay more
+  return { mine, asGuest, monthly, hits: hits * w.hits, base: (monthly / perListener) * (artist.verified ? 1 + 0.08 * w.verified : 1) };
+}
+/** listeners per «model listener» in this database — keeps estimates on the scale of the current numbers */
+const calibCache = new WeakMap<object, Map<string, number>>();
+function calibration(tracks: Track[], artists: AL[], now: number, w: ListenerWeights): number {
+  const key = `${w.fresh}|${w.hits}|${w.feats}|${w.hype}|${w.verified}|${artists.length}`;
+  let m = calibCache.get(tracks); if (!m) { m = new Map(); calibCache.set(tracks, m); }
+  const hit = m.get(key); if (hit) return hit;
+  const ratios: number[] = [];
+  for (const a of artists) { if (!a.followers) continue; const x = monthlyOf(a, tracks, now, w); if (x.mine.length && x.base > 0) ratios.push(a.followers / x.base); }
+  ratios.sort((x, y) => x - y);
+  const c = ratios.length >= 3 ? clamp(ratios[Math.floor(ratios.length / 2)], 0.2, 60) : 1;
+  m.set(key, c);
+  return c;
+}
+export function estimateMonthlyListeners(artist: AL, tracks: Track[], _albums: Album[], refIso?: string, keepOrW: number | Partial<ListenerWeights> = 0.45, artistsForCalib?: AL[]): ListenerEstimate {
+  const w: ListenerWeights = typeof keepOrW === 'number' ? { ...DEFAULT_LW, keep: keepOrW } : { ...DEFAULT_LW, ...keepOrW };
+  const now = refIso ? msOf(refIso) || Date.now() : Date.now();
+  const m = monthlyOf(artist, tracks, now, w);
+  const pool: AL[] = artistsForCalib || [...statMap.values()].map(x => ({ id: x.id, name: x.name, followers: x.followers, hype: x.hype, verified: x.verified }));
+  const calib = calibration(tracks, pool, now, w);
+  let est = m.base * calib;
+  if (!m.mine.length && !m.asGuest.length) est = artist.followers || 120_000;
   est = Math.max(8_000, est);
   const cur = artist.followers || 0;
   let value = est;
   if (cur > 0) {
-    value = Math.exp((1 - keep) * Math.log(est) + keep * Math.log(cur));
-    value = clamp(value, cur * 0.4, cur * 2.6);
+    value = Math.exp((1 - w.keep) * Math.log(est) + w.keep * Math.log(cur));
+    value = clamp(value, cur * 0.5, cur * 2.2);
   }
   const round = (v: number) => (v >= 1e6 ? Math.round(v / 1e4) * 1e4 : v >= 1e5 ? Math.round(v / 1e3) * 1e3 : Math.round(v / 100) * 100);
-  const basis = mine.length
-    ? `${mine.length} тр. · ≈ ${fmtC(monthly)} стримов за 30 дней${asGuest.length ? ` · ${asGuest.length} фит.` : ''}`
-    : asGuest.length ? `Только фиты (${asGuest.length})` : 'Нет треков: оставлено текущее значение';
-  return { value: round(value), basis, monthlyStreams: Math.round(monthly), raw: round(est) };
+  const basis = m.mine.length
+    ? `${m.mine.length} тр. · ≈ ${fmtC(m.monthly)} стримов за 30 дней${m.hits > m.monthly * 0.25 ? ' · держится на хитах' : ''}${m.asGuest.length ? ` · ${m.asGuest.length} фит.` : ''}`
+    : m.asGuest.length ? `Только фиты (${m.asGuest.length})` : 'Нет треков: оставлено текущее значение';
+  return { value: round(value), basis, monthlyStreams: Math.round(m.monthly), raw: round(est), hits: Math.round(m.hits) };
 }
 
 // ---------------------------------------------------------------------------
@@ -377,57 +409,186 @@ const RULE_COLORS = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#f8
 const uidL = (p: string) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const ALL_PARAMS: ParamMeta[] = PARAM_GROUPS.flatMap(g => g.items);
 const PARAM_BY_KEY = new Map(ALL_PARAMS.map(p => [p.k, p]));
+const GROUP_OF = new Map(PARAM_GROUPS.flatMap(g => g.items.map(i => [i.k, g] as const)));
+const byImportance = (a: PK, b: PK) => IMPORTANCE.indexOf(a) - IMPORTANCE.indexOf(b);
 const RULE_TEMPLATES: Array<{ name: string; r: Partial<ListenRule> }> = [
-  { name: 'Звёзды · 8М+', r: { mode: 'filter', lisMin: 8_000_000, p: { growthLate: 1.1, lisLoss: 0.8 } } },
-  { name: 'Средние · 300к–2.5М', r: { mode: 'filter', lisMin: 300_000, lisMax: 2_500_000, p: {} } },
+  { name: 'Звёзды · 8М+', r: { mode: 'filter', lisMin: 8_000_000, p: { growthLate: 1.1, lisLoss: 0.8, chartLong: 1.1 } } },
+  { name: 'Средние · 300к–2.5М', r: { mode: 'filter', lisMin: 300_000, lisMax: 2_500_000, p: { debutMult: 1.05 } } },
   { name: 'Новички · до 300к', r: { mode: 'filter', lisMax: 300_000, p: { viralChance: 1.3, lisGain: 1.2 } } },
   { name: 'Топ-20 чарта', r: { mode: 'filter', chartTop: 20, p: { chartArtist: 1.08 } } },
-  { name: 'Высокий хайп 75+', r: { mode: 'filter', hypeMin: 75, p: { debutMult: 1.08 } } },
-  { name: 'Свои артисты', r: { mode: 'pick', p: {} } }
+  { name: 'Высокий хайп 75+', r: { mode: 'filter', hypeMin: 75, p: { debutMult: 1.08, hypeLoss: 0.8 } } },
+  { name: 'Свои артисты', r: { mode: 'pick', p: { debutMult: 1.1 } } }
 ];
 const LIS_CHIPS: Array<[string, number | undefined, number | undefined]> = [['до 300к', undefined, 300_000], ['300к–2.5М', 300_000, 2_500_000], ['2.5М–8М', 2_500_000, 8_000_000], ['8М+', 8_000_000, undefined]];
-const numIn = 'w-full h-8 px-2.5 rounded-lg bg-black/40 border border-white/10 text-[12px] text-white outline-none focus:border-white/25 tabular-nums';
+const numIn = 'w-full h-9 px-3 rounded-xl bg-black/40 border border-white/10 text-[13px] text-white outline-none focus:border-white/25 tabular-nums';
 const parseN = (s: string): number | undefined => { const t = s.trim().toLowerCase().replace(',', '.'); if (!t) return undefined; const m = /^([\d.]+)\s*(к|k|тыс|м|m|млн)?/.exec(t); if (!m) return undefined; let v = parseFloat(m[1]); if (m[2] && /к|k|тыс/.test(m[2])) v *= 1e3; if (m[2] && /м|m|млн/.test(m[2])) v *= 1e6; return Math.round(v); };
 const NumField: React.FC<{ label: string; value?: number; onChange: (v?: number) => void; ph?: string }> = ({ label, value, onChange, ph }) => {
   const [txt, setTxt] = useState(value ? fmtC(value) : '');
   useEffect(() => { setTxt(value ? fmtC(value) : ''); }, [value]);
   return (
-    <label className="block min-w-0"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1">{label}</span>
+    <label className="block min-w-0"><span className="block text-[11px] uppercase tracking-wider text-zinc-500 font-bold mb-1">{label}</span>
       <input value={txt} placeholder={ph || 'любое'} onChange={e => setTxt(e.target.value)} onBlur={() => onChange(parseN(txt))} onKeyDown={e => e.key === 'Enter' && onChange(parseN(txt))} className={numIn} />
     </label>
   );
 };
 
+// smooth custom range (no double track, no jumping thumb)
+const LE_CSS = `
+.le-range{-webkit-appearance:none;appearance:none;background:transparent;width:100%;height:22px;margin:0;cursor:pointer;position:relative;z-index:1}
+.le-range:focus{outline:none}
+.le-range::-webkit-slider-runnable-track{height:22px;background:transparent;border:0}
+.le-range::-moz-range-track{height:22px;background:transparent;border:0}
+.le-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin-top:2px;border-radius:9999px;background:#fff;border:0;box-shadow:0 2px 10px rgba(0,0,0,.55),0 0 0 4px rgba(255,255,255,.08);transition:transform .15s ease}
+.le-range::-moz-range-thumb{width:18px;height:18px;border-radius:9999px;background:#fff;border:0;box-shadow:0 2px 10px rgba(0,0,0,.55),0 0 0 4px rgba(255,255,255,.08)}
+.le-range:active::-webkit-slider-thumb{transform:scale(1.15)}
+.le-range:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px var(--accent-color)}
+`;
+const LeCss = () => <style>{LE_CSS}</style>;
+
+/** slider for a multiplier: ×1.25 / +25 %, an example line, double click resets */
+const PSlider: React.FC<{ label: string; hint?: string; example?: string | null; value: number; def?: number; min?: number; max?: number; step?: number; onChange: (v: number) => void; unit?: 'x' | 'raw'; onRemove?: () => void }> = memo(({ label, hint, example, value, def = 1, min = 0.2, max = 3, step = 0.01, onChange, unit = 'x', onRemove }) => {
+  const changed = Math.abs(value - def) > 1e-6;
+  const shown = unit === 'raw' ? value.toFixed(2) : `×${value.toFixed(2)}`;
+  const delta = unit === 'x' && changed ? `${value > def ? '+' : '−'}${Math.round(Math.abs(value / def - 1) * 100)}%` : '';
+  const pct = clamp(((value - min) / (max - min)) * 100, 0, 100);
+  const defPct = clamp(((def - min) / (max - min)) * 100, 0, 100);
+  return (
+    <div className={`rounded-2xl px-3.5 py-3 border transition-colors ${changed ? 'bg-white/[0.045] border-white/[0.12]' : 'bg-white/[0.02] border-white/[0.06]'}`} onDoubleClick={() => onChange(def)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[14px] font-bold text-white leading-tight">{label}</div>
+          {hint && <div className="text-[12px] text-zinc-400 leading-snug mt-0.5">{hint}</div>}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+          {delta && <span className={`text-[11px] font-black px-1.5 py-0.5 rounded-md ${value > def ? 'bg-emerald-400/15 text-emerald-300' : 'bg-rose-400/15 text-rose-300'}`}>{delta}</span>}
+          <span className={`text-[13px] font-mono font-bold tabular-nums ${changed ? 'text-white' : 'text-zinc-500'}`}>{shown}</span>
+          {changed && <button type="button" title="Вернуть как было" onClick={() => onChange(def)} className="w-6 h-6 rounded-lg text-[13px] text-zinc-400 hover:text-white hover:bg-white/10">↺</button>}
+          {onRemove && <button type="button" title="Убрать из группы" onClick={onRemove} className="w-6 h-6 rounded-lg text-[15px] text-zinc-500 hover:text-rose-300 hover:bg-rose-500/10">×</button>}
+        </div>
+      </div>
+      <div className="relative mt-2">
+        <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1.5 rounded-full bg-white/[0.08] pointer-events-none" />
+        <div className="absolute top-1/2 -translate-y-1/2 h-1.5 rounded-full theme-bg-accent pointer-events-none transition-[left,width] duration-150" style={{ left: `calc(${Math.min(pct, defPct)}% )`, width: `${Math.abs(pct - defPct)}%`, opacity: 0.85 }} />
+        <div className="absolute top-1/2 -translate-y-1/2 w-0.5 h-3 rounded bg-white/35 pointer-events-none" style={{ left: `calc(${defPct}% - 1px)` }} title="как сейчас" />
+        <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} className="le-range" />
+      </div>
+      {example && <div className={`text-[12px] mt-1.5 leading-snug ${changed ? 'text-zinc-200' : 'text-zinc-500'}`}><span className="text-zinc-500">Пример: </span>{example}</div>}
+    </div>
+  );
+});
+
+// --- examples («как изменится») ---
+const W_RATES = [0.085, 0.06, 0.039, 0.039, 0.021, 0.021, 0.021, 0.021, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.0046, 0.0046];
 function curve(P: ListenParams, catalog: boolean, weeks = 16) {
-  const rates = [0.085, 0.06, 0.039, 0.039, 0.021, 0.021, 0.021, 0.021, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.0046, 0.0046];
   let p = 1; const out = [1];
   for (let w = 0; w < weeks; w++) {
     const age = (catalog ? 200 : 0) + (w + 1) * 7;
     const damp = catalog ? (age <= 120 ? 0.24 : age <= 365 ? 0.16 : 0.09) : 1;
-    const rate = catalog ? 0.0046 * 3 : rates[w] || 0.0046;
+    const rate = catalog ? 0.0046 * 3 : W_RATES[w] || 0.0046;
     let d = Math.min(p, 5.2) * rate * damp;
     d *= catalog ? P.catGrowth * (age <= 120 ? P.catFresh : age <= 365 ? P.catMid : P.catOld) : P.growthMult * (age <= 14 ? P.growthEarly : age <= 60 ? P.growthMid : P.growthLate);
     p += d; out.push(p);
   }
   return out;
 }
+const RECENCY = (d: number) => (d <= 7 ? 14.5 : d <= 21 ? 10.5 : d <= 45 ? 7.4 : d <= 90 ? 5 : d <= 180 ? 3.1 : d <= 365 ? 1.85 : d <= 730 ? 0.65 : 0.18);
+const chartScore = (plays: number, d: number, P: ListenParams, feat: boolean, artistMult = 1) =>
+  (plays * RECENCY(d) * artistMult * (d <= 21 ? P.chartNew : d > 90 ? P.chartLong : P.chartMid) * (feat ? P.chartFeat : 1) * 12) / Math.pow(d + 5, 0.66 * P.chartDecay);
+const poolCache = new Map<string, number[]>();
+function rankIn(P: ListenParams, plays: number, d: number, feat = false, artistMult = 1): number | null {
+  const R = getRefs();
+  if (!R.pool.length) return null;
+  const key = `${P.chartNew}|${P.chartMid}|${P.chartLong}|${P.chartDecay}|${P.chartFeat}|${R.pool.length}|${R.refMs}`;
+  let scores = poolCache.get(key);
+  if (!scores) { scores = R.pool.map(x => chartScore(x.p, x.d, P, x.f)).sort((a, b) => b - a); if (poolCache.size > 40) poolCache.clear(); poolCache.set(key, scores); }
+  const s = chartScore(plays, d, P, feat, artistMult);
+  let lo = 0, hi = scores.length; while (lo < hi) { const m = (lo + hi) >> 1; if (scores[m] > s) lo = m + 1; else hi = m; }
+  return lo + 1;
+}
+const posStr = (r: number | null) => (r === null ? '—' : r > 100 ? 'вне топ-100' : `#${r}`);
+const damping = (f: number) => (f >= 20e6 ? 0.28 : f >= 8e6 ? 0.42 : f >= 2.5e6 ? 0.65 : 1);
+function exampleFor(k: PK, P: ListenParams, artistMult = 1): string | null {
+  const R = getRefs(); const D = DEFAULT_LISTEN; const deb = R.debut;
+  const ar = (a: number, b: number, f: (n: number) => string = fmtC) => (Math.abs(a - b) / Math.max(1e-9, Math.abs(a)) < 0.004 ? f(a) : `${f(a)} → ${f(b)}`);
+  const pr = (a: number | null, b: number | null) => (a === b ? posStr(a) : `${posStr(a)} → ${posStr(b)}`);
+  const pct = (x: number) => `+${Math.round(x * 100)}%`;
+  const c0 = curve(D, false), c1 = curve(P, false), k0 = curve(D, true), k1 = curve(P, true);
+  const cat = (age: number, PP: ListenParams) => { const rate = age <= 60 ? 0.021 : age <= 120 ? 0.010 : age <= 210 ? 0.0046 : age <= 365 ? 0.0022 : 0.001; const damp = age <= 30 ? 0.24 : age <= 120 ? 0.16 : 0.09; return 5e6 * rate * damp * 4.3 * PP.catGrowth * (age <= 120 ? PP.catFresh : age <= 365 ? PP.catMid : PP.catOld); };
+  const fol = R.medFol, dmp = damping(fol);
+  switch (k) {
+    case 'debutMult': return `сингл ≈ ${ar(deb, deb * P.debutMult * P.singleMult)}, альбом ≈ ${ar(deb * 6.5, deb * 6.5 * P.debutMult * P.albumMult)}`;
+    case 'singleMult': return `сингл на старте ≈ ${ar(deb * P.debutMult, deb * P.debutMult * P.singleMult)}`;
+    case 'albumMult': return `альбом на старте ≈ ${ar(deb * 6.5 * P.debutMult, deb * 6.5 * P.debutMult * P.albumMult)}`;
+    case 'snippetMult': return `сниппет ≈ ${ar(deb * 0.18 * P.debutMult, deb * 0.18 * P.debutMult * P.snippetMult)}`;
+    case 'featMult': return `сингл с фитом ≈ ${ar(deb * 1.3 * P.debutMult * P.singleMult, deb * 1.3 * P.debutMult * P.singleMult * P.featMult)}`;
+    case 'variance': return `обычно от ${fmtC(deb * (1 - 0.3 * Math.min(P.variance, 2.5) / 1))} до ${fmtC(deb * (1 + 0.5 * P.variance))}${P.variance !== 1 ? ` (сейчас ${fmtC(deb * 0.7)}–${fmtC(deb * 1.5)})` : ''}`;
+    case 'viralChance': return `вирусных ≈ ${ar(7, 7 * P.viralChance, n => `${Math.round(n)} из 100`)} релизов`;
+    case 'manualMult': return `«Рандом» для артиста с ${fmtC(fol)} слушателей ≈ ${ar(fol * 1.6, fol * 1.6 * P.manualMult * P.debutMult * P.singleMult)}`;
+    case 'growthMult': return `трек с ${fmtC(deb)} за 2 месяца добирает ${ar(c0[8] - 1, c1[8] - 1, n => `${pct(n)} (≈ ${fmtC(n * deb)})`)}`;
+    case 'growthEarly': return `за первые 2 недели ${ar(c0[2] - 1, c1[2] - 1, pct)}`;
+    case 'growthMid': return `с 3 по 8 неделю ${ar(c0[8] / c0[2] - 1, c1[8] / c1[2] - 1, pct)}`;
+    case 'growthLate': return `за 3–4 месяц ${ar(c0[16] / c0[8] - 1, c1[16] / c1[8] - 1, pct)}`;
+    case 'sleeperMult': return `«спящих хитов» за год ≈ ${ar(6, 6 * P.sleeperMult, n => `${Math.round(n)}`)}`;
+    case 'catGrowth': return `трек базы с 5 млн за 4 месяца ${ar(k0[16] - 1, k1[16] - 1, n => `${pct(n)} (≈ ${fmtC(n * 5e6)})`)}`;
+    case 'catFresh': return `трек 3 мес. с 5 млн за месяц ≈ ${ar(cat(90, D), cat(90, P))}`;
+    case 'catMid': return `трек 8 мес. с 5 млн за месяц ≈ ${ar(cat(240, D), cat(240, P))}`;
+    case 'catOld': return `трек 2 лет с 5 млн за месяц ≈ ${ar(cat(700, D), cat(700, P))}`;
+    case 'catSleeper': return `возвращений старых хитов за год ≈ ${ar(2, 2 * P.catSleeper, n => `${Math.round(n)}`)}`;
+    case 'chartNew': return `новинка с ${fmtC(deb)} через неделю: ${pr(rankIn(D, deb, 7), rankIn(P, deb, 7, false, artistMult))}`;
+    case 'chartMid': return `трек 6 недель с ${fmtC(deb * 2)}: ${pr(rankIn(D, deb * 2, 42), rankIn(P, deb * 2, 42, false, artistMult))}`;
+    case 'chartLong': return `хит 5 месяцев с ${fmtC(deb * 5)}: ${pr(rankIn(D, deb * 5, 150), rankIn(P, deb * 5, 150, false, artistMult))}`;
+    case 'chartDecay': return `хит 5 мес.: ${pr(rankIn(D, deb * 5, 150), rankIn(P, deb * 5, 150))} · новинка: ${pr(rankIn(D, deb, 7), rankIn(P, deb, 7))}`;
+    case 'chartFeat': return `новинка с фитом: ${pr(rankIn(D, deb * 1.3, 7, true), rankIn(P, deb * 1.3, 7, true))}`;
+    case 'chartArtist': return artistMult !== 1 || P.chartArtist !== 1 ? `новинка артиста группы: ${pr(rankIn(D, deb, 7), rankIn(P, deb, 7, false, P.chartArtist))}` : 'работает в группах: поднимает или опускает их артистов';
+    case 'chartAlbumNew': return `свежий альбом в чарте альбомов ≈ ${ar(10, 10 / P.chartAlbumNew, n => `#${Math.max(1, Math.round(n))}`)}`;
+    case 'chartAlbumLong': return `альбом через 4 месяца ≈ ${ar(30, 30 / P.chartAlbumLong, n => (n > 50 ? 'вне топ-50' : `#${Math.max(1, Math.round(n))}`))}`;
+    case 'lisGain': return `артист с ${fmtC(fol)} после релиза ≈ ${ar(fol * 0.024 * dmp, fol * 0.024 * dmp * P.lisGain, n => `+${fmtC(n)}`)} за неделю`;
+    case 'lisLoss': return `молчит 2 месяца ≈ ${ar(fol * 0.0075 * dmp, fol * 0.0075 * dmp * P.lisLoss, n => `−${fmtC(n)}`)} в неделю`;
+    case 'lisDrift': return P.lisDrift > 0 ? `случайно до ±${(P.lisDrift * 0.45).toFixed(1).replace('.', ',')}% в неделю (≈ ±${fmtC(fol * P.lisDrift * 0.0045)})` : 'выключено: слушатели меняются только от событий';
+    case 'lisCap': return `максимум за неделю: +${(8.5 * P.lisCap).toFixed(1).replace('.', ',')}% / −${(4 * P.lisCap).toFixed(1).replace('.', ',')}%`;
+    case 'hypeGain': return `после релиза хайп ${ar(6, 6 * P.hypeGain, n => `+${Math.round(n)}`)}…${Math.round(13 * P.hypeGain)}`;
+    case 'hypeLoss': return `молчит 2 месяца: хайп ${ar(3.5, 3.5 * P.hypeLoss, n => `−${n.toFixed(1).replace('.', ',')}`)} в неделю`;
+  }
+  return null;
+}
+
 const CurvePreview: React.FC<{ P: ListenParams; catalog?: boolean }> = ({ P, catalog = false }) => {
   const a = curve(DEFAULT_LISTEN, catalog), b = curve(P, catalog);
   const max = Math.max(...a, ...b), min = 1;
-  const W = 320, H = 92;
-  const path = (arr: number[]) => arr.map((v, i) => `${i ? 'L' : 'M'}${(i / (arr.length - 1)) * W},${H - ((v - min) / Math.max(1e-6, max - min)) * (H - 8) - 4}`).join(' ');
+  const W = 320, H = 96;
+  const path = (arr: number[]) => arr.map((v, i) => `${i ? 'L' : 'M'}${((i / (arr.length - 1)) * W).toFixed(1)},${(H - ((v - min) / Math.max(1e-6, max - min)) * (H - 10) - 5).toFixed(1)}`).join(' ');
   const gain = (b[b.length - 1] - 1) / Math.max(1e-6, a[a.length - 1] - 1);
   return (
-    <div className="rounded-2xl bg-black/30 border border-white/[0.06] p-3">
-      <div className="flex items-center justify-between text-[10.5px] text-zinc-500 mb-1.5">
-        <span>{catalog ? 'Трек базы (≈ 7 месяцев), 16 недель' : 'Новый релиз, первые 16 недель'}</span>
+    <div className="rounded-2xl bg-black/30 border border-white/[0.07] p-4">
+      <div className="flex items-center justify-between text-[12px] text-zinc-400 mb-2">
+        <span>{catalog ? 'Трек из базы (≈ 7 месяцев), следующие 16 недель' : 'Новый релиз, первые 16 недель'}</span>
         <span className={`font-bold ${gain >= 1 ? 'text-emerald-400' : 'text-rose-400'}`}>прирост ×{gain.toFixed(2)}</span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[92px]">
-        <path d={path(a)} fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" strokeDasharray="4 4" />
-        <motion.path d={path(b)} fill="none" stroke="var(--accent-color, #fff)" strokeWidth="2.2" strokeLinecap="round" initial={false} animate={{ d: path(b) }} transition={{ duration: 0.35 }} />
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[96px]">
+        <path d={path(a)} fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="1.5" strokeDasharray="4 4" />
+        <path d={path(b)} fill="none" stroke="var(--accent-color, #fff)" strokeWidth="2.4" strokeLinecap="round" style={{ transition: 'd .3s ease' }} />
       </svg>
-      <div className="flex gap-3 text-[10px] text-zinc-500"><span>┄ как сейчас</span><span className="theme-accent">— с настройками</span></div>
+      <div className="flex gap-4 text-[11.5px] text-zinc-500 mt-1"><span>┄ как сейчас</span><span className="theme-accent">— с твоими настройками</span></div>
+    </div>
+  );
+};
+
+const ChartPreview: React.FC<{ P: ListenParams }> = ({ P }) => {
+  const R = getRefs(); const D = DEFAULT_LISTEN; const deb = R.debut;
+  const rows: Array<[string, number, number, boolean]> = [['Новинка, 1 неделя', deb, 7, false], ['Новинка с фитом', deb * 1.3, 7, true], ['Трек 6 недель', deb * 2, 42, false], ['Хит 5 месяцев', deb * 5, 150, false], ['Хит 1,5 года', deb * 10, 540, false]];
+  if (!R.pool.length) return null;
+  return (
+    <div className="rounded-2xl bg-black/30 border border-white/[0.07] p-4">
+      <div className="text-[12px] text-zinc-400 mb-2">Где бы оказались такие треки в твоём чарте сейчас ({R.pool.length} треков в базе)</div>
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+        {rows.map(([l, p, d, f]) => { const a = rankIn(D, p, d, f), b = rankIn(P, p, d, f); const up = a !== null && b !== null && b < a; const down = a !== null && b !== null && b > a; return (
+          <div key={l} className="rounded-xl bg-white/[0.03] border border-white/[0.06] px-3 py-2">
+            <div className="text-[11.5px] text-zinc-400 leading-tight">{l}</div>
+            <div className="text-[11px] text-zinc-600 tabular-nums">{fmtC(p)}</div>
+            <div className="mt-1 text-[15px] font-black tabular-nums text-white">{posStr(b)}</div>
+            <div className={`text-[11px] font-bold tabular-nums ${up ? 'text-emerald-400' : down ? 'text-rose-400' : 'text-zinc-600'}`}>{a === b ? 'как сейчас' : `было ${posStr(a)}`}</div>
+          </div>); })}
+      </div>
     </div>
   );
 };
@@ -442,12 +603,12 @@ export const ListenEngineModal: React.FC<{
   const [selRule, setSelRule] = useState<string | null>(st.rules[0]?.id || null);
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2200); return () => clearTimeout(t); }, [toast]);
+  const stats = useMemo(() => { engineSetCatalog(artists, tracks); return artists.map(a => statOf(a)); }, [artists, tracks]);
   const changedCount = (Object.keys(DEFAULT_LISTEN) as PK[]).filter(k => Math.abs(st.base[k] - DEFAULT_LISTEN[k]) > 1e-6).length;
   const setBase = (k: PK, v: number) => setEngine({ ...st, preset: 'custom', base: { ...st.base, [k]: v } });
   const resetGroup = (ids: PK[]) => { const b = { ...st.base }; ids.forEach(k => { b[k] = DEFAULT_LISTEN[k]; }); setEngine({ ...st, base: b }); setToast('Раздел возвращён к исходным значениям'); };
-  const resetAll = () => { setEngine({ ...DEFAULT_ENGINE, rules: st.rules.map(r => ({ ...r, enabled: false })) }); setToast('Все настройки как сейчас · группы выключены'); };
+  const resetAll = () => { setEngine({ ...DEFAULT_ENGINE, rules: st.rules.map(r => ({ ...r, enabled: false })) }); setToast('Всё как сейчас · группы выключены'); };
   const applyPreset = (id: string) => { const p = LISTEN_PRESETS.find(x => x.id === id); if (!p) return; setEngine({ ...st, preset: id, base: { ...DEFAULT_LISTEN, ...p.p } }); setToast(`Пресет «${p.name}»`); };
-  const stats = useMemo(() => { engineSetCatalog(artists, tracks); return artists.map(a => statOf(a)); }, [artists, tracks]);
   const matchCount = (r: ListenRule) => stats.filter(s => ruleMatches({ ...r, enabled: true }, s)).length;
   const updRule = (id: string, patch: Partial<ListenRule>) => setEngine({ ...st, rules: st.rules.map(r => (r.id === id ? { ...r, ...patch } : r)) });
   const addRule = (tpl?: Partial<ListenRule>, name?: string) => {
@@ -457,59 +618,62 @@ export const ListenEngineModal: React.FC<{
   const nav: Array<[string, string, string]> = [['presets', '🎛', 'Пресеты'], ...PARAM_GROUPS.map(g => [g.id, g.icon, g.title] as [string, string, string]), ['groups', '🧩', 'Группы артистов'], ['auto', '🪄', 'Авто-слушатели']];
   const group = PARAM_GROUPS.find(g => g.id === tab);
   const rule = st.rules.find(r => r.id === selRule) || null;
+  const R = getRefs();
 
   return (
     <Portal>
-      <div className="fixed inset-0 z-[600] flex items-center justify-center p-3 md:p-6">
+      <LeCss />
+      <div className="fixed inset-0 z-[600] flex items-center justify-center p-2 md:p-5">
         <motion.div className="absolute inset-0 bg-black/75 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
         <motion.div initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.98 }} transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-          className="relative w-full max-w-5xl h-[88vh] rounded-[28px] bg-[#0e0f13]/97 border border-white/10 shadow-2xl overflow-hidden flex flex-col">
-          <div className="absolute inset-x-0 top-0 h-40 pointer-events-none opacity-[0.16]" style={{ background: 'radial-gradient(60% 100% at 20% 0%, var(--accent-color), transparent 70%)' }} />
-          <div className="relative px-5 md:px-6 py-4 border-b border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
+          className="relative w-full max-w-6xl h-[92vh] rounded-[30px] bg-[#0e0f13] border border-white/10 shadow-2xl overflow-hidden flex flex-col">
+          <div className="absolute inset-x-0 top-0 h-40 pointer-events-none opacity-[0.14]" style={{ background: 'radial-gradient(60% 100% at 20% 0%, var(--accent-color), transparent 70%)' }} />
+          <div className="relative px-5 md:px-7 py-4 border-b border-white/[0.07] flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <h2 className="text-base md:text-lg font-black text-white tracking-tight">Движок прослушиваний</h2>
-              <p className="text-[11.5px] text-zinc-400">Дебюты, рост, каталог, чарты и слушатели · влияет на автопилот, полуавтомат, ручной батч и ручное создание</p>
+              <h2 className="text-lg md:text-xl font-black text-white tracking-tight">Движок прослушиваний</h2>
+              <p className="text-[13px] text-zinc-400">×1.00 = как сейчас. Влияет на новые релизы и следующие недели, уже набранные цифры не меняет.</p>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold tabular-nums ${changedCount || st.rules.some(r => r.enabled) ? 'bg-white/[0.08] text-white' : 'bg-white/[0.04] text-zinc-500'}`}>
-                {changedCount} изм. · {st.rules.filter(r => r.enabled).length} групп
-              </span>
-              <button type="button" onClick={() => setEngine({ ...st, enabled: !st.enabled })} className={`px-3 py-1.5 rounded-xl text-[11px] font-black transition-colors ${st.enabled ? 'theme-bg-accent text-black' : 'bg-white/[0.06] text-zinc-300'}`}>{st.enabled ? 'Включён' : 'Выключен'}</button>
-              <button type="button" onClick={resetAll} className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300">↺ Всё как сейчас</button>
-              <button type="button" onClick={onClose} className="w-8 h-8 rounded-full hover:bg-white/10 text-zinc-400 hover:text-white text-lg">×</button>
+              <span className={`px-3 py-1.5 rounded-full text-[12px] font-bold tabular-nums ${changedCount || st.rules.some(r => r.enabled) ? 'bg-white/[0.08] text-white' : 'bg-white/[0.04] text-zinc-500'}`}>{changedCount} изм. · {st.rules.filter(r => r.enabled).length} групп</span>
+              <button type="button" onClick={() => setEngine({ ...st, enabled: !st.enabled })} className={`px-3.5 py-2 rounded-xl text-[12px] font-black transition-colors ${st.enabled ? 'theme-bg-accent text-black' : 'bg-white/[0.06] text-zinc-300'}`}>{st.enabled ? 'Включён' : 'Выключен'}</button>
+              <button type="button" onClick={resetAll} className="px-3.5 py-2 rounded-xl text-[12px] font-bold bg-white/[0.05] hover:bg-white/[0.1] text-zinc-200">↺ Всё как сейчас</button>
+              <button type="button" onClick={onClose} className="w-9 h-9 rounded-full hover:bg-white/10 text-zinc-400 hover:text-white text-xl">×</button>
             </div>
           </div>
 
           <div className="relative flex-1 min-h-0 flex flex-col md:flex-row">
-            <nav className="md:w-52 shrink-0 p-2 md:p-3 border-b md:border-b-0 md:border-r border-white/[0.06] flex md:flex-col gap-1 overflow-x-auto custom-scrollbar">
+            <nav className="md:w-60 shrink-0 p-2 md:p-3 border-b md:border-b-0 md:border-r border-white/[0.06] flex md:flex-col gap-1 overflow-x-auto custom-scrollbar">
               {nav.map(([id, ic, l]) => (
-                <button key={id} type="button" onClick={() => setTab(id)} className={`relative shrink-0 flex items-center gap-2 px-3 py-2 rounded-xl text-[12.5px] font-semibold text-left transition-colors ${tab === id ? 'text-black' : 'text-zinc-300 hover:bg-white/[0.05]'}`}>
+                <button key={id} type="button" onClick={() => setTab(id)} className={`relative shrink-0 flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-[14px] font-semibold text-left transition-colors ${tab === id ? 'text-black' : 'text-zinc-300 hover:bg-white/[0.05]'}`}>
                   {tab === id && <motion.span layoutId="le-nav" className="absolute inset-0 rounded-xl bg-white" transition={{ type: 'spring', stiffness: 420, damping: 36 }} />}
                   <span className="relative">{ic}</span><span className="relative whitespace-nowrap">{l}</span>
                 </button>
               ))}
-              <div className="hidden md:block mt-auto p-3 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-[10.5px] text-zinc-500 leading-snug">Двойной клик по ползунку — вернуть значение. ×1.00 = как сейчас.</div>
+              <div className="hidden md:block mt-auto p-3 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-[12px] text-zinc-500 leading-snug">
+                Примеры считаются по твоей базе: типичный дебют ≈ {fmtC(R.debut)}, средний артист ≈ {fmtC(R.medFol)} слушателей. Двойной клик по карточке — вернуть значение.
+              </div>
             </nav>
 
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 md:p-6">
-              <AnimatePresence mode="wait">
-                <motion.div key={tab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.18 }}>
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div key={tab} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.16 }}>
                   {tab === 'presets' && (
                     <div className="space-y-4">
-                      <p className="text-[12px] text-zinc-400">Пресеты не уходят далеко от текущих формул: обычно ±10–35 %. После пресета можно донастроить любые ползунки.</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                        {LISTEN_PRESETS.map(p => (
+                      <p className="text-[13.5px] text-zinc-300">Готовые наборы. Они не уходят далеко от текущих формул (обычно ±10–35 %). После пресета любые ползунки можно донастроить.</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                        {LISTEN_PRESETS.map(p => { const P = { ...DEFAULT_LISTEN, ...p.p }; const keys = (Object.keys(p.p) as PK[]).sort(byImportance); return (
                           <motion.button key={p.id} type="button" whileHover={{ y: -2 }} onClick={() => applyPreset(p.id)}
-                            className={`text-left rounded-2xl p-3.5 border transition-colors ${st.preset === p.id ? 'bg-white/[0.1] border-white/30' : 'bg-white/[0.03] border-white/[0.07] hover:bg-white/[0.06]'}`}>
-                            <div className="flex items-center gap-2"><span className="text-lg">{p.emoji}</span><span className="text-[13px] font-black text-white">{p.name}</span>{st.preset === p.id && <span className="ml-auto text-[10px] font-black theme-accent">активен</span>}</div>
-                            <div className="text-[11px] text-zinc-400 mt-1 leading-snug">{p.text}</div>
-                            <div className="flex flex-wrap gap-1 mt-2">{(Object.keys(p.p) as PK[]).slice(0, 4).map(k => <span key={k} className="text-[9.5px] px-1.5 py-0.5 rounded-full bg-white/[0.06] text-zinc-300">{PARAM_BY_KEY.get(k)?.label.split(' (')[0]} {ADDITIVE.includes(k) ? `+${p.p[k]}` : `×${p.p[k]}`}</span>)}</div>
-                          </motion.button>
-                        ))}
+                            className={`text-left rounded-2xl p-4 border transition-colors ${st.preset === p.id ? 'bg-white/[0.1] border-white/30' : 'bg-white/[0.03] border-white/[0.07] hover:bg-white/[0.06]'}`}>
+                            <div className="flex items-center gap-2"><span className="text-xl">{p.emoji}</span><span className="text-[15px] font-black text-white">{p.name}</span>{st.preset === p.id && <span className="ml-auto text-[11px] font-black theme-accent">активен</span>}</div>
+                            <div className="text-[12.5px] text-zinc-400 mt-1 leading-snug">{p.text}</div>
+                            {keys.length > 0 && <div className="text-[12px] text-zinc-300 mt-2 leading-snug"><span className="text-zinc-500">Например: </span>{exampleFor(keys[0], P)}</div>}
+                            <div className="flex flex-wrap gap-1 mt-2">{keys.slice(0, 4).map(k => <span key={k} className="text-[10.5px] px-1.5 py-0.5 rounded-full bg-white/[0.06] text-zinc-300">{PARAM_BY_KEY.get(k)?.label} {ADDITIVE.includes(k) ? `+${p.p[k]}` : `×${p.p[k]}`}</span>)}</div>
+                          </motion.button>); })}
                       </div>
                       <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4 space-y-2">
-                        <div className="text-[12px] font-bold text-white">Быстрые группы</div>
-                        <div className="flex flex-wrap gap-1.5">{RULE_TEMPLATES.map(t => <button key={t.name} type="button" onClick={() => addRule(t.r, t.name)} className="px-2.5 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[11px] font-semibold text-zinc-200">+ {t.name}</button>)}</div>
+                        <div className="text-[14px] font-bold text-white">Быстрые группы артистов</div>
+                        <div className="text-[12.5px] text-zinc-400">Своя настройка для части артистов: звёзды, новички, топ чарта или выбранные вручную.</div>
+                        <div className="flex flex-wrap gap-1.5">{RULE_TEMPLATES.map(t => <button key={t.name} type="button" onClick={() => addRule(t.r, t.name)} className="px-3 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[12.5px] font-semibold text-zinc-200">+ {t.name}</button>)}</div>
                       </div>
                     </div>
                   )}
@@ -517,34 +681,35 @@ export const ListenEngineModal: React.FC<{
                   {group && (
                     <div className="space-y-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
-                        <p className="text-[12px] text-zinc-400 max-w-xl">{group.sub}</p>
-                        <button type="button" onClick={() => resetGroup(group.items.map(i => i.k))} className="px-3 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[11px] font-bold text-zinc-300">↺ Сбросить раздел</button>
+                        <p className="text-[13.5px] text-zinc-300 max-w-2xl leading-relaxed">{group.sub}</p>
+                        <button type="button" onClick={() => resetGroup(group.items.map(i => i.k))} className="px-3.5 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[12px] font-bold text-zinc-200">↺ Сбросить раздел</button>
                       </div>
                       {(group.id === 'growth' || group.id === 'catalog') && <CurvePreview P={st.base} catalog={group.id === 'catalog'} />}
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-4">
-                        {group.items.map(it => <MultSlider key={it.k} label={it.label} hint={it.hint} value={st.base[it.k]} def={DEFAULT_LISTEN[it.k]} min={it.min} max={it.max} unit={it.unit} onChange={v => setBase(it.k, v)} />)}
+                      {group.id === 'charts' && <ChartPreview P={st.base} />}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {group.items.map(it => <PSlider key={it.k} label={it.label} hint={it.hint} example={exampleFor(it.k, st.base)} value={st.base[it.k]} def={DEFAULT_LISTEN[it.k]} min={it.min} max={it.max} unit={it.unit} onChange={v => setBase(it.k, v)} />)}
                       </div>
-                      {group.id === 'listeners' && <button type="button" onClick={() => setTab('auto')} className="px-3.5 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-[12px] font-bold text-white">🪄 Автоматически определить месячных слушателей →</button>}
+                      {group.id === 'listeners' && <button type="button" onClick={() => setTab('auto')} className="px-4 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-[13px] font-bold text-white">🪄 Автоматически определить месячных слушателей →</button>}
                     </div>
                   )}
 
                   {tab === 'groups' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-[230px_minmax(0,1fr)] gap-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-[250px_minmax(0,1fr)] gap-4">
                       <div className="space-y-1.5">
                         {st.rules.map(r => (
-                          <button key={r.id} type="button" onClick={() => setSelRule(r.id)} className={`w-full text-left rounded-xl px-3 py-2 border transition-colors ${selRule === r.id ? 'bg-white/[0.09] border-white/20' : 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.06]'}`}>
-                            <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full shrink-0" style={{ background: r.color, opacity: r.enabled ? 1 : 0.3 }} /><span className={`text-[12.5px] font-bold truncate ${r.enabled ? 'text-white' : 'text-zinc-500'}`}>{r.name}</span></div>
-                            <div className="text-[10.5px] text-zinc-500 mt-0.5">{matchCount(r)} арт. · {Object.keys(r.p).length} парам.{r.enabled ? '' : ' · выкл.'}</div>
+                          <button key={r.id} type="button" onClick={() => setSelRule(r.id)} className={`w-full text-left rounded-xl px-3.5 py-2.5 border transition-colors ${selRule === r.id ? 'bg-white/[0.09] border-white/20' : 'bg-white/[0.03] border-white/[0.06] hover:bg-white/[0.06]'}`}>
+                            <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: r.color, opacity: r.enabled ? 1 : 0.3 }} /><span className={`text-[14px] font-bold truncate ${r.enabled ? 'text-white' : 'text-zinc-500'}`}>{r.name}</span></div>
+                            <div className="text-[12px] text-zinc-500 mt-0.5">{matchCount(r)} арт. · {Object.keys(r.p).length} парам.{r.enabled ? '' : ' · выкл.'}</div>
                           </button>
                         ))}
-                        <button type="button" onClick={() => addRule()} className="w-full rounded-xl px-3 py-2 border border-dashed border-white/15 text-[12px] font-bold text-zinc-300 hover:text-white">+ Новая группа</button>
-                        <div className="flex flex-wrap gap-1 pt-1">{RULE_TEMPLATES.map(t => <button key={t.name} type="button" onClick={() => addRule(t.r, t.name)} className="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] text-[10px] text-zinc-400">{t.name}</button>)}</div>
-                        <p className="text-[10.5px] text-zinc-500 leading-snug pt-1">Если артист попадает в несколько групп, их множители перемножаются поверх общих настроек.</p>
+                        <button type="button" onClick={() => addRule()} className="w-full rounded-xl px-3 py-2.5 border border-dashed border-white/15 text-[13px] font-bold text-zinc-300 hover:text-white">+ Новая группа</button>
+                        <div className="flex flex-wrap gap-1 pt-1">{RULE_TEMPLATES.map(t => <button key={t.name} type="button" onClick={() => addRule(t.r, t.name)} className="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] text-[11px] text-zinc-400">{t.name}</button>)}</div>
+                        <p className="text-[12px] text-zinc-500 leading-snug pt-1">Если артист попадает в несколько групп, их множители перемножаются поверх общих настроек.</p>
                       </div>
-                      {rule ? <RuleEditor key={rule.id} rule={rule} artists={artists} stats={stats} count={matchCount(rule)} onChange={p => updRule(rule.id, p)}
+                      {rule ? <RuleEditor key={rule.id} rule={rule} artists={artists} stats={stats} count={matchCount(rule)} base={st.base} onChange={p => updRule(rule.id, p)}
                         onDelete={() => { setEngine({ ...st, rules: st.rules.filter(r => r.id !== rule.id) }); setSelRule(null); }}
                         onDuplicate={() => addRule({ ...rule, p: { ...rule.p }, artistIds: [...rule.artistIds] }, `${rule.name} (копия)`)} />
-                        : <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-[12px] text-zinc-500">Создай группу: конкретные артисты, диапазон слушателей, прослушиваний, место в чарте, хайп или жанр. И задай для неё свои множители.</div>}
+                        : <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-[13px] text-zinc-500">Создай группу: конкретные артисты, диапазон слушателей, прослушиваний, место в чарте, хайп или жанр. И задай для неё свои множители.</div>}
                     </div>
                   )}
 
@@ -553,86 +718,112 @@ export const ListenEngineModal: React.FC<{
               </AnimatePresence>
             </div>
           </div>
-          <AnimatePresence>{toast && <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl bg-white text-black text-[12px] font-bold shadow-xl">{toast}</motion.div>}</AnimatePresence>
+          <AnimatePresence>{toast && <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-xl bg-white text-black text-[13px] font-bold shadow-xl">{toast}</motion.div>}</AnimatePresence>
         </motion.div>
       </div>
     </Portal>
   );
 };
 
-const RuleEditor: React.FC<{ rule: ListenRule; artists: Artist[]; stats: ArtStat[]; count: number; onChange: (p: Partial<ListenRule>) => void; onDelete: () => void; onDuplicate: () => void }> = ({ rule, artists, stats, count, onChange, onDelete, onDuplicate }) => {
+const RuleEditor: React.FC<{ rule: ListenRule; artists: Artist[]; stats: ArtStat[]; count: number; base?: ListenParams; onChange: (p: Partial<ListenRule>) => void; onDelete: () => void; onDuplicate: () => void }> = ({ rule, artists, stats, count, base = DEFAULT_LISTEN, onChange, onDelete, onDuplicate }) => {
   const [q, setQ] = useState('');
-  const [addKey, setAddKey] = useState<string>('');
+  const [picker, setPicker] = useState(false);
   const list = useMemo(() => {
     const n = norm(q);
     return [...artists].filter(a => !n || norm(a.name).includes(n)).sort((a, b) => Number(rule.artistIds.includes(b.id)) - Number(rule.artistIds.includes(a.id)) || (b.followers || 0) - (a.followers || 0)).slice(0, 60);
   }, [artists, q, rule.artistIds]);
-  const preview = useMemo(() => stats.filter(s => ruleMatches({ ...rule, enabled: true }, s)).sort((a, b) => b.followers - a.followers).slice(0, 12), [stats, rule]);
-  const keys = Object.keys(rule.p) as PK[];
+  const matched = useMemo(() => stats.filter(s => ruleMatches({ ...rule, enabled: true }, s)).sort((a, b) => b.followers - a.followers), [stats, rule]);
+  const keys = (Object.keys(rule.p) as PK[]).sort(byImportance);
+  const toggleKey = (k: PK) => { const p = { ...rule.p }; if (k in p) delete p[k]; else p[k] = ADDITIVE.includes(k) ? 0.5 : 1.15; onChange({ p }); };
+  // the group's own multipliers on top of the general settings
+  const merged: ListenParams = { ...base }; keys.forEach(k => { const v = rule.p[k] as number; merged[k] = ADDITIVE.includes(k) ? merged[k] + v : merged[k] * v; });
+  const ex = matched[0];
+  const R = getRefs();
+  const exDeb = ex ? R.debut * Math.pow(Math.max(0.05, ex.followers / Math.max(1, R.medFol)), 0.6) : 0;
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex gap-1">{RULE_COLORS.map(c => <button key={c} type="button" onClick={() => onChange({ color: c })} className={`w-4 h-4 rounded-full ${rule.color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-[#0e0f13]' : ''}`} style={{ background: c }} />)}</div>
-        <input value={rule.name} onChange={e => onChange({ name: e.target.value })} className="flex-1 min-w-[140px] h-9 px-3 rounded-xl bg-black/40 border border-white/10 text-[13px] font-bold text-white outline-none" />
-        <button type="button" onClick={() => onChange({ enabled: !rule.enabled })} className={`px-3 h-9 rounded-xl text-[11px] font-black ${rule.enabled ? 'theme-bg-accent text-black' : 'bg-white/[0.06] text-zinc-300'}`}>{rule.enabled ? 'Включена' : 'Выключена'}</button>
-        <button type="button" onClick={onDuplicate} className="px-3 h-9 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[11px] font-bold text-zinc-300">Копия</button>
-        <button type="button" onClick={onDelete} className="px-3 h-9 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-[11px] font-bold text-rose-300">Удалить</button>
+        <div className="flex gap-1.5">{RULE_COLORS.map(c => <button key={c} type="button" onClick={() => onChange({ color: c })} className={`w-5 h-5 rounded-full ${rule.color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-[#0e0f13]' : ''}`} style={{ background: c }} />)}</div>
+        <input value={rule.name} onChange={e => onChange({ name: e.target.value })} className="flex-1 min-w-[160px] h-10 px-3.5 rounded-xl bg-black/40 border border-white/10 text-[14px] font-bold text-white outline-none" />
+        <button type="button" onClick={() => onChange({ enabled: !rule.enabled })} className={`px-3.5 h-10 rounded-xl text-[12px] font-black ${rule.enabled ? 'theme-bg-accent text-black' : 'bg-white/[0.06] text-zinc-300'}`}>{rule.enabled ? 'Включена' : 'Выключена'}</button>
+        <button type="button" onClick={onDuplicate} className="px-3.5 h-10 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[12px] font-bold text-zinc-200">Копия</button>
+        <button type="button" onClick={onDelete} className="px-3.5 h-10 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-[12px] font-bold text-rose-300">Удалить</button>
       </div>
+
       <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4 space-y-3">
-        <div className="flex items-center justify-between gap-2"><span className="text-[12px] font-bold text-white">Кто входит в группу</span><span className="text-[11px] font-bold theme-accent tabular-nums">{count} артистов</span></div>
+        <div className="flex items-center justify-between gap-2"><span className="text-[14px] font-bold text-white">1. Кто входит в группу</span><span className="text-[13px] font-bold theme-accent tabular-nums">{count} артистов</span></div>
         <Seg value={rule.mode} onChange={v => onChange({ mode: v })} options={[['all', 'Все артисты'], ['pick', 'Выбрать вручную'], ['filter', 'По условиям']]} />
         {rule.mode === 'pick' && (
           <div className="space-y-2">
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Поиск артиста…" className="w-full h-9 px-3 rounded-xl bg-black/40 border border-white/10 text-[12px] text-white outline-none" />
-            <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto custom-scrollbar">
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Поиск артиста…" className="w-full h-10 px-3.5 rounded-xl bg-black/40 border border-white/10 text-[13px] text-white outline-none" />
+            <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto custom-scrollbar">
               {list.map(a => { const on = rule.artistIds.includes(a.id); return (
                 <button key={a.id} type="button" onClick={() => onChange({ artistIds: on ? rule.artistIds.filter(x => x !== a.id) : [...rule.artistIds, a.id] })}
-                  className={`inline-flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors ${on ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>
-                  <CoverArt url={a.imageUrl} title={a.name} isArtist className="w-5 h-5 rounded-full overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />{a.name}<span className="opacity-50 tabular-nums">{fmtC(a.followers || 0)}</span>
+                  className={`inline-flex items-center gap-1.5 pl-1 pr-3 py-1 rounded-full text-[12.5px] font-semibold transition-colors ${on ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>
+                  <CoverArt url={a.imageUrl} title={a.name} isArtist className="w-6 h-6 rounded-full overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />{a.name}<span className="opacity-50 tabular-nums">{fmtC(a.followers || 0)}</span>
                 </button>); })}
             </div>
-            {rule.artistIds.length > 0 && <button type="button" onClick={() => onChange({ artistIds: [] })} className="text-[11px] text-zinc-500 hover:text-white">Снять всех ({rule.artistIds.length})</button>}
+            {rule.artistIds.length > 0 && <button type="button" onClick={() => onChange({ artistIds: [] })} className="text-[12px] text-zinc-500 hover:text-white">Снять всех ({rule.artistIds.length})</button>}
           </div>
         )}
         {rule.mode === 'filter' && (
           <div className="space-y-3">
-            <div className="flex flex-wrap gap-1.5">{LIS_CHIPS.map(([l, a, b]) => <button key={l} type="button" onClick={() => onChange({ lisMin: a, lisMax: b })} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${rule.lisMin === a && rule.lisMax === b ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>{l}</button>)}</div>
+            <div className="flex flex-wrap gap-1.5"><span className="text-[12px] text-zinc-500 self-center mr-1">Слушатели:</span>{LIS_CHIPS.map(([l, a, b]) => <button key={l} type="button" onClick={() => onChange({ lisMin: a, lisMax: b })} className={`px-3 py-1 rounded-lg text-[12px] font-bold ${rule.lisMin === a && rule.lisMax === b ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>{l}</button>)}</div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <NumField label="Слушатели от" value={rule.lisMin} onChange={v => onChange({ lisMin: v })} />
+              <NumField label="Слушатели от" value={rule.lisMin} onChange={v => onChange({ lisMin: v })} ph="например 1 млн" />
               <NumField label="Слушатели до" value={rule.lisMax} onChange={v => onChange({ lisMax: v })} />
-              <NumField label="Ср. прослуш. от" value={rule.avgMin} onChange={v => onChange({ avgMin: v })} />
-              <NumField label="Ср. прослуш. до" value={rule.avgMax} onChange={v => onChange({ avgMax: v })} />
+              <NumField label="Ср. прослуш. трека от" value={rule.avgMin} onChange={v => onChange({ avgMin: v })} ph="например 500к" />
+              <NumField label="Ср. прослуш. трека до" value={rule.avgMax} onChange={v => onChange({ avgMax: v })} />
               <NumField label="Хайп от" value={rule.hypeMin} onChange={v => onChange({ hypeMin: v })} ph="0" />
               <NumField label="Хайп до" value={rule.hypeMax} onChange={v => onChange({ hypeMax: v })} ph="99" />
-              <label className="block col-span-2"><span className="block text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1">Жанр содержит</span><input value={rule.genre || ''} onChange={e => onChange({ genre: e.target.value || undefined })} placeholder="рэп, поп, рок…" className={numIn} /></label>
+              <label className="block col-span-2"><span className="block text-[11px] uppercase tracking-wider text-zinc-500 font-bold mb-1">Жанр содержит</span><input value={rule.genre || ''} onChange={e => onChange({ genre: e.target.value || undefined })} placeholder="рэп, поп, рок…" className={numIn} /></label>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <div><div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1">Есть трек в чарте</div><Seg small value={String(rule.chartTop || 0)} onChange={v => onChange({ chartTop: +v || undefined })} options={[['0', 'не важно'], ['10', 'топ-10'], ['20', 'топ-20'], ['50', 'топ-50'], ['100', 'топ-100']]} /></div>
-              <div><div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mb-1">Галочка</div><Seg small value={rule.verified || 'any'} onChange={v => onChange({ verified: v as any })} options={[['any', 'любые'], ['yes', 'с галочкой'], ['no', 'без']]} /></div>
-              <div className="w-44"><Toggle on={Boolean(rule.rising)} onChange={v => onChange({ rising: v || undefined })} label="Только восходящие" /></div>
+            <div className="flex flex-wrap items-end gap-4">
+              <div><div className="text-[11px] uppercase tracking-wider text-zinc-500 font-bold mb-1">Есть трек в чарте сейчас</div><Seg value={String(rule.chartTop || 0)} onChange={v => onChange({ chartTop: +v || undefined })} options={[['0', 'не важно'], ['10', 'топ-10'], ['20', 'топ-20'], ['50', 'топ-50'], ['100', 'топ-100']]} /></div>
+              <div><div className="text-[11px] uppercase tracking-wider text-zinc-500 font-bold mb-1">Галочка</div><Seg value={rule.verified || 'any'} onChange={v => onChange({ verified: v as any })} options={[['any', 'любые'], ['yes', 'с галочкой'], ['no', 'без']]} /></div>
+              <div className="w-52"><Toggle on={Boolean(rule.rising)} onChange={v => onChange({ rising: v || undefined })} label="Только восходящие" /></div>
             </div>
           </div>
         )}
-        {preview.length > 0 && <div className="flex flex-wrap gap-1 pt-1">{preview.map(s => <span key={s.id} className="text-[10.5px] px-2 py-0.5 rounded-full bg-white/[0.05] text-zinc-400">{s.name} · {fmtC(s.followers)}</span>)}{count > preview.length && <span className="text-[10.5px] text-zinc-500">и ещё {count - preview.length}</span>}</div>}
+        {matched.length > 0 && <div className="flex flex-wrap gap-1 pt-1">{matched.slice(0, 14).map(s => <span key={s.id} className="text-[11.5px] px-2 py-0.5 rounded-full bg-white/[0.05] text-zinc-400">{s.name} · {fmtC(s.followers)}</span>)}{count > 14 && <span className="text-[11.5px] text-zinc-500 self-center">и ещё {count - 14}</span>}</div>}
       </div>
+
       <div className="rounded-2xl bg-white/[0.03] border border-white/[0.06] p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[12px] font-bold text-white">Параметры группы</span>
+          <span className="text-[14px] font-bold text-white">2. Что меняем для группы</span>
           <div className="flex items-center gap-2">
-            <select value={addKey} onChange={e => { const k = e.target.value as PK; if (k) onChange({ p: { ...rule.p, [k]: ADDITIVE.includes(k) ? 0.5 : 1.15 } }); setAddKey(''); }} className="h-8 px-2 rounded-lg bg-black/40 border border-white/10 text-[11px] text-white outline-none">
-              <option value="" className="bg-zinc-950">+ Добавить параметр</option>
-              {PARAM_GROUPS.map(g => <optgroup key={g.id} label={g.title} className="bg-zinc-950">{g.items.filter(i => !(i.k in rule.p)).map(i => <option key={i.k} value={i.k} className="bg-zinc-950">{i.label}</option>)}</optgroup>)}
-            </select>
-            {keys.length > 0 && <button type="button" onClick={() => onChange({ p: {} })} className="text-[11px] text-zinc-500 hover:text-white">↺ очистить</button>}
+            <button type="button" onClick={() => setPicker(v => !v)} className={`px-3.5 py-2 rounded-xl text-[12.5px] font-bold transition-colors ${picker ? 'bg-white text-black' : 'bg-white/[0.07] hover:bg-white/[0.12] text-white'}`}>{picker ? 'Готово' : '+ Добавить параметры'}</button>
+            {keys.length > 0 && <button type="button" onClick={() => onChange({ p: {} })} className="text-[12px] text-zinc-500 hover:text-white">↺ очистить</button>}
           </div>
         </div>
-        {keys.length === 0 && <div className="text-[11.5px] text-zinc-500">Пока без параметров: группа ничего не меняет. Добавь, например, «Общий масштаб дебюта» или «Рост слушателей».</div>}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-3">
-          {keys.map(k => { const m = PARAM_BY_KEY.get(k)!; const add = ADDITIVE.includes(k); return (
-            <div key={k} className="relative pr-6">
-              <MultSlider label={m.label} value={rule.p[k] as number} def={add ? 0 : 1} min={add ? 0 : m.min} max={m.max} unit={add ? 'raw' : 'x'} onChange={v => onChange({ p: { ...rule.p, [k]: v } })} />
-              <button type="button" onClick={() => { const p = { ...rule.p }; delete p[k]; onChange({ p }); }} className="absolute right-0 top-0 text-zinc-500 hover:text-rose-400 text-sm" title="Убрать">×</button>
-            </div>); })}
+        <AnimatePresence initial={false}>
+          {picker && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+              <div className="rounded-xl bg-black/30 border border-white/[0.06] p-3 space-y-2.5">
+                <div className="text-[12px] text-zinc-400">Нажимай на несколько: выбранные сразу появятся ниже, самые важные сверху.</div>
+                {PARAM_GROUPS.map(g => (
+                  <div key={g.id}>
+                    <div className="text-[11px] uppercase tracking-wider text-zinc-500 font-bold mb-1">{g.icon} {g.title}</div>
+                    <div className="flex flex-wrap gap-1.5">{[...g.items].sort((a, b) => byImportance(a.k, b.k)).map(i => { const on = i.k in rule.p; return (
+                      <button key={i.k} type="button" onClick={() => toggleKey(i.k)} title={i.hint} className={`px-2.5 py-1 rounded-lg text-[12px] font-semibold transition-colors ${on ? 'theme-bg-accent text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>{on ? '✓ ' : ''}{i.label}</button>); })}</div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {keys.length === 0 && !picker && <div className="text-[12.5px] text-zinc-500">Пока без параметров: группа ничего не меняет. Нажми «Добавить параметры» и выбери, например, «Общий масштаб дебюта» и «Рост слушателей».</div>}
+        {ex && keys.length > 0 && (
+          <div className="rounded-xl bg-white/[0.04] border border-white/[0.07] px-3.5 py-2.5 text-[12.5px] text-zinc-300 leading-relaxed">
+            <span className="text-zinc-500">Например, {ex.name} ({fmtC(ex.followers)}): </span>
+            сингл ≈ {fmtC(exDeb * base.debutMult * base.singleMult)} → <b className="text-white">{fmtC(exDeb * merged.debutMult * merged.singleMult)}</b>
+            {' · '}слушатели после релиза ≈ +{fmtC(ex.followers * 0.024 * damping(ex.followers) * base.lisGain)} → <b className="text-white">+{fmtC(ex.followers * 0.024 * damping(ex.followers) * merged.lisGain)}</b>
+          </div>
+        )}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {keys.map(k => { const m = PARAM_BY_KEY.get(k)!; const add = ADDITIVE.includes(k); const g = GROUP_OF.get(k); return (
+            <PSlider key={k} label={`${g?.icon || ''} ${m.label}`} hint={m.hint} example={exampleFor(k, merged, k === 'chartArtist' ? merged.chartArtist : 1)} value={rule.p[k] as number} def={add ? 0 : 1} min={add ? 0 : m.min} max={m.max} unit={add ? 'raw' : 'x'}
+              onChange={v => onChange({ p: { ...rule.p, [k]: v } })} onRemove={() => toggleKey(k)} />); })}
         </div>
       </div>
     </div>
@@ -640,48 +831,77 @@ const RuleEditor: React.FC<{ rule: ListenRule; artists: Artist[]; stats: ArtStat
 };
 
 const LIS_BACKUP = 'musaic.engine.lisBackup';
+const LIS_APPLIED = 'musaic.engine.lisApplied';
+const LW_LS = 'musaic.engine.lisWeights';
+const W_ITEMS: Array<{ k: keyof ListenerWeights; label: string; hint: string; min: number; max: number; def: number }> = [
+  { k: 'fresh', label: 'Свежие релизы', hint: 'Прослушивания за последние полгода', min: 0, max: 3, def: 1 },
+  { k: 'hits', label: 'Старые хиты (топ-треки)', hint: 'Больше — у кого до сих пор слушают большие хиты, тот получает больше слушателей', min: 0, max: 4, def: 1 },
+  { k: 'feats', label: 'Фиты у других', hint: 'Гостевые куплеты на чужих треках', min: 0, max: 3, def: 1 },
+  { k: 'hype', label: 'Хайп', hint: 'Больше — у хайповых артистов меньше слушателей на тот же объём стримов (фанаты слушают по кругу)', min: 0, max: 3, def: 1 },
+  { k: 'verified', label: 'Галочка', hint: 'Бонус подтверждённым артистам', min: 0, max: 4, def: 1 },
+  { k: 'keep', label: 'Похожесть на текущие', hint: '0 — только расчёт, 0.9 — почти без изменений', min: 0, max: 0.9, def: 0.45 }
+];
 const AutoListeners: React.FC<{ artists: Artist[]; tracks: Track[]; albums: Album[]; refIso?: string; onApply?: (m: Record<string, number>) => void; onToast: (s: string) => void }> = ({ artists, tracks, albums, refIso, onApply, onToast }) => {
-  const [keep, setKeep] = useState(0.45);
+  const [w, setW] = useState<ListenerWeights>(() => ({ ...DEFAULT_LW, ...lsGet<Partial<ListenerWeights>>(LW_LS, {}) }));
+  useEffect(() => lsSet(LW_LS, w), [w]);
   const [q, setQ] = useState('');
+  const [sort, setSort] = useState<'change' | 'listeners' | 'name'>('change');
+  const [onlyChanges, setOnlyChanges] = useState(true);
+  const [hideApplied, setHideApplied] = useState(true);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [backup, setBackup] = useState<Record<string, number> | null>(() => lsGet<Record<string, number> | null>(LIS_BACKUP, null));
-  const rows = useMemo(() => artists.map(a => ({ a, e: estimateMonthlyListeners(a, tracks, albums, refIso, keep) }))
-    .map(x => ({ ...x, d: (x.e.value - (x.a.followers || 0)) / Math.max(1, x.a.followers || 1) }))
-    .sort((x, y) => (y.a.followers || 0) - (x.a.followers || 0)), [artists, tracks, albums, refIso, keep]);
-  const shown = rows.filter(r => !q || norm(r.a.name).includes(norm(q)));
+  const [applied, setApplied] = useState<Record<string, number>>(() => lsGet<Record<string, number>>(LIS_APPLIED, {}));
+  const rows = useMemo(() => artists.map(a => ({ a, e: estimateMonthlyListeners(a, tracks, albums, refIso, w, artists) }))
+    .map(x => ({ ...x, d: (x.e.value - (x.a.followers || 0)) / Math.max(1, x.a.followers || 1) })), [artists, tracks, albums, refIso, w]);
+  const shown = useMemo(() => rows
+    .filter(r => !q || norm(r.a.name).includes(norm(q)))
+    .filter(r => !onlyChanges || Math.abs(r.d) >= 0.03)
+    .filter(r => !hideApplied || applied[r.a.id] !== (r.a.followers || 0))
+    .sort((x, y) => (sort === 'change' ? Math.abs(y.d) - Math.abs(x.d) : sort === 'listeners' ? (y.a.followers || 0) - (x.a.followers || 0) : x.a.name.localeCompare(y.a.name))), [rows, q, onlyChanges, hideApplied, applied, sort]);
   const toggle = (id: string) => setSel(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const apply = (ids: string[]) => {
     if (!onApply || !ids.length) return;
     const old: Record<string, number> = {}; const map: Record<string, number> = {};
     rows.forEach(r => { if (ids.includes(r.a.id)) { old[r.a.id] = r.a.followers || 0; map[r.a.id] = r.e.value; } });
-    lsSet(LIS_BACKUP, old); setBackup(old); onApply(map); onToast(`Слушатели обновлены у ${ids.length} артистов`); setSel(new Set());
+    const ap = { ...applied, ...map };
+    lsSet(LIS_BACKUP, old); setBackup(old); lsSet(LIS_APPLIED, ap); setApplied(ap);
+    onApply(map); onToast(`Слушатели обновлены у ${ids.length} артистов`); setSel(new Set());
   };
-  const undo = () => { if (!backup || !onApply) return; onApply(backup); lsSet(LIS_BACKUP, null); setBackup(null); onToast('Возвращены прежние слушатели'); };
+  const undo = () => { if (!backup || !onApply) return; onApply(backup); const ap = { ...applied }; Object.keys(backup).forEach(k => { delete ap[k]; }); lsSet(LIS_APPLIED, ap); setApplied(ap); lsSet(LIS_BACKUP, null); setBackup(null); onToast('Возвращены прежние слушатели'); };
+  const ups = rows.filter(r => r.d >= 0.03).length, downs = rows.filter(r => r.d <= -0.03).length;
   return (
     <div className="space-y-4">
-      <p className="text-[12px] text-zinc-400 max-w-2xl">Оценка по реальным данным: свежие прослушивания за ~30 дней (новые релизы весят больше), фиты, размер каталога и хайп. Ползунок «похожесть» не даёт цифрам улетать далеко от текущих.</p>
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
-        <MultSlider label="Похожесть на текущие значения" hint="0 — только расчёт, 0.9 — почти без изменений" value={keep} def={0.45} min={0} max={0.9} unit="raw" onChange={setKeep} />
-        <div className="flex flex-wrap gap-2">
-          {!onApply && <span className="text-[11px] text-amber-300">Применение доступно из пульта симуляции и студии</span>}
-          <button type="button" disabled={!onApply || !sel.size} onClick={() => apply([...sel])} className="px-3.5 h-9 rounded-xl theme-bg-accent text-black text-[12px] font-black disabled:opacity-30">Применить к выбранным · {sel.size}</button>
-          <button type="button" disabled={!onApply} onClick={() => apply(rows.map(r => r.a.id))} className="px-3.5 h-9 rounded-xl bg-white/[0.07] hover:bg-white/[0.12] text-[12px] font-bold text-white disabled:opacity-30">Ко всем</button>
-          {backup && <button type="button" onClick={undo} className="px-3.5 h-9 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-[12px] font-bold text-amber-300">↺ Вернуть как было</button>}
+      <p className="text-[13.5px] text-zinc-300 max-w-3xl leading-relaxed">Оценка по твоей базе: свежие стримы, большие старые хиты, фиты, хайп и галочка. Масштаб подстраивается под соотношение слушателей и прослушиваний в базе, поэтому цифры не улетают.</p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {W_ITEMS.map(it => <PSlider key={it.k} label={it.label} hint={it.hint} value={w[it.k]} def={it.def} min={it.min} max={it.max} unit={it.k === 'keep' ? 'raw' : 'x'} onChange={v => setW(p => ({ ...p, [it.k]: v }))} />)}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13px] text-zinc-400">Предлагает: <b className="text-emerald-400">↑ {ups}</b> · <b className="text-rose-400">↓ {downs}</b></span>
+        <div className="ml-auto flex flex-wrap gap-2">
+          {!onApply && <span className="text-[12px] text-amber-300 self-center">Применение доступно из пульта симуляции и студии</span>}
+          <button type="button" onClick={() => setW({ ...DEFAULT_LW })} className="px-3 h-10 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[12.5px] font-bold text-zinc-300">↺ Веса</button>
+          <button type="button" disabled={!onApply || !sel.size} onClick={() => apply([...sel])} className="px-4 h-10 rounded-xl theme-bg-accent text-black text-[13px] font-black disabled:opacity-30">Применить к выбранным · {sel.size}</button>
+          <button type="button" disabled={!onApply || !shown.length} onClick={() => apply(shown.map(r => r.a.id))} className="px-4 h-10 rounded-xl bg-white/[0.07] hover:bg-white/[0.12] text-[13px] font-bold text-white disabled:opacity-30">Ко всем в списке · {shown.length}</button>
+          {backup && <button type="button" onClick={undo} className="px-4 h-10 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-[13px] font-bold text-amber-300">↺ Вернуть как было</button>}
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Поиск…" className="flex-1 h-9 px-3 rounded-xl bg-black/40 border border-white/10 text-[12px] text-white outline-none" />
-        <button type="button" onClick={() => setSel(new Set(shown.map(r => r.a.id)))} className="px-3 h-9 rounded-xl bg-white/[0.05] text-[11px] font-bold text-zinc-300">Выбрать все</button>
-        <button type="button" onClick={() => setSel(new Set())} className="px-3 h-9 rounded-xl bg-white/[0.05] text-[11px] font-bold text-zinc-300">Снять</button>
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Поиск…" className="flex-1 min-w-[160px] h-10 px-3.5 rounded-xl bg-black/40 border border-white/10 text-[13px] text-white outline-none" />
+        <Seg value={sort} onChange={setSort} options={[['change', 'По изменению'], ['listeners', 'По слушателям'], ['name', 'А–Я']]} />
+        <div className="w-48"><Toggle on={onlyChanges} onChange={setOnlyChanges} label="Только заметные (3%+)" /></div>
+        <div className="w-48"><Toggle on={hideApplied} onChange={setHideApplied} label="Скрыть применённые" /></div>
+        <button type="button" onClick={() => setSel(new Set(shown.map(r => r.a.id)))} className="px-3 h-10 rounded-xl bg-white/[0.05] text-[12px] font-bold text-zinc-300">Выбрать все</button>
+        <button type="button" onClick={() => setSel(new Set())} className="px-3 h-10 rounded-xl bg-white/[0.05] text-[12px] font-bold text-zinc-300">Снять</button>
       </div>
       <div className="rounded-2xl border border-white/[0.06] divide-y divide-white/[0.04] overflow-hidden">
+        {shown.length === 0 && <div className="p-8 text-center text-[13px] text-zinc-500">Нечего предлагать: у всех цифры уже близки к расчёту{hideApplied ? ' или применены' : ''}.</div>}
         {shown.slice(0, 200).map(({ a, e, d }) => (
-          <button key={a.id} type="button" onClick={() => toggle(a.id)} className={`w-full flex items-center gap-3 px-3 py-2 text-left transition-colors ${sel.has(a.id) ? 'bg-white/[0.07]' : 'hover:bg-white/[0.03]'}`}>
-            <span className={`w-4 h-4 rounded-md border flex items-center justify-center text-[10px] shrink-0 ${sel.has(a.id) ? 'bg-white text-black border-white' : 'border-white/20'}`}>{sel.has(a.id) ? '✓' : ''}</span>
-            <CoverArt url={a.imageUrl} title={a.name} isArtist className="w-8 h-8 rounded-full overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
-            <span className="min-w-0 flex-1"><span className="block text-[12.5px] font-bold text-white truncate">{a.name}</span><span className="block text-[10.5px] text-zinc-500 truncate">{e.basis}</span></span>
-            <span className="text-right shrink-0 tabular-nums"><span className="block text-[11px] text-zinc-500">{fmtC(a.followers || 0)} →</span><span className="block text-[13px] font-black text-white">{fmtC(e.value)}</span></span>
-            <span className={`w-14 text-right text-[11px] font-bold tabular-nums ${Math.abs(d) < 0.03 ? 'text-zinc-500' : d > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{d > 0 ? '+' : ''}{Math.round(d * 100)}%</span>
+          <button key={a.id} type="button" onClick={() => toggle(a.id)} className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-left transition-colors ${sel.has(a.id) ? 'bg-white/[0.07]' : 'hover:bg-white/[0.03]'}`}>
+            <span className={`w-5 h-5 rounded-md border flex items-center justify-center text-[11px] shrink-0 ${sel.has(a.id) ? 'bg-white text-black border-white' : 'border-white/20'}`}>{sel.has(a.id) ? '✓' : ''}</span>
+            <CoverArt url={a.imageUrl} title={a.name} isArtist className="w-9 h-9 rounded-full overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
+            <span className="min-w-0 flex-1"><span className="block text-[14px] font-bold text-white truncate">{a.name}</span><span className="block text-[12px] text-zinc-500 truncate">{e.basis}</span></span>
+            <span className="text-right shrink-0 tabular-nums"><span className="block text-[12px] text-zinc-500">{fmtC(a.followers || 0)} →</span><span className="block text-[15px] font-black text-white">{fmtC(e.value)}</span></span>
+            <span className={`w-16 text-right text-[12.5px] font-bold tabular-nums ${Math.abs(d) < 0.03 ? 'text-zinc-500' : d > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{d > 0 ? '+' : ''}{Math.round(d * 100)}%</span>
           </button>
         ))}
       </div>
@@ -703,7 +923,6 @@ export const ListenEngineButton: React.FC<{ artists: Artist[]; tracks: Track[]; 
     </>
   );
 };
-
 
 // ============================================================================
 // 2. SMART DURATION — mostly 2–3 min, feats a bit longer, big feats can go over 4:00
@@ -946,9 +1165,9 @@ const AreaChart: React.FC<{ pts: number[]; labels: string[]; fmt?: (n: number) =
 
 const Kpi: React.FC<{ label: string; value: React.ReactNode; sub?: React.ReactNode; accent?: boolean }> = ({ label, value, sub, accent }) => (
   <div className={`rounded-2xl p-3 border ${accent ? 'bg-white/[0.07] border-white/15' : 'bg-white/[0.03] border-white/[0.06]'}`}>
-    <div className="text-[9.5px] uppercase tracking-widest text-zinc-500 font-bold">{label}</div>
-    <div className="text-[17px] font-black text-white tabular-nums mt-0.5 leading-tight">{value}</div>
-    {sub && <div className="text-[10.5px] text-zinc-500 mt-0.5 leading-snug">{sub}</div>}
+    <div className="text-[10.5px] uppercase tracking-widest text-zinc-500 font-bold">{label}</div>
+    <div className="text-[20px] font-black text-white tabular-nums mt-0.5 leading-tight">{value}</div>
+    {sub && <div className="text-[12px] text-zinc-400 mt-0.5 leading-snug">{sub}</div>}
   </div>
 );
 
@@ -985,7 +1204,7 @@ export const ReleaseStatsModal: React.FC<ReleaseStatsProps> = ({ kind, track, al
     const rank = same.findIndex(x => x.id === it.id) + 1;
     const avg = same.length ? same.reduce((s, x) => s + x.p, 0) / same.length : 0;
     const artistTotal = tracks.filter(t => !t.isSnippet && (t.artistId === it.artistId || norm(t.artistName) === norm(it.artistName))).reduce((s, t) => s + (t.plays || 0), 0);
-    const hist: number[] = Array.isArray(it.chartHistory) ? it.chartHistory.slice(-30) : [];
+    const hist: number[] = Array.isArray(it.chartHistory) ? it.chartHistory.slice(-30).map((v: number) => (v > 0 && v <= (kind === 'album' ? 50 : 100) ? v : 0)) : [];
     const won = awards.filter(a => norm(a.winner?.title) === norm(it.title) && (!a.winner?.artistName || norm(a.winner.artistName).includes(norm(it.artistName)) || norm(it.artistName).includes(norm(a.winner.artistName))));
     const nominated = awards.filter(a => !won.includes(a) && (a.nominees || []).some(n => norm(n.title) === norm(it.title)));
     const hype = typeof it.releaseHype === 'number' ? it.releaseHype : artist?.hype;
@@ -999,8 +1218,9 @@ export const ReleaseStatsModal: React.FC<ReleaseStatsProps> = ({ kind, track, al
   }, [it, kind, tracks, albums, artists, awards, refIso]);
   if (!it || !data) return null;
   const d = data;
-  const peak = it.peakChartPosition || (d.hist.filter(x => x > 0).length ? Math.min(...d.hist.filter(x => x > 0)) : undefined);
-  const now = it.previousChartPosition;
+  const pk = displayPeak(it, kind, tracks, albums);
+  const peak = pk.pos;
+  const now = currentChartPos(it);
   const typeLabel = kind === 'album' ? (d.albumTracks.length > 0 && d.albumTracks.length <= 7 ? 'EP' : 'Альбом') : it.isSnippet ? 'Сниппет' : it.albumId && it.albumId !== 'single' ? 'Трек альбома' : 'Сингл';
   const go = (v: string, p: any) => { if (navigateTo) { onClose(); navigateTo(v, p); } };
   return (
@@ -1033,7 +1253,7 @@ export const ReleaseStatsModal: React.FC<ReleaseStatsProps> = ({ kind, track, al
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <Kpi accent label="Прослушивания" value={fmtC(d.plays)} sub={d.plays.toLocaleString('ru-RU')} />
-              <Kpi label="В чарте" value={now ? `#${now}` : '—'} sub={peak ? `пик #${peak}${it.weeksOnChart ? ` · ${it.weeksOnChart} нед.` : ''}` : 'не попадал'} />
+              <Kpi label="В чарте" value={now ? `#${now}` : '—'} sub={peak ? `пик ${pk.est ? '≈' : ''}#${peak}${it.weeksOnChart && !pk.est ? ` · ${it.weeksOnChart} нед.` : ''}${pk.est ? ' (оценка)' : ''}` : 'не попадал'} />
               <Kpi label="Хайп релиза" value={typeof d.hype === 'number' ? Math.round(d.hype) : '—'} sub={typeof d.hype === 'number' ? (d.hype >= 80 ? 'очень горячо' : d.hype >= 60 ? 'обсуждают' : d.hype >= 40 ? 'спокойно' : 'тихо') : ''} />
               <Kpi label="Оценка" value={d.score !== null ? d.score : '—'} sub={it.rating?.totalScore ? `${it.rating.totalScore}/90` : 'без оценки'} />
               <Kpi label={kind === 'album' ? 'Лайки треков' : 'Лайки'} value={fmtC(d.likes)} sub={d.plays ? `${(d.likeRate * 100).toFixed(1)}% от прослушиваний` : ''} />
@@ -1298,7 +1518,7 @@ export const SimDigestPro: React.FC<{
     const genres = new Map<string, number>(); full.forEach(d => { const g = (d.genre || 'Другое').split(/[\/,]/)[0].trim(); genres.set(g, (genres.get(g) || 0) + 1); });
     const gSorted = [...genres.entries()].sort((a, b) => b[1] - a[1]);
     const net = dg.topListenersGainers.reduce((s, g) => s + g.delta, 0) + dg.topListenersLosers.reduce((s, g) => s + g.delta, 0);
-    const chart = simState.tracks.filter(t => !t.isSnippet && (t.previousChartPosition || 0) > 0 && (t.releaseDate || '') <= simState.currentDate).sort((a, b) => (a.previousChartPosition || 999) - (b.previousChartPosition || 999)).slice(0, expanded ? 20 : 10);
+    const chart = simState.tracks.filter(t => !t.isSnippet && currentChartPos(t) && (t.releaseDate || '') <= simState.currentDate).sort((a, b) => (currentChartPos(a) || 999) - (currentChartPos(b) || 999)).slice(0, expanded ? 20 : 10);
     const trend = history.slice(-16).map(h => ({ w: h.weekNumber, n: h.newReleasesCount, p: (h.weeklyDrops || []).filter(d => d.itemType !== 'snippet').reduce((s, d) => s + d.plays, 0) }));
     const end = isoDay(msOf(simState.currentDate) + 21 * DAY);
     const upcoming = [
@@ -1324,18 +1544,18 @@ export const SimDigestPro: React.FC<{
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-[15px] font-extrabold text-white">Итоги недели {dg.weekNumber}</h3>
-          <p className="text-[11px] text-zinc-400 tabular-nums">{fmtDate(dg.fromDate)} → {fmtDate(dg.toDate)}</p>
+          <h3 className="text-[18px] font-extrabold text-white">Итоги недели {dg.weekNumber}</h3>
+          <p className="text-[12.5px] text-zinc-400 tabular-nums">{fmtDate(dg.fromDate)} → {fmtDate(dg.toDate)}</p>
         </div>
         <div className="flex items-center gap-1.5">
-          {onShowAllDrops && <button type="button" onClick={() => onShowAllDrops(dg.weekNumber)} className="px-2.5 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-[11px] font-bold text-white">Все релизы</button>}
-          {!expanded && onExpand && <button type="button" onClick={onExpand} className="px-2.5 py-1.5 rounded-xl theme-bg-accent text-black text-[11px] font-black">⤢ Развернуть</button>}
-          {expanded && onClose && <button type="button" onClick={onClose} className="px-2.5 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-[11px] font-bold text-white">Свернуть</button>}
+          {onShowAllDrops && <button type="button" onClick={() => onShowAllDrops(dg.weekNumber)} className="px-2.5 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-[12.5px] font-bold text-white">Все релизы</button>}
+          {!expanded && onExpand && <button type="button" onClick={onExpand} className="px-2.5 py-1.5 rounded-xl theme-bg-accent text-black text-[12.5px] font-black">⤢ Развернуть</button>}
+          {expanded && onClose && <button type="button" onClick={onClose} className="px-2.5 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-[12.5px] font-bold text-white">Свернуть</button>}
         </div>
       </div>
       {history.length > 1 && (
         <div className="flex gap-1 overflow-x-auto custom-scrollbar pb-1">
-          {history.slice(-24).map(h => <button key={h.weekNumber} type="button" onClick={() => setWeek(h.weekNumber)} className={`shrink-0 px-2 py-1 rounded-lg text-[10.5px] font-bold tabular-nums transition-colors ${h.weekNumber === dg.weekNumber ? 'bg-white text-black' : 'bg-white/[0.04] text-zinc-400 hover:text-white'}`}>Н{h.weekNumber}</button>)}
+          {history.slice(-24).map(h => <button key={h.weekNumber} type="button" onClick={() => setWeek(h.weekNumber)} className={`shrink-0 px-2 py-1 rounded-lg text-[12px] font-bold tabular-nums transition-colors ${h.weekNumber === dg.weekNumber ? 'bg-white text-black' : 'bg-white/[0.04] text-zinc-400 hover:text-white'}`}>Н{h.weekNumber}</button>)}
         </div>
       )}
       <div className={`grid gap-2 ${expanded ? 'grid-cols-2 md:grid-cols-4 xl:grid-cols-8' : 'grid-cols-2 sm:grid-cols-4'}`}>
@@ -1352,12 +1572,12 @@ export const SimDigestPro: React.FC<{
       </div>
       {c.trend.length > 1 && (
         <div className={card}>
-          <div className="flex items-center justify-between mb-2"><span className="text-[12px] font-bold text-white">Динамика по неделям</span><span className="text-[10.5px] text-zinc-500">высота — прослушивания дебютов · цифра — релизы</span></div>
+          <div className="flex items-center justify-between mb-2"><span className="text-[13.5px] font-bold text-white">Динамика по неделям</span><span className="text-[12px] text-zinc-500">высота — прослушивания дебютов · цифра — релизы</span></div>
           <div className="flex items-end gap-1 h-20">
             {c.trend.map(t => (
               <button key={t.w} type="button" onClick={() => setWeek(t.w)} className="flex-1 min-w-0 flex flex-col items-center justify-end gap-1 h-full group">
                 <motion.div initial={{ height: 0 }} animate={{ height: `${Math.max(4, (t.p / maxTrend) * 100)}%` }} transition={{ duration: 0.5 }} className={`w-full rounded-md ${t.w === dg.weekNumber ? 'theme-bg-accent' : 'bg-white/15 group-hover:bg-white/30'}`} />
-                <span className="text-[9px] text-zinc-500 tabular-nums">{t.n}</span>
+                <span className="text-[10.5px] text-zinc-500 tabular-nums">{t.n}</span>
               </button>
             ))}
           </div>
@@ -1365,43 +1585,43 @@ export const SimDigestPro: React.FC<{
       )}
       <div className={`grid gap-3 ${expanded ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1'}`}>
         <div className={`${card} ${expanded ? 'lg:col-span-2' : ''}`}>
-          <div className="flex items-center justify-between mb-2"><span className="text-[12px] font-bold text-white">Главные релизы недели</span><span className="text-[10.5px] text-zinc-500">{c.drops.length} всего</span></div>
+          <div className="flex items-center justify-between mb-2"><span className="text-[13.5px] font-bold text-white">Главные релизы недели</span><span className="text-[12px] text-zinc-500">{c.drops.length} всего</span></div>
           <div className="space-y-1">
             {c.drops.slice(0, expanded ? 20 : 6).map((d, i) => {
               const perf = c.median ? d.plays / c.median : 1;
               const tag = d.itemType === 'snippet' ? ['👀', 'тизер'] : i === 0 ? ['👑', 'дебют №1'] : perf >= 1.8 ? ['🔥', 'хит'] : perf >= 1.1 ? ['💚', 'зашёл'] : perf >= 0.6 ? ['🙂', 'ровно'] : ['🥶', 'тихо'];
               return (
                 <motion.button key={d.id} type="button" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }} onClick={() => open(d.itemType, d.id)} className="w-full flex items-center gap-3 px-2 py-1.5 rounded-xl hover:bg-white/[0.05] text-left">
-                  <span className="w-5 text-[11px] text-zinc-500 tabular-nums text-right">{i + 1}</span>
-                  <CoverArt url={d.coverUrl} title={d.title} className="w-10 h-10 rounded-lg overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
-                  <span className="min-w-0 flex-1"><span className="block text-[12.5px] font-bold text-white truncate">{d.title}</span><span className="block text-[11px] text-zinc-400 truncate">{d.artistName}{d.featuredArtist ? ` feat. ${d.featuredArtist}` : ''} · {typeRu(d.itemType, d.trackCount)}</span></span>
-                  <span className="hidden sm:inline text-[10.5px] px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300 shrink-0">{tag[0]} {tag[1]}</span>
-                  <span className="text-[12px] font-bold text-white tabular-nums w-16 text-right shrink-0">{fmtC(d.plays)}</span>
+                  <span className="w-5 text-[12.5px] text-zinc-500 tabular-nums text-right">{i + 1}</span>
+                  <CoverArt url={d.coverUrl} title={d.title} className="w-11 h-11 rounded-lg overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
+                  <span className="min-w-0 flex-1"><span className="block text-[14px] font-bold text-white truncate">{d.title}</span><span className="block text-[12.5px] text-zinc-400 truncate">{d.artistName}{d.featuredArtist ? ` feat. ${d.featuredArtist}` : ''} · {typeRu(d.itemType, d.trackCount)}</span></span>
+                  <span className="hidden sm:inline text-[12px] px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300 shrink-0">{tag[0]} {tag[1]}</span>
+                  <span className="text-[13.5px] font-bold text-white tabular-nums w-16 text-right shrink-0">{fmtC(d.plays)}</span>
                 </motion.button>
               );
             })}
           </div>
         </div>
         <div className={card}>
-          <div className="text-[12px] font-bold text-white mb-2">Чарт сейчас</div>
+          <div className="text-[13.5px] font-bold text-white mb-2">Чарт сейчас</div>
           <div className="space-y-0.5">
             {c.chart.map(t => {
               const h = (t.chartHistory || []).filter(x => typeof x === 'number');
-              const prev = h.length >= 2 ? h[h.length - 2] : 0;
-              const pos = t.previousChartPosition || 0;
+              const prev = h.length >= 2 && h[h.length - 2] <= 100 ? h[h.length - 2] : 0;
+              const pos = currentChartPos(t) || 0;
               const mv = !prev ? 'new' : prev - pos;
               return (
                 <button key={t.id} type="button" onClick={() => open('track', t.id)} className="w-full flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-white/[0.05] text-left">
-                  <span className="w-5 text-[12px] font-black text-white tabular-nums text-right">{pos}</span>
-                  <span className={`w-7 text-[9.5px] font-black text-center ${mv === 'new' ? 'text-sky-300' : (mv as number) > 0 ? 'text-emerald-400' : (mv as number) < 0 ? 'text-rose-400' : 'text-zinc-600'}`}>{mv === 'new' ? 'NEW' : (mv as number) > 0 ? `▲${mv}` : (mv as number) < 0 ? `▼${-(mv as number)}` : '—'}</span>
-                  <CoverArt url={t.coverUrl} title={t.title} className="w-7 h-7 rounded-md overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
-                  <span className="min-w-0 flex-1"><span className="block text-[11.5px] font-bold text-white truncate">{t.title}</span><span className="block text-[10px] text-zinc-500 truncate">{t.artistName}</span></span>
+                  <span className="w-5 text-[13.5px] font-black text-white tabular-nums text-right">{pos}</span>
+                  <span className={`w-7 text-[10.5px] font-black text-center ${mv === 'new' ? 'text-sky-300' : (mv as number) > 0 ? 'text-emerald-400' : (mv as number) < 0 ? 'text-rose-400' : 'text-zinc-600'}`}>{mv === 'new' ? 'NEW' : (mv as number) > 0 ? `▲${mv}` : (mv as number) < 0 ? `▼${-(mv as number)}` : '—'}</span>
+                  <CoverArt url={t.coverUrl} title={t.title} className="w-8 h-8 rounded-md overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />
+                  <span className="min-w-0 flex-1"><span className="block text-[13px] font-bold text-white truncate">{t.title}</span><span className="block text-[11.5px] text-zinc-500 truncate">{t.artistName}</span></span>
                 </button>
               );
             })}
-            {c.chart.length === 0 && <div className="text-[11px] text-zinc-500 py-3">Чарт ещё не сформирован</div>}
+            {c.chart.length === 0 && <div className="text-[12.5px] text-zinc-500 py-3">Чарт ещё не сформирован</div>}
           </div>
-          {dg.biggestClimber && <div className="mt-2 pt-2 border-t border-white/[0.06] text-[11px] text-zinc-300">🚀 Взлёт недели: <b className="text-white">{dg.biggestClimber.artistName} — {dg.biggestClimber.title}</b> <span className="text-emerald-400">+{dg.biggestClimber.delta}</span></div>}
+          {dg.biggestClimber && <div className="mt-2 pt-2 border-t border-white/[0.06] text-[12.5px] text-zinc-300">🚀 Взлёт недели: <b className="text-white">{dg.biggestClimber.artistName} — {dg.biggestClimber.title}</b> <span className="text-emerald-400">+{dg.biggestClimber.delta}</span></div>}
         </div>
       </div>
       <div className={`grid gap-3 ${expanded ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'}`}>
@@ -1409,14 +1629,14 @@ export const SimDigestPro: React.FC<{
           const list = kind === 'gain' ? dg.topListenersGainers : dg.topListenersLosers;
           return (
             <div key={kind} className={card}>
-              <div className={`text-[12px] font-bold mb-2 ${kind === 'gain' ? 'text-emerald-400' : 'text-rose-400'}`}>{kind === 'gain' ? 'Рост слушателей' : 'Спад слушателей'}</div>
-              {list.length === 0 && <div className="text-[11px] text-zinc-500">{kind === 'gain' ? 'Нет значимого роста' : 'Без заметных падений'}</div>}
+              <div className={`text-[13.5px] font-bold mb-2 ${kind === 'gain' ? 'text-emerald-400' : 'text-rose-400'}`}>{kind === 'gain' ? 'Рост слушателей' : 'Спад слушателей'}</div>
+              {list.length === 0 && <div className="text-[12.5px] text-zinc-500">{kind === 'gain' ? 'Нет значимого роста' : 'Без заметных падений'}</div>}
               <div className="space-y-1.5">
                 {list.map(g => (
                   <button key={g.artistId} type="button" onClick={() => onOpenArtist && onOpenArtist(g.artistId)} className="w-full text-left">
-                    <div className="flex items-center justify-between text-[11.5px] tabular-nums"><span className="text-zinc-200 truncate">{g.name}</span><span className={kind === 'gain' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{g.delta > 0 ? '+' : ''}{fmtC(g.delta)}</span></div>
+                    <div className="flex items-center justify-between text-[13px] tabular-nums"><span className="text-zinc-200 truncate">{g.name}</span><span className={kind === 'gain' ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>{g.delta > 0 ? '+' : ''}{fmtC(g.delta)}</span></div>
                     <div className="h-1 rounded-full bg-white/[0.05] mt-0.5 overflow-hidden"><motion.div className={`h-full rounded-full ${kind === 'gain' ? 'bg-emerald-400/80' : 'bg-rose-400/80'}`} initial={{ width: 0 }} animate={{ width: `${(Math.abs(g.delta) / maxLis) * 100}%` }} transition={{ duration: 0.5 }} /></div>
-                    <div className="text-[9.5px] text-zinc-600 tabular-nums">теперь {fmtC(g.newFollowers)}</div>
+                    <div className="text-[10.5px] text-zinc-600 tabular-nums">теперь {fmtC(g.newFollowers)}</div>
                   </button>
                 ))}
               </div>
@@ -1424,34 +1644,34 @@ export const SimDigestPro: React.FC<{
           );
         })}
         <div className={`${card} ${expanded ? '' : 'sm:col-span-2'}`}>
-          <div className="text-[12px] font-bold text-white mb-2">Жанры недели</div>
-          {c.gSorted.length === 0 ? <div className="text-[11px] text-zinc-500">—</div> : <>
+          <div className="text-[13.5px] font-bold text-white mb-2">Жанры недели</div>
+          {c.gSorted.length === 0 ? <div className="text-[12.5px] text-zinc-500">—</div> : <>
             <div className="flex h-2.5 rounded-full overflow-hidden gap-[2px]">{c.gSorted.map(([g, n], i) => <div key={g} title={`${g}: ${n}`} style={{ flexGrow: n, background: RULE_COLORS[i % RULE_COLORS.length] }} />)}</div>
-            <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">{c.gSorted.slice(0, 8).map(([g, n], i) => <span key={g} className="text-[10.5px] text-zinc-400"><span style={{ color: RULE_COLORS[i % RULE_COLORS.length] }}>●</span> {g} · {n}</span>)}</div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2">{c.gSorted.slice(0, 8).map(([g, n], i) => <span key={g} className="text-[12px] text-zinc-400"><span style={{ color: RULE_COLORS[i % RULE_COLORS.length] }}>●</span> {g} · {n}</span>)}</div>
           </>}
         </div>
       </div>
       <div className={`grid gap-3 ${expanded ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
         <div className={card}>
-          <div className="text-[12px] font-bold text-white mb-2">Что говорят люди</div>
-          {c.voices.length === 0 && <div className="text-[11px] text-zinc-500">Нет релизов — нечего обсуждать</div>}
+          <div className="text-[13.5px] font-bold text-white mb-2">Что говорят люди</div>
+          {c.voices.length === 0 && <div className="text-[12.5px] text-zinc-500">Нет релизов — нечего обсуждать</div>}
           <div className="space-y-2.5">
             {c.voices.map(v => (
               <div key={v.d.id} className="rounded-xl bg-black/25 border border-white/[0.05] p-2.5">
-                <div className="text-[11px] font-bold text-white truncate mb-1">«{v.d.title}» · {v.d.artistName}</div>
-                {v.lines.map((l, i) => <div key={i} className="flex items-start gap-2 text-[11.5px]"><span className="text-zinc-500 shrink-0">@{l.who}</span><span className="text-zinc-200 flex-1">{l.text}</span><span className="text-zinc-600 tabular-nums shrink-0">♥ {l.likes}</span></div>)}
+                <div className="text-[12.5px] font-bold text-white truncate mb-1">«{v.d.title}» · {v.d.artistName}</div>
+                {v.lines.map((l, i) => <div key={i} className="flex items-start gap-2 text-[13px]"><span className="text-zinc-500 shrink-0">@{l.who}</span><span className="text-zinc-200 flex-1">{l.text}</span><span className="text-zinc-600 tabular-nums shrink-0">♥ {l.likes}</span></div>)}
               </div>
             ))}
           </div>
         </div>
         <div className={card}>
-          <div className="text-[12px] font-bold text-white mb-2">Слухи, тизеры и инфоповоды</div>
+          <div className="text-[13.5px] font-bold text-white mb-2">Слухи, тизеры и инфоповоды</div>
           <div className="space-y-1.5">
-            {c.rum.map(r => <div key={r.id} className="flex items-center gap-2 text-[11.5px]"><span className="px-1.5 py-0.5 rounded-md text-[9.5px] font-black bg-violet-400/15 text-violet-300">СЛУХ</span><span className="text-zinc-200 truncate flex-1">{r.artistName} — {r.title || ({ single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет' } as any)[r.kind]}</span><span className="text-zinc-500 tabular-nums shrink-0">{fmtDate(r.date).slice(0, 5)}</span></div>)}
-            {c.upcoming.map(u => <div key={u.k} className="flex items-center gap-2 text-[11.5px]"><span className="px-1.5 py-0.5 rounded-md text-[9.5px] font-black bg-amber-400/15 text-amber-300">СКОРО</span><span className="text-zinc-200 truncate flex-1">{u.artist} — {u.title} <span className="text-zinc-500">· {u.kind}</span></span><span className="text-zinc-500 tabular-nums shrink-0">{fmtDate(u.date).slice(0, 5)}</span></div>)}
-            {c.drops.filter(d => d.itemType === 'snippet').slice(0, 4).map(d => <div key={d.id} className="flex items-center gap-2 text-[11.5px]"><span className="px-1.5 py-0.5 rounded-md text-[9.5px] font-black bg-sky-400/15 text-sky-300">ТИЗЕР</span><span className="text-zinc-200 truncate flex-1">{d.artistName} — {d.title}</span><span className="text-zinc-500 tabular-nums shrink-0">{fmtC(d.plays)}</span></div>)}
-            {dg.highlights.slice(0, expanded ? 12 : 4).map((h, i) => <div key={i} className="flex items-start gap-2 text-[11.5px]"><span className="px-1.5 py-0.5 rounded-md text-[9.5px] font-black bg-white/[0.07] text-zinc-300 shrink-0">ИНФО</span><span className="text-zinc-300">{h}</span></div>)}
-            {c.rum.length + c.upcoming.length + dg.highlights.length === 0 && <div className="text-[11px] text-zinc-500">Тихая неделя</div>}
+            {c.rum.map(r => <div key={r.id} className="flex items-center gap-2 text-[13px]"><span className="px-1.5 py-0.5 rounded-md text-[10.5px] font-black bg-violet-400/15 text-violet-300">СЛУХ</span><span className="text-zinc-200 truncate flex-1">{r.artistName} — {r.title || ({ single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет' } as any)[r.kind]}</span><span className="text-zinc-500 tabular-nums shrink-0">{fmtDate(r.date).slice(0, 5)}</span></div>)}
+            {c.upcoming.map(u => <div key={u.k} className="flex items-center gap-2 text-[13px]"><span className="px-1.5 py-0.5 rounded-md text-[10.5px] font-black bg-amber-400/15 text-amber-300">СКОРО</span><span className="text-zinc-200 truncate flex-1">{u.artist} — {u.title} <span className="text-zinc-500">· {u.kind}</span></span><span className="text-zinc-500 tabular-nums shrink-0">{fmtDate(u.date).slice(0, 5)}</span></div>)}
+            {c.drops.filter(d => d.itemType === 'snippet').slice(0, 4).map(d => <div key={d.id} className="flex items-center gap-2 text-[13px]"><span className="px-1.5 py-0.5 rounded-md text-[10.5px] font-black bg-sky-400/15 text-sky-300">ТИЗЕР</span><span className="text-zinc-200 truncate flex-1">{d.artistName} — {d.title}</span><span className="text-zinc-500 tabular-nums shrink-0">{fmtC(d.plays)}</span></div>)}
+            {dg.highlights.slice(0, expanded ? 12 : 4).map((h, i) => <div key={i} className="flex items-start gap-2 text-[13px]"><span className="px-1.5 py-0.5 rounded-md text-[10.5px] font-black bg-white/[0.07] text-zinc-300 shrink-0">ИНФО</span><span className="text-zinc-300">{h}</span></div>)}
+            {c.rum.length + c.upcoming.length + dg.highlights.length === 0 && <div className="text-[12.5px] text-zinc-500">Тихая неделя</div>}
           </div>
         </div>
       </div>
@@ -1476,29 +1696,36 @@ export const SimDigestFullscreen: React.FC<React.ComponentProps<typeof SimDigest
 };
 
 /** compact strip for manual batch / semi-auto: rumors, teasers and drops of this week */
-export const WeekBuzzStrip: React.FC<{ simState: SimState; rumors: Array<{ id: string; artistName: string; kind: string; date: string; title?: string; feat?: string; source?: string; used?: string }>; onUse?: (id: string) => void }> = memo(({ simState, rumors, onUse }) => {
-  const items = useMemo(() => {
+export const WeekBuzzStrip: React.FC<{ simState: SimState; rumors: Array<{ id: string; artistName: string; kind: string; date: string; title?: string; feat?: string; source?: string; used?: string }>; onUse?: (id: string) => void; target?: 'manual' | 'semi' }> = memo(({ simState, rumors, onUse, target = 'semi' }) => {
+  const { items, fri } = useMemo(() => {
     const now = msOf(simState.currentDate);
+    const dow = new Date(now).getUTCDay();
+    const friMs = now + ((5 - dow + 7) % 7) * DAY; // today if it is Friday
+    const fri = isoDay(friMs);
     const end = isoDay(now + 7 * DAY), from = isoDay(now - 3 * DAY), recent = isoDay(now - 14 * DAY);
-    const out: Array<{ k: string; tag: string; cls: string; text: string; date?: string; rid?: string }> = [];
-    rumors.filter(r => !r.used && r.date >= from && r.date <= end).forEach(r => out.push({ k: `r${r.id}`, tag: 'Слух', cls: 'bg-violet-400/15 text-violet-200 border-violet-400/25', text: `${r.artistName} · ${r.title ? `«${r.title}»` : ({ single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет' } as any)[r.kind] || r.kind}${r.feat ? ` ft. ${r.feat}` : ''}`, date: r.date, rid: r.id }));
-    simState.tracks.filter(t => (t.releaseDate || '') > simState.currentDate && (t.releaseDate || '') <= end).slice(0, 6).forEach(t => out.push({ k: `s${t.id}`, tag: t.isSnippet ? 'Тизер' : 'Анонс', cls: 'bg-amber-400/15 text-amber-200 border-amber-400/25', text: `${t.artistName} · «${t.title}»`, date: t.releaseDate }));
-    simState.albums.filter(a => (a.releaseDate || '') > simState.currentDate && (a.releaseDate || '') <= end).slice(0, 4).forEach(a => out.push({ k: `a${a.id}`, tag: 'Альбом', cls: 'bg-amber-400/15 text-amber-200 border-amber-400/25', text: `${a.artistName} · «${a.title}»`, date: a.releaseDate }));
-    simState.tracks.filter(t => t.isSnippet && (t.releaseDate || '') >= recent && (t.releaseDate || '') <= simState.currentDate).slice(-6).forEach(t => out.push({ k: `t${t.id}`, tag: 'Сниппет', cls: 'bg-sky-400/15 text-sky-200 border-sky-400/25', text: `${t.artistName} · «${t.title}»${t.snippetTeaser ? ` — ${t.snippetTeaser.slice(0, 40)}` : ''}`, date: t.releaseDate }));
-    return out;
+    const out: Array<{ k: string; tag: string; cls: string; text: string; date?: string; rid?: string; prio: number }> = [];
+    const prio = (d?: string) => (d === fri ? 0 : d && d > simState.currentDate ? 1 : 2);
+    rumors.filter(r => !r.used && r.date >= from && r.date <= end).forEach(r => out.push({ k: `r${r.id}`, tag: 'Слух', cls: 'bg-violet-400/15 text-violet-200 border-violet-400/25', text: `${r.artistName} · ${r.title ? `«${r.title}»` : ({ single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет' } as any)[r.kind] || r.kind}${r.feat ? ` ft. ${r.feat}` : ''}`, date: r.date, rid: r.id, prio: prio(r.date) }));
+    simState.tracks.filter(t => (t.releaseDate || '') > simState.currentDate && (t.releaseDate || '') <= end).slice(0, 6).forEach(t => out.push({ k: `s${t.id}`, tag: t.isSnippet ? 'Тизер' : 'Анонс', cls: 'bg-amber-400/15 text-amber-200 border-amber-400/25', text: `${t.artistName} · «${t.title}»`, date: t.releaseDate, prio: prio(t.releaseDate) }));
+    simState.albums.filter(a => (a.releaseDate || '') > simState.currentDate && (a.releaseDate || '') <= end).slice(0, 4).forEach(a => out.push({ k: `a${a.id}`, tag: 'Альбом', cls: 'bg-amber-400/15 text-amber-200 border-amber-400/25', text: `${a.artistName} · «${a.title}»`, date: a.releaseDate, prio: prio(a.releaseDate) }));
+    simState.tracks.filter(t => t.isSnippet && (t.releaseDate || '') >= recent && (t.releaseDate || '') <= simState.currentDate).slice(-6).forEach(t => out.push({ k: `t${t.id}`, tag: 'Сниппет', cls: 'bg-sky-400/15 text-sky-200 border-sky-400/25', text: `${t.artistName} · «${t.title}»${t.snippetTeaser ? ` — ${t.snippetTeaser.slice(0, 40)}` : ''}`, date: t.releaseDate, prio: 3 }));
+    out.sort((x, y) => x.prio - y.prio || (x.date || '').localeCompare(y.date || ''));
+    return { items: out, fri };
   }, [simState.currentDate, simState.tracks, simState.albums, rumors]);
   if (!items.length) return null;
+  const friCount = items.filter(i => i.prio === 0).length;
+  const isToday = fri === simState.currentDate;
   return (
-    <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="mb-3 rounded-2xl border border-violet-400/20 bg-gradient-to-r from-violet-500/[0.09] via-white/[0.02] to-transparent px-3 py-2">
+    <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="mb-3 rounded-2xl border border-violet-400/20 bg-gradient-to-r from-violet-500/[0.09] via-white/[0.02] to-transparent px-3 py-2.5">
       <div className="flex items-center gap-2">
         <span className="relative flex w-2 h-2 shrink-0"><span className="absolute inset-0 rounded-full bg-violet-400 animate-ping opacity-60" /><span className="relative w-2 h-2 rounded-full bg-violet-400" /></span>
-        <span className="text-[11px] font-black text-white whitespace-nowrap">На этой неделе</span>
-        <span className="text-[10.5px] text-zinc-500 whitespace-nowrap">к пятнице · {items.length}</span>
+        <span className="text-[12.5px] font-black text-white whitespace-nowrap">{isToday ? 'Сегодня пятница' : `Пятница ${fmtDate(fri).slice(0, 5)}`}</span>
+        <span className="text-[11.5px] text-zinc-400 whitespace-nowrap">{friCount ? `${friCount} на пятницу` : 'на пятницу пусто'} · всего {items.length}</span>
         <div className="flex gap-1.5 overflow-x-auto custom-scrollbar py-0.5 min-w-0">
           {items.map(it => (
-            <button key={it.k} type="button" disabled={!it.rid || !onUse} onClick={() => it.rid && onUse && onUse(it.rid)} title={it.rid && onUse ? 'Добавить этот слух в релизы недели' : undefined}
-              className={`shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[10.5px] ${it.cls} ${it.rid && onUse ? 'hover:brightness-125 cursor-pointer' : 'cursor-default'}`}>
-              <b className="uppercase tracking-wide text-[9px]">{it.tag}</b><span className="max-w-[220px] truncate">{it.text}</span>{it.date && <span className="opacity-60 tabular-nums">{fmtDate(it.date).slice(0, 5)}</span>}{it.rid && onUse && <span className="opacity-70">＋</span>}
+            <button key={it.k} type="button" disabled={!it.rid || !onUse} onClick={() => it.rid && onUse && onUse(it.rid)} title={it.rid && onUse ? (target === 'manual' ? 'Добавить в ручной батч' : 'Добавить в полуавтомат') : undefined}
+              className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11.5px] ${it.cls} ${it.prio === 0 ? 'ring-1 ring-white/25' : 'opacity-85'} ${it.rid && onUse ? 'hover:brightness-125 cursor-pointer' : 'cursor-default'}`}>
+              <b className="uppercase tracking-wide text-[9.5px]">{it.prio === 0 ? `★ ${it.tag}` : it.tag}</b><span className="max-w-[240px] truncate">{it.text}</span>{it.date && <span className="opacity-60 tabular-nums">{it.date === simState.currentDate ? 'сегодня' : fmtDate(it.date).slice(0, 5)}</span>}{it.rid && onUse && <span className="opacity-80 font-bold">＋ {target === 'manual' ? 'в батч' : 'в релизы'}</span>}
             </button>
           ))}
         </div>
@@ -1506,7 +1733,6 @@ export const WeekBuzzStrip: React.FC<{ simState: SimState; rumors: Array<{ id: s
     </motion.div>
   );
 });
-
 
 // ============================================================================
 // 8. FEAT PICKER — several guests, search by name, custom names
@@ -1565,3 +1791,37 @@ export const FeatPicker: React.FC<{ value: string; onChange: (v: string) => void
 /** generated cover marker: the cover is removed on purpose → always show the auto cover */
 export const AUTO_COVER = 'auto:gen';
 
+
+// ============================================================================
+// 9. CHART PEAK — real peak from the data, or a realistic estimate when it is missing
+// ============================================================================
+const peakCache = new WeakMap<object, Map<string, { pos?: number; est: boolean }>>();
+export function displayPeak(it: any, kind: 'track' | 'album', tracks: Track[], albums: Album[]): { pos?: number; est: boolean } {
+  if (!it) return { est: false };
+  const limit = kind === 'album' ? 50 : 100;
+  const hist: number[] = (it.chartHistory || []).filter((v: number) => typeof v === 'number' && v > 0 && v <= limit);
+  const stored = it.peakChartPosition > 0 && it.peakChartPosition <= limit ? it.peakChartPosition : 999;
+  const best = Math.min(stored, ...hist, 999);
+  if (best < 999) return { pos: best, est: false };
+  if (it.isSnippet) return { est: false };
+  const src = kind === 'album' ? albums : tracks;
+  let m = peakCache.get(src); if (!m) { m = new Map(); peakCache.set(src, m); }
+  const key = `${it.id}|${kind === 'album' ? it.totalPlays || 0 : it.plays || 0}`;
+  const hit = m.get(key); if (hit) return hit;
+  const t0 = msOf(it.releaseDate || (it.releaseYear ? `${it.releaseYear}-06-01` : ''));
+  let res: { pos?: number; est: boolean } = { est: true };
+  if (!isNaN(t0)) {
+    const playsOfAlbum = (a: Album) => a.totalPlays || tracks.reduce((s, t) => (t.albumId === a.id ? s + (t.plays || 0) : s), 0);
+    const mine = kind === 'album' ? playsOfAlbum(it) : it.plays || 0;
+    const win = 45 * DAY;
+    let rank = 1;
+    if (kind === 'album') { for (const a of albums) { if (a.id === it.id) continue; const d = msOf(a.releaseDate || `${a.releaseYear}-06-01`); if (!isNaN(d) && Math.abs(d - t0) <= win && playsOfAlbum(a) > mine) rank++; } }
+    else { for (const t of tracks) { if (t.id === it.id || t.isSnippet) continue; const d = msOf(t.releaseDate); if (!isNaN(d) && Math.abs(d - t0) <= win && (t.plays || 0) > mine) rank++; } }
+    // a weekly chart also holds older hits: a contemporary rank is a bit optimistic
+    const pos = Math.round(rank * 1.25 + (rank > 3 ? 1 : 0));
+    res = { pos: mine > 0 && pos <= limit ? Math.max(1, pos) : undefined, est: true };
+  }
+  if (m.size > 3000) m.clear();
+  m.set(key, res);
+  return res;
+}

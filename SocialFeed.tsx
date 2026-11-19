@@ -246,8 +246,8 @@ const B_MORE: Partial<Record<PType, Bank>> = {
   reaction: { any: ['фанаты {a} после «{t}»: 🫠', 'комменты под «{t}» — отдельный жанр искусства', '«{t}»: вы уже переслушали? делитесь любимой строчкой', 'реакция интернета на «{t}» — смотрим в карусели', 'кто плакал на «{t}», ставьте ❤️'] },
   hottake: { any: ['Непопулярное мнение: «{t}» — лучший релиз {a}', 'Скажем честно: «{t}» переоценён', '«{t}» через год будут считать классикой', '«{t}» — это ответ всем, кто списал {a}', 'Хайпа больше, чем музыки? «{t}» под вопросом'] },
   versus: { any: ['«{t}» или «{t2}»?', 'Батл недели: «{t}» против «{t2}»', 'Что слушаете чаще: «{t}» или «{t2}»?'] },
-  rumor: { any: ['Слух: {a} выпускает новый {kind} уже {d}', 'Говорят, {a} готовит релиз к {d}', 'Инсайд: дата нового релиза {a} — {d}', 'Источники называют дату: {a}, {d}', 'Похоже, у {a} релиз в эту пятницу'] },
-  featTease: { any: ['Слух: {a} и {a2} записали совместку', 'Инсайд: на новом релизе {a} будет {a2}', '{a} × {a2}? Источники говорят — да', 'Кажется, {a} и {a2} готовят фит. Ставки?', 'скоро с @{a2}. держитесь'] },
+  rumor: { any: ['Слух: {a} выпускает новый {kind} уже {d}', 'Ставлю на пятницу {d}: у {a} выходит новое', '{a} — {d}. Это не точно, но очень похоже на правду', 'Дата есть: {d}. {a} готовит {kind}', 'Говорят, {a} готовит релиз к {d}', 'Инсайд: дата нового релиза {a} — {d}', 'Источники называют дату: {a}, {d}', 'Похоже, у {a} релиз в эту пятницу'] },
+  featTease: { any: ['Слух: {a} и {a2} записали совместку', '{a} × {a2} — {d}? Источники намекают', 'Совместка {a} и {a2} может выйти {d}', 'Инсайд: на новом релизе {a} будет {a2}', '{a} × {a2}? Источники говорят — да', 'Кажется, {a} и {a2} готовят фит. Ставки?', 'скоро с @{a2}. держитесь'] },
   listening: { any: ['закрытая прослушка «{t}» прошла. гости в шоке', 'вчера дал послушать «{t}» друзьям. молчали минуту', 'прослушка нового в {city}: билеты закончились за час', 'играл «{t}» в машине у {a2}. одобрено'] },
   recap: { any: ['Итоги недели: главные релизы, рекорды и скандалы', 'Неделя в музыке: кто выстрелил, кто провалился', 'Что вышло за неделю — короткий дайджест', 'Главное за 7 дней: {a} — «{t}» и не только'] },
   question: { any: ['Кто ждёт «{t}» от {a}?', 'Чего ждёте от «{t}»?', 'Как думаете, «{t}» попадёт в топ-10?', 'Вы ждёте релиз {a}?'] },
@@ -350,6 +350,22 @@ function voice(text: string, p: Persona, r: R) {
   return s;
 }
 function bankPick(type: PType, st: Style, r: R) { const b = B[type] || {}; const own = b[st] || []; const pool = [...own, ...own, ...(b.any || [])]; return pool.length ? pick(r, pool) : '…'; }
+/** v2.5.1: dates in announces / rumors land on a Friday — mostly soon, sometimes weeks or months away */
+function fridayOffset(date: string, r: R, type: PType, kind: Kind): number {
+  const d0 = (5 - new Date(msOf(date)).getUTCDay() + 7) % 7; // 0 = today is Friday
+  const table: Array<[number, number]> = type === 'teaser' || type === 'countdown' || type === 'listening'
+    ? [[0, 46], [1, 30], [2, 12], [3, 6], [5, 4], [8, 2]]
+    : type === 'announce' || type === 'cover' || type === 'tracklist'
+      ? [[0, 18], [1, 24], [2, 18], [3, 12], [5, 12], [8, 9], [12, 5], [16, 2]]
+      : kind === 'insider' || type === 'insider' || type === 'leak' || type === 'rumor' || type === 'featTease'
+        ? [[0, 12], [1, 18], [2, 16], [3, 14], [5, 14], [8, 12], [12, 9], [20, 5]]
+        : [[0, 20], [1, 25], [2, 18], [4, 15], [7, 12], [12, 10]];
+  let w = wpick(r, table);
+  if (w >= 3) w += Math.floor(r() * 3) - 1; // «через 5 недель» is sometimes 4 or 6
+  let off = d0 + 7 * Math.max(0, w);
+  if (off === 0 && type === 'countdown') off = 7;
+  return off;
+}
 export function makePost(ix: Index, author: Persona, type: PType, date: string, r: R, ctx: Ctx = {}): Post {
   const subj = ctx.subject || (author.kind === 'artist' ? author : pickArtist(ix, r));
   const tops = subj?.artistId ? ix.tops.get(subj.artistId) || [] : [];
@@ -359,7 +375,7 @@ export function makePost(ix: Index, author: Persona, type: PType, date: string, 
   const tMine = tops.filter(t => (t.releaseDate || '') <= date);
   const old = tMine.filter(t => t.releaseDate && msOf(date) - msOf(t.releaseDate.slice(0, 10)) > 300 * DAY);
   const title = rel?.title || (type === 'throwback' ? (old[0] || tMine[0])?.title : tMine[Math.floor(r() * Math.min(4, tMine.length))]?.title) || 'новый трек';
-  const nDays = rel && rel.date > date ? Math.round((msOf(rel.date) - msOf(date)) / DAY) : 2 + Math.floor(r() * 12);
+  const nDays = rel && rel.date > date ? Math.round((msOf(rel.date) - msOf(date)) / DAY) : fridayOffset(date, r, type, author.kind);
   const v: Record<string, string> = {
     t: title, a: rel?.artistName || subj?.name || 'кто-то', me: author.name, a2: other?.name || '', t2: otherTop || 'последний релиз',
     kind: rel?.kind === 'album' ? ((rel.n || 10) <= 6 ? 'EP' : 'альбом') : 'трек', plays: fmtK(rel?.plays || tMine[0]?.plays || 0), pos: String(ctx.pos || ''), nom: ctx.nom || '',
@@ -397,11 +413,12 @@ export function makePost(ix: Index, author: Persona, type: PType, date: string, 
     const kindOf = (): Claim['kind'] => (/альбом/.test(low) ? 'album' : /\bep\b|эп/.test(low) ? 'ep' : /сниппет|кусок/.test(low) && type !== 'announce' ? 'snippet' : 'single');
     const fri = (min: number, span: number) => { let d = msOf(date) + Math.round(min + r() * span) * DAY; for (let i = 0; i < 7 && new Date(d).getUTCDay() !== 5; i++) d += DAY; return isoOf(d); };
     const said = isoOf(msOf(date) + nDays * DAY);
+    const friNear = isoOf(msOf(date) + ((5 - new Date(msOf(date)).getUTCDay() + 7) % 7) * DAY);
     const feat = text.includes(`@${v.a2}`) || /совместн|фит/.test(low) ? other?.name : undefined;
-    if (type === 'announce') claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: kindOf(), date: /пятниц/.test(low) ? fri(1, 0) : /неделе/.test(low) ? fri(1, 0) : said, feat };
+    if (type === 'announce') claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: kindOf(), date: /пятниц|этой неделе/.test(low) && !text.includes(v.d) ? friNear : said, feat };
     else if ((type === 'cryptic' || type === 'countdown') && text.includes(v.d)) claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: 'single', date: said };
-    else if (type === 'insider' || type === 'leak' || type === 'rumor' || type === 'featTease') { const k = kindOf(); claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: k, date: /дата/.test(low) && text.includes(v.d) ? said : k === 'album' ? fri(21, 50) : fri(7, 35), feat, title: type === 'leak' && /альбома .+ — «/.test(text) ? v.alb : undefined }; }
-    else if (type === 'collab' && other) claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: 'single', date: fri(10, 35), feat: other.name };
+    else if (type === 'insider' || type === 'leak' || type === 'rumor' || type === 'featTease') { const k = kindOf(); claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: k, date: /пятниц|этой неделе/.test(low) && !text.includes(v.d) ? friNear : said, feat, title: type === 'leak' && /альбома .+ — «/.test(text) ? v.alb : undefined }; }
+    else if (type === 'collab' && other) claim = { artistId: claimArtist.artistId, artistName: claimArtist.name, kind: 'single', date: said, feat: other.name };
   }
   const big = text.replace(/[\s.…]/g, '').length <= 12 && !rel && type !== 'poll';
   return {

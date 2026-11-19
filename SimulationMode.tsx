@@ -5,7 +5,7 @@ import { TitleMoodPicker } from './TitleMoodPicker';
 export type { TitleMood } from './titleGen';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { engineDebut, engineGrowth, engineSleeper, engineChart, engineListeners, engineHype, engineSetCatalog, engineActive, smartDuration, WeekBuzzStrip, SimDigestPro, SimDigestFullscreen, ListenEngineButton, AutoBackupPanel } from './MusaicLab';
+import { engineDebut, engineGrowth, engineSleeper, engineChart, engineChartDecay, engineAlbumChart, engineListeners, engineHype, engineSetCatalog, engineActive, smartDuration, WeekBuzzStrip, SimDigestPro, SimDigestFullscreen, ListenEngineButton, AutoBackupPanel } from './MusaicLab';
 import {
   Play,
   FastForward,
@@ -2182,7 +2182,7 @@ function rankTracksForChart(tracks: Track[], dateStr: string): Track[] {
       const rvAt = (t as any).revivalAt as string | undefined;
       const rvLeft = rvAt && diffDays > 120 ? Math.max(0, 1 - Math.max(0, (nowMs - new Date(rvAt).getTime()) / 86400000) / 35) : 0;
       const revivalMult = rvLeft > 0 ? 1 + ((t as any).revivalPower || 10) * rvLeft : 1;
-      const hotScore = Math.round(((t.plays || 0) * recencyBoost * longevityMult * revivalMult * engineChart(t.artistId, diffDays) * 12) / Math.pow(diffDays + 5, 0.66));
+      const hotScore = Math.round(((t.plays || 0) * recencyBoost * longevityMult * revivalMult * engineChart(t.artistId, diffDays, Boolean(t.featuredArtist)) * 12) / Math.pow(diffDays + 5, 0.66 * engineChartDecay(t.artistId)));
       return { track: t, hotScore };
     })
     .sort((a, b) => b.hotScore - a.hotScore)
@@ -2219,7 +2219,7 @@ function rankAlbumsForChart(albums: Album[], tracks: Track[], dateStr: string): 
       else if (diffDays <= 180) recencyBoost = 1.8;
       else if (diffDays <= 365) recencyBoost = 1.0;
       else recencyBoost = 0.3;
-      const hotScore = Math.round((fairPlays * recencyBoost * 12) / Math.pow(diffDays + 6, 0.65));
+      const hotScore = Math.round((fairPlays * recencyBoost * engineAlbumChart(al.artistId, diffDays) * 12) / Math.pow(diffDays + 6, 0.65 * engineChartDecay(al.artistId)));
       return { album: al, hotScore };
     })
     .sort((a, b) => b.hotScore - a.hotScore)
@@ -2668,7 +2668,7 @@ export function advanceSimulationStep(params: {
     const rank = newTrackRankMap.get(t.id);
     if (!rank) return t;
     const prevRank = prevTrackRanks.get(t.id);
-    if (prevRank && prevRank - rank > bestClimbDelta && !newTrackIds.has(t.id)) {
+    if (prevRank && rank <= 100 && prevRank - rank > bestClimbDelta && !newTrackIds.has(t.id)) {
       bestClimbDelta = prevRank - rank;
       biggestClimber = {
         id: t.id,
@@ -2681,7 +2681,8 @@ export function advanceSimulationStep(params: {
     }
     const prevWeeks = t.weeksOnChart || (prevRank ? 1 : 0);
     const weeksOnChart = rank <= 60 ? prevWeeks + 1 : t.weeksOnChart;
-    const peakChartPosition = t.peakChartPosition ? Math.min(t.peakChartPosition, rank) : rank;
+    const oldPeak = t.peakChartPosition && t.peakChartPosition > 0 && t.peakChartPosition <= 100 ? t.peakChartPosition : undefined;
+    const peakChartPosition = rank <= 100 ? (oldPeak ? Math.min(oldPeak, rank) : rank) : oldPeak;
     const history = [...(t.chartHistory || []), rank].slice(-16);
 
     return {
@@ -2703,7 +2704,8 @@ export function advanceSimulationStep(params: {
     const prevRank = prevAlbumRanks.get(al.id);
     const prevWeeks = al.weeksOnChart || (prevRank ? 1 : 0);
     const weeksOnChart = rank <= 40 ? prevWeeks + 1 : al.weeksOnChart;
-    const peakChartPosition = al.peakChartPosition ? Math.min(al.peakChartPosition, rank) : rank;
+    const oldPeak = al.peakChartPosition && al.peakChartPosition > 0 && al.peakChartPosition <= 50 ? al.peakChartPosition : undefined;
+    const peakChartPosition = rank <= 50 ? (oldPeak ? Math.min(oldPeak, rank) : rank) : oldPeak;
     const history = [...(al.chartHistory || []), rank].slice(-16);
 
     return {
@@ -9161,7 +9163,7 @@ export const SimConsoleModal: React.FC<{
               </div>
               {confirmedRumors.length === 0 && <div className="text-[12px] text-zinc-500 py-3">Пока пусто. Открой «Ленту» и нажми «Подтвердить» под анонсом или инсайдом.</div>}
               <div className="space-y-1.5">
-                {[...confirmedRumors].sort((a, b) => Number(Boolean(a.used)) - Number(Boolean(b.used)) || a.date.localeCompare(b.date)).map(rm => {
+                {[...confirmedRumors].sort((a, b) => Number(Boolean(a.used)) - Number(Boolean(b.used)) || Number(a.date < simState.currentDate) - Number(b.date < simState.currentDate) || a.date.localeCompare(b.date)).map(rm => {
                   const soon = rm.date >= simState.currentDate && rm.date <= addDaysISO(simState.currentDate, advanceDays);
                   return (
                     <div key={rm.id} className={`flex flex-wrap items-center gap-3 p-2.5 rounded-xl ${rm.used ? 'opacity-50' : 'bg-white/[0.03]'}`}>
@@ -9186,7 +9188,7 @@ export const SimConsoleModal: React.FC<{
             <SimLightPanel proposals={proposals} setProposals={setProposals} regenerate={regenerateProposals} autopilot={autopilot} setAuto={updateAutopilot} simState={simState} advanceDays={advanceDays} setAdvanceDays={setAdvanceDays} />
           )}
           {(tab === 'semi' || tab === 'manual') && (
-            <WeekBuzzStrip simState={simState} rumors={confirmedRumors} onUse={id => { const rm = confirmedRumors.find(x => x.id === id); if (rm) sendRumor(rm, tab === 'manual' ? 'manual' : 'semi'); }} />
+            <WeekBuzzStrip simState={simState} rumors={confirmedRumors} target={tab === 'manual' ? 'manual' : 'semi'} onUse={id => { const rm = confirmedRumors.find(x => x.id === id); if (rm) sendRumor(rm, tab === 'manual' ? 'manual' : 'semi'); }} />
           )}
           {!lightMode && tab === 'semi' && (
             <div className="space-y-4">

@@ -2446,9 +2446,12 @@ export const AlbumReviewsButton: React.FC<{ album: Album; tracks: Track[]; album
       const share = (single!.plays || 1) / Math.max(1, avg);
       const own = single!.rating?.totalScore ? (single!.rating.totalScore / 90) * 100 : null;
       const tr = seeded(hashStr(single!.id + '|trk') + seed * 977);
-      const w = -0.4 + tr() * 1.8; // sometimes the most played track is loved more, sometimes less
-      const standout = tr() < 0.14 ? (tr() < 0.55 ? 1 : -1) * (5 + tr() * 8) : 0;
-      const shift = clamp(Math.log2(share) * 3.2 * w, -8, 8) + (tr() - 0.5) * 7 + standout + (own !== null ? clamp((own - pData.meta) * 0.35, -8, 8) : 0);
+      const w = -0.6 + tr() * 2.1; // sometimes the most played track is loved more, sometimes less
+      const role = tr();                // highlight / filler / interlude-like track
+      const standout = role < 0.16 ? 6 + tr() * 10 : role < 0.32 ? -(6 + tr() * 10) : 0;
+      const pos = sib.findIndex(t => t.id === single!.id);
+      const edge = pos === 0 && tr() < 0.5 ? 3 : pos === sib.length - 1 && tr() < 0.4 ? 2.5 : 0; // openers / closers are often noticed
+      const shift = clamp(Math.log2(share) * 3.4 * w, -10, 10) + (tr() - 0.5) * 12 + standout + edge + (own !== null ? clamp((own - pData.meta) * 0.4, -9, 9) : 0);
       return genReviews({ ...ctx, anchor: pData.meta, shift, parent: parent.title });
     }
     return genReviews(ctx);
