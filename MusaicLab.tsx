@@ -2403,3 +2403,239 @@ export const ListenersTopBanner: React.FC<{ artists: Artist[]; albums: Album[]; 
     </>
   );
 };
+
+// ============================================================================
+// 13. COMMAND PALETTE v2 (Ctrl+K) — smart search: typos, wrong keyboard layout,
+//     Latin ↔ Cyrillic, several words, feats; commands, recent, preview
+// ============================================================================
+const RU_KEYS = 'йцукенгшщзхъфывапролджэячсмитьбю.';
+const EN_KEYS = "qwertyuiop[]asdfghjkl;'zxcvbnm,./";
+const swapLayout = (s: string) => s.split('').map(ch => { const l = ch.toLowerCase(); let i = EN_KEYS.indexOf(l); if (i >= 0) return RU_KEYS[i]; i = RU_KEYS.indexOf(l); return i >= 0 ? EN_KEYS[i] : ch; }).join('');
+const TR: Record<string, string> = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'i', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sh', ъ: '', ы: 'i', ь: '', э: 'e', ю: 'yu', я: 'ya' };
+const nrm = (s: string) => (s || '').toLowerCase().replace(/ё/g, 'е').replace(/[$]/g, 's').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+const phon = (s: string) => nrm(s).split('').map(c => TR[c] ?? c).join('')
+  .replace(/sch/g, 'sh').replace(/ph/g, 'f').replace(/ck/g, 'k').replace(/c(?!h)/g, 'k').replace(/q/g, 'k').replace(/w/g, 'v').replace(/x/g, 'ks').replace(/[yj]/g, 'i').replace(/kh/g, 'h').replace(/th/g, 't').replace(/ee/g, 'i').replace(/oo/g, 'u').replace(/(.)\1+/g, '$1');
+const lev = (a: string, b: string, cap: number) => {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) { const cur = [i]; let best = i; for (let j = 1; j <= b.length; j++) { cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); if (cur[j] < best) best = cur[j]; } if (best > cap) return cap + 1; prev = cur; }
+  return prev[b.length];
+};
+interface Fld { n: string; p: string; w: string[] }
+const fld = (s?: string): Fld => { const n = nrm(s || ''); const p = phon(s || ''); return { n, p, w: p.split(' ').filter(Boolean) }; };
+function tokScore(tn: string, tp: string, f: Fld): number {
+  if (!f.n) return 0;
+  if (f.n === tn || f.p === tp) return 100;
+  if (f.n.startsWith(tn) || f.p.startsWith(tp)) return 82;
+  if (f.w.some(w => w.startsWith(tp)) || f.n.split(' ').some(w => w.startsWith(tn))) return 68;
+  if (f.n.includes(tn)) return 52;
+  if (tp.length >= 3 && f.p.includes(tp)) return 46;
+  if (tp.length >= 4) { const cap = tp.length >= 7 ? 2 : 1; if (f.w.some(w => lev(w.slice(0, tp.length + 1), tp, cap) <= cap || lev(w, tp, cap) <= cap)) return 36; }
+  if (tp.length === 3 && f.w.some(w => w[0] === tp[0] && w.length <= 4 && lev(w, tp, 1) <= 1)) return 30;
+  if (tp.length >= 3) { let i = 0; for (const ch of f.p) if (ch === tp[i]) i++; if (i === tp.length && f.p.length <= tp.length * 3) return 20; }
+  return 0;
+}
+type CpKind = 'cmd' | 'artist' | 'track' | 'album';
+interface CpItem { key: string; kind: CpKind; title: string; sub: string; cover?: string; round?: boolean; icon?: string; pop: number; f: Fld[]; run: () => void; play?: () => void; ref?: any }
+const CP_RECENT = 'musaic.cmdk.recent';
+const CP_TABS: Array<[CpKind | 'all', string]> = [['all', 'Всё'], ['artist', 'Артисты'], ['track', 'Треки'], ['album', 'Альбомы'], ['cmd', 'Команды']];
+const KIND_LABEL: Record<CpKind, string> = { cmd: 'Команды', artist: 'Артисты', track: 'Треки', album: 'Альбомы' };
+
+export const CommandPaletteV2: React.FC<{
+  isOpen: boolean; onClose: () => void; artists: Artist[]; albums: Album[]; tracks: Track[];
+  navigateTo: (view: any, params?: any) => void; onPlayTrack: (t: Track) => void; onOpenSettings: () => void;
+  isSimMode?: boolean; onOpenSimConsole?: (tab?: string) => void; onSimStep?: (days: number) => void;
+}> = ({ isOpen, onClose, artists, albums, tracks, navigateTo, onPlayTrack, onOpenSettings, isSimMode, onOpenSimConsole, onSimStep }) => {
+  const [q, setQ] = useState('');
+  const [tab, setTab] = useState<CpKind | 'all'>('all');
+  const [act, setAct] = useState(0);
+  const [lisTop, setLisTop] = useState(false);
+  const [recent, setRecent] = useState<string[]>(() => lsGet<string[]>(CP_RECENT, []));
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (isOpen) { setQ(''); setTab('all'); setAct(0); setTimeout(() => inputRef.current?.focus(), 30); } }, [isOpen]);
+  const go = (view: string, params?: any) => () => { onClose(); navigateTo(view, params); };
+
+  const index = useMemo<CpItem[]>(() => {
+    if (!isOpen) return [];
+    const albumById = new Map(albums.map(a => [a.id, a]));
+    const cmds: Array<[string, string, string, string, () => void]> = [
+      ['home', '🏠', 'Главная', 'подборка обзоры home', go('home')],
+      ['charts', '📈', 'Чарты', 'топ недели треки альбомы charts', go('charts')],
+      ['chart-art-now', '🔥', 'Топ артистов недели', 'актуальный топ 100 артисты чарт', go('charts', { tab: 'artists', mode: 'now' })],
+      ['chart-art-all', '🏆', 'Топ-100 артистов за всё время', 'легенды все время рейтинг артистов', go('charts', { tab: 'artists', mode: 'all' })],
+      ['lis-top', '👥', 'Топ по слушателям в месяц', 'ежемесячные слушатели топ рейтинг', () => setLisTop(true)],
+      ['rating', '⭐', 'Рейтинг и оценки', 'оценки 90 баллов лучшие релизы rating', go('rating', { tab: 'rating' })],
+      ['awards', '🎖', 'Премии и номинации', 'награды итоги года месяца awards', go('rating', { tab: 'awards' })],
+      ['value', '💎', 'Ценность альбомов', 'тиры золото рубин ценность', go('rating', { tab: 'album_value' })],
+      ['library', '📚', 'Медиатека', 'библиотека сохраненные любимые library', go('library')],
+      ['dates', '🗓', 'Релизы по датам', 'календарь хронология даты годы', go('search', { tab: 'dates' })],
+      ['news', '📰', 'События индустрии', 'новости хроника рекорды news', go('news')],
+      ['compare', '⚔️', 'Сравнить артистов или альбомы', 'дуэль versus сравнение', go('compare', { mode: 'artists' })],
+      ['creator', '🛠', 'Студия: создать артиста, альбом, трек', 'создать добавить студия редактор creator', go('creator')],
+      ['settings', '🎨', 'Оформление и интерфейс', 'настройки тема шрифт размер масштаб settings', () => { onClose(); onOpenSettings(); }],
+      ['random', '🎲', 'Включить случайный трек', 'рандом случайный play', () => { const real = tracks.filter(t => !t.isSnippet); if (real.length) onPlayTrack(real[Math.floor(Math.random() * real.length)]); onClose(); }]
+    ];
+    if (isSimMode && onOpenSimConsole) cmds.unshift(
+      ['sim-console', '🎛', 'Пульт симуляции', 'симуляция батч релизы неделя', () => { onClose(); onOpenSimConsole('semi'); }],
+      ['sim-digest', '📊', 'Итоги и слоты симуляции', 'итоги слоты статистика симуляция', () => { onClose(); onOpenSimConsole('digest'); }]
+    );
+    if (isSimMode && onSimStep) cmds.unshift(
+      ['sim-week', '⏩', 'Симуляция: +1 неделя', 'шаг неделя вперед', () => { onClose(); onSimStep(7); }],
+      ['sim-day', '▶️', 'Симуляция: +1 день', 'шаг день вперед', () => { onClose(); onSimStep(1); }]
+    );
+    const out: CpItem[] = cmds.map(([k, icon, title, kw, run]) => ({ key: `c:${k}`, kind: 'cmd', title, sub: '', icon, pop: 0, f: [fld(title), fld(kw)], run }));
+    for (const a of artists) out.push({ key: `a:${a.id}`, kind: 'artist', title: a.name, sub: `${fmtC(a.followers || 0)} слушателей${a.genre ? ` · ${a.genre}` : ''}`, cover: a.imageUrl, round: true, pop: Math.log10((a.followers || 0) + 10), f: [fld(a.name), fld(a.genre)], run: go('artist', { id: a.id, artistName: a.name }), ref: a });
+    for (const t of tracks) { const al = t.albumId ? albumById.get(t.albumId) : undefined; out.push({ key: `t:${t.id}`, kind: 'track', title: t.title, sub: `${t.artistName}${t.featuredArtist ? ` feat. ${t.featuredArtist}` : ''}${t.isSnippet ? ' · сниппет' : ''} · ${fmtC(t.plays || 0)}`, cover: t.coverUrl || al?.coverUrl, pop: Math.log10((t.plays || 0) + 10) - (t.isSnippet ? 1 : 0), f: [fld(t.title), fld(t.artistName), fld(t.featuredArtist), fld(al?.title)], run: go('track', { id: t.id }), play: () => { onPlayTrack(t); onClose(); }, ref: t }); }
+    for (const al of albums) out.push({ key: `l:${al.id}`, kind: 'album', title: al.title, sub: `${al.artistName}${al.coArtist ? ` & ${al.coArtist}` : ''} · ${al.releaseYear || ''}`, cover: al.coverUrl, pop: Math.log10((al.totalPlays || 0) + 10), f: [fld(al.title), fld(al.artistName), fld(al.coArtist)], run: go('album', { id: al.id }), ref: al });
+    return out;
+  }, [isOpen, artists, albums, tracks, isSimMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const dq = React.useDeferredValue ? React.useDeferredValue(q) : q;
+  const { results, best } = useMemo(() => {
+    let query = dq.trim(); let kindF: CpKind | 'all' = tab;
+    if (query.startsWith('>') || query.startsWith('/')) { kindF = 'cmd'; query = query.slice(1).trim(); }
+    else if (query.startsWith('@')) { kindF = 'artist'; query = query.slice(1).trim(); }
+    else if (query.startsWith('#')) { kindF = 'track'; query = query.slice(1).trim(); }
+    const pool = kindF === 'all' ? index : index.filter(i => i.kind === kindF);
+    if (!query) {
+      const rec = recent.map(k => index.find(i => i.key === k)).filter(Boolean) as CpItem[];
+      const cmds = pool.filter(i => i.kind === 'cmd').slice(0, kindF === 'cmd' ? 40 : 8);
+      const popA = kindF === 'all' || kindF === 'artist' ? [...pool.filter(i => i.kind === 'artist')].sort((a, b) => b.pop - a.pop).slice(0, kindF === 'artist' ? 30 : 5) : [];
+      const popT = kindF === 'all' || kindF === 'track' ? [...pool.filter(i => i.kind === 'track' && !i.ref?.isSnippet)].sort((a, b) => (b.ref?.releaseDate || '').localeCompare(a.ref?.releaseDate || '')).slice(0, kindF === 'track' ? 30 : 5) : [];
+      const popL = kindF === 'album' ? [...pool.filter(i => i.kind === 'album')].sort((a, b) => b.pop - a.pop).slice(0, 30) : [];
+      const groups: Array<[string, CpItem[]]> = [];
+      if (rec.length && kindF === 'all') groups.push(['Недавнее', rec.slice(0, 5)]);
+      if (cmds.length && (kindF === 'all' || kindF === 'cmd')) groups.push(['Команды', cmds]);
+      if (popA.length) groups.push(['Популярные артисты', popA]);
+      if (popT.length) groups.push(['Свежие треки', popT]);
+      if (popL.length) groups.push(['Альбомы', popL]);
+      return { results: groups, best: null as CpItem | null };
+    }
+    const variants = [query, swapLayout(query)].filter((v, i, a) => a.indexOf(v) === i);
+    const scored: Array<[CpItem, number]> = [];
+    for (const it of pool) {
+      let bestV = 0;
+      for (const v of variants) {
+        const toks = nrm(v).split(' ').filter(Boolean); if (!toks.length) continue;
+        let total = 0, okAll = true;
+        for (const tk of toks) { const tp = phon(tk); let b = 0; it.f.forEach((f, fi) => { const sc = tokScore(tk, tp, f) * (fi === 0 ? 1 : 0.8); if (sc > b) b = sc; }); if (!b) { okAll = false; break; } total += b; }
+        if (okAll) { const sc = total / toks.length + (v === query ? 0 : -6); if (sc > bestV) bestV = sc; }
+      }
+      if (bestV > 0) scored.push([it, bestV + it.pop * 2.2 + (it.kind === 'cmd' ? 4 : 0)]);
+    }
+    scored.sort((a, b) => b[1] - a[1]);
+    const groups: Array<[string, CpItem[]]> = [];
+    const lim: Record<CpKind, number> = { cmd: 5, artist: kindF === 'artist' ? 40 : 6, track: kindF === 'track' ? 40 : 8, album: kindF === 'album' ? 40 : 6 };
+    const top = scored[0]?.[0] || null;
+    (['cmd', 'artist', 'track', 'album'] as CpKind[]).forEach(k => { const g = scored.filter(([i]) => i.kind === k && i !== top).slice(0, lim[k]).map(([i]) => i); if (g.length) groups.push([KIND_LABEL[k], g]); });
+    if (top) groups.unshift(['Лучшее совпадение', [top]]);
+    return { results: groups, best: top };
+  }, [dq, tab, index, recent]);
+  const flat = useMemo(() => results.flatMap(([, g]) => g), [results]);
+  useEffect(() => { setAct(0); }, [dq, tab]);
+  useEffect(() => { const el = listRef.current?.querySelector(`[data-cp="${act}"]`) as HTMLElement | null; el?.scrollIntoView({ block: 'nearest' }); }, [act]);
+  const pick = (it?: CpItem, play = false) => { if (!it) return; const r = [it.key, ...recent.filter(k => k !== it.key)].slice(0, 12); setRecent(r); lsSet(CP_RECENT, r); (play && it.play ? it.play : it.run)(); };
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setAct(a => (flat.length ? (a + 1) % flat.length : 0)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setAct(a => (flat.length ? (a - 1 + flat.length) % flat.length : 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(flat[act], e.shiftKey); }
+    else if (e.key === 'Tab') { e.preventDefault(); const i = CP_TABS.findIndex(t => t[0] === tab); setTab(CP_TABS[(i + (e.shiftKey ? CP_TABS.length - 1 : 1)) % CP_TABS.length][0]); }
+    else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+  };
+  const cur = flat[act];
+  const swapped = q && swapLayout(q) !== q && best && !nrm(best.title).includes(nrm(q)) && nrm(best.title).includes(nrm(swapLayout(q)).split(' ')[0] || '~') ? swapLayout(q) : null;
+  let idx = -1;
+  return (
+    <>
+      <AnimatePresence>
+        {isOpen && (
+          <Portal>
+            <div className="fixed inset-0 z-[640] flex items-start justify-center pt-[9vh] px-3">
+              <motion.div className="absolute inset-0 bg-black/70 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} onClick={onClose} />
+              <motion.div onKeyDown={onKey} initial={{ opacity: 0, y: -14, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10, scale: 0.98 }} transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                className="relative w-full max-w-4xl rounded-[26px] bg-[#101116]/95 border border-white/10 shadow-[0_40px_120px_-20px_rgba(0,0,0,0.9)] overflow-hidden backdrop-blur-2xl">
+                <div className="absolute inset-x-0 top-0 h-24 pointer-events-none opacity-[0.18]" style={{ background: 'radial-gradient(60% 100% at 50% 0%, var(--accent-color), transparent 70%)' }} />
+                <div className="relative flex items-center gap-3 px-5 pt-4 pb-3">
+                  <motion.span animate={{ rotate: q ? 90 : 0, scale: q ? 1.05 : 1 }} className="text-zinc-400 text-lg">⌕</motion.span>
+                  <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Артист, трек, альбом или команда…  (можно с ошибкой и в другой раскладке)"
+                    className="flex-1 bg-transparent text-[16px] text-white placeholder:text-zinc-500 outline-none" />
+                  {q && <button type="button" onClick={() => { setQ(''); inputRef.current?.focus(); }} className="text-[12px] text-zinc-500 hover:text-white">очистить</button>}
+                  <kbd className="text-[10.5px] font-mono text-zinc-400 px-1.5 py-0.5 rounded-md bg-white/[0.06] border border-white/10">ESC</kbd>
+                </div>
+                <div className="relative flex items-center gap-1 px-4 pb-3">
+                  {CP_TABS.map(([k, l]) => (
+                    <button key={k} type="button" onClick={() => { setTab(k); inputRef.current?.focus(); }} className={`relative px-3 py-1.5 rounded-full text-[12px] font-bold transition-colors ${tab === k ? 'text-black' : 'text-zinc-400 hover:text-white'}`}>
+                      {tab === k && <motion.span layoutId="cp-tab" className="absolute inset-0 rounded-full bg-white" transition={{ type: 'spring', stiffness: 460, damping: 36 }} />}
+                      <span className="relative">{l}</span>
+                    </button>
+                  ))}
+                  {swapped && <span className="ml-auto text-[11.5px] text-zinc-500">Ищу и как «<span className="text-zinc-300">{swapped}</span>»</span>}
+                </div>
+                <div className="relative grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_280px] border-t border-white/[0.06]">
+                  <div ref={listRef} className="max-h-[58vh] overflow-y-auto custom-scrollbar p-2">
+                    {!flat.length && <div className="py-14 text-center"><div className="text-3xl mb-2">🫥</div><div className="text-[13px] text-zinc-400">Ничего не нашлось по «{q}»</div><div className="text-[11.5px] text-zinc-600 mt-1">Попробуй часть названия, имя артиста или фит</div></div>}
+                    {results.map(([title, items]) => (
+                      <div key={title} className="mb-1">
+                        <div className="px-3 pt-2 pb-1 text-[10.5px] font-black uppercase tracking-[0.16em] text-zinc-500">{title}</div>
+                        {title === 'Команды' && !q ? (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 px-1 pb-1">
+                            {items.map(it => { idx++; const my = idx; const on = my === act; return (
+                              <motion.button key={it.key} data-cp={my} type="button" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(my, 12) * 0.018 }}
+                                onMouseEnter={() => setAct(my)} onClick={() => pick(it)}
+                                className={`relative text-left rounded-2xl px-3 py-2.5 border transition-colors ${on ? 'bg-white/[0.09] border-white/20' : 'bg-white/[0.025] border-white/[0.05] hover:bg-white/[0.05]'}`}>
+                                <div className="text-lg leading-none">{it.icon}</div>
+                                <div className="text-[12px] font-bold text-white mt-1.5 leading-snug line-clamp-2">{it.title}</div>
+                              </motion.button>); })}
+                          </div>
+                        ) : items.map(it => { idx++; const my = idx; const on = my === act; const isBest = title === 'Лучшее совпадение'; return (
+                          <motion.div key={it.key} data-cp={my} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(my, 14) * 0.015, duration: 0.18 }}
+                            onMouseEnter={() => setAct(my)} onClick={() => pick(it)}
+                            className={`relative flex items-center gap-3 px-3 ${isBest ? 'py-3' : 'py-2'} rounded-2xl cursor-pointer`}>
+                            {on && <motion.span layoutId="cp-active" className="absolute inset-0 rounded-2xl bg-white/[0.08] border border-white/[0.1]" transition={{ type: 'spring', stiffness: 520, damping: 40 }} />}
+                            {it.kind === 'cmd' ? <span className="relative w-9 h-9 rounded-xl bg-white/[0.06] flex items-center justify-center text-base shrink-0">{it.icon}</span>
+                              : <CoverArt url={it.cover} title={it.title} isArtist={it.round} className={`relative ${isBest ? 'w-12 h-12' : 'w-9 h-9'} ${it.round ? 'rounded-full' : 'rounded-lg'} overflow-hidden bg-zinc-800 shrink-0`} innerClassName="w-full h-full object-cover" />}
+                            <span className="relative min-w-0 flex-1">
+                              <span className={`block ${isBest ? 'text-[15.5px]' : 'text-[13.5px]'} font-bold text-white truncate`}>{it.title}</span>
+                              {it.sub && <span className="block text-[11.5px] text-zinc-400 truncate">{it.sub}</span>}
+                            </span>
+                            <span className="relative text-[10px] uppercase tracking-wider text-zinc-600 font-bold hidden sm:inline">{it.kind === 'cmd' ? 'команда' : it.kind === 'artist' ? 'артист' : it.kind === 'track' ? 'трек' : 'альбом'}</span>
+                            {it.play && <button type="button" onClick={e => { e.stopPropagation(); pick(it, true); }} title="Слушать (Shift+Enter)" className="relative w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white hover:text-black text-white text-[11px] flex items-center justify-center transition-colors shrink-0">▶</button>}
+                            <span className={`relative text-zinc-500 transition-transform ${on ? 'translate-x-0.5 text-white' : ''}`}>›</span>
+                          </motion.div>); })}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="hidden md:block border-l border-white/[0.06] p-4">
+                    <AnimatePresence mode="wait">
+                      {cur && (
+                        <motion.div key={cur.key} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="space-y-3">
+                          {cur.kind === 'cmd' ? <div className="w-full aspect-[16/10] rounded-2xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-5xl">{cur.icon}</div>
+                            : <CoverArt url={cur.cover} title={cur.title} isArtist={cur.round} className={`w-full aspect-square ${cur.round ? 'rounded-full' : 'rounded-2xl'} overflow-hidden bg-zinc-800 shadow-2xl`} innerClassName="w-full h-full object-cover" />}
+                          <div>
+                            <div className="text-[10.5px] uppercase tracking-[0.16em] text-zinc-500 font-black">{cur.kind === 'cmd' ? 'Команда' : cur.kind === 'artist' ? 'Артист' : cur.kind === 'track' ? (cur.ref?.isSnippet ? 'Сниппет' : 'Трек') : 'Альбом'}</div>
+                            <div className="text-[17px] font-black text-white leading-tight mt-0.5">{cur.title}</div>
+                            {cur.sub && <div className="text-[12px] text-zinc-400 mt-0.5">{cur.sub}</div>}
+                          </div>
+                          {cur.kind === 'track' && cur.ref && <div className="grid grid-cols-2 gap-1.5 text-[11.5px]">{[['Дата', cur.ref.releaseDate ? fmtDate(cur.ref.releaseDate) : '—'], ['Длительность', cur.ref.duration || '—'], ['Прослушивания', fmtC(cur.ref.plays || 0)], ['Оценка', cur.ref.rating?.totalScore > 0 ? `${Math.round(cur.ref.rating.totalScore)}` : '—']].map(([l, v]) => <div key={l} className="rounded-xl bg-white/[0.04] px-2.5 py-1.5"><div className="text-zinc-500">{l}</div><div className="text-white font-bold tabular-nums">{v}</div></div>)}</div>}
+                          {cur.kind === 'artist' && cur.ref && (() => { const R = getArtistRanks(artists, albums, tracks); const n = R.now.get(cur.ref.id), a = R.all.get(cur.ref.id); return <div className="grid grid-cols-3 gap-1.5 text-[11.5px]">{[['Неделя', n ? `#${n}` : '—'], ['Всё время', a ? `#${a}` : '—'], ['Слушатели', `#${R.lis.get(cur.ref.id) || '—'}`]].map(([l, v]) => <div key={l} className="rounded-xl bg-white/[0.04] px-2 py-1.5 text-center"><div className="text-zinc-500">{l}</div><div className="text-white font-black tabular-nums">{v}</div></div>)}</div>; })()}
+                          {cur.kind === 'album' && cur.ref && <div className="grid grid-cols-2 gap-1.5 text-[11.5px]">{[['Год', String(cur.ref.releaseYear || '—')], ['Оценка', cur.ref.rating?.totalScore > 0 ? `${Math.round(cur.ref.rating.totalScore)}` : '—']].map(([l, v]) => <div key={l} className="rounded-xl bg-white/[0.04] px-2.5 py-1.5"><div className="text-zinc-500">{l}</div><div className="text-white font-bold">{v}</div></div>)}</div>}
+                          <div className="flex gap-1.5"><button type="button" onClick={() => pick(cur)} className="flex-1 h-9 rounded-xl bg-white text-black text-[12.5px] font-black">Открыть ↵</button>{cur.play && <button type="button" onClick={() => pick(cur, true)} className="h-9 px-3 rounded-xl bg-white/[0.08] text-white text-[12.5px] font-bold">▶ Слушать</button>}</div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+                <div className="relative px-5 py-2.5 border-t border-white/[0.06] bg-black/25 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
+                  <span><kbd className="font-mono text-zinc-400">↑↓</kbd> выбрать</span><span><kbd className="font-mono text-zinc-400">↵</kbd> открыть</span><span><kbd className="font-mono text-zinc-400">⇧↵</kbd> слушать</span><span><kbd className="font-mono text-zinc-400">Tab</kbd> разделы</span>
+                  <span className="ml-auto"><span className="text-zinc-400 font-mono">@</span> артисты · <span className="text-zinc-400 font-mono">#</span> треки · <span className="text-zinc-400 font-mono">&gt;</span> команды</span>
+                </div>
+              </motion.div>
+            </div>
+          </Portal>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>{lisTop && <ListenersTopModal key="cp-lt" big artists={artists} albums={albums} tracks={tracks} navigateTo={navigateTo} onClose={() => setLisTop(false)} />}</AnimatePresence>
+    </>
+  );
+};

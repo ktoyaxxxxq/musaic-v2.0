@@ -387,7 +387,8 @@ function trackTau(t: any) {
   return tau;
 }
 
-interface ChartRow { e: ChartEnt; v: number; score?: number; note?: string }
+interface ScorePart { label: string; hint: string; value: string; pts: number; max: number; bonus?: boolean }
+interface ChartRow { e: ChartEnt; v: number; score?: number; note?: string; parts?: ScorePart[] }
 interface ChartInfo { rank?: number; last?: number; peak?: number; weeksOn: number; weeksAtOne: number; status: 'new' | 're' | 'up' | 'down' | 'same' | 'none'; delta: number; debutWeek?: number; debutRank?: number }
 
 function buildEntities(artists: Artist[], albums: Album[], tracks: Track[], nowRef: number) {
@@ -446,26 +447,47 @@ function rankChart(ents: Ents, kind: ChartKind, mode: ChartMode, T: number, A = 
       });
     }
     if (mode === 'all') {
-      // v2.5.6: all-time = mostly total plays, plus average per track, the biggest hits,
-      // how successful the feats are and a little of monthly listeners
-      const raw: Array<{ e: ChartEnt; base: number; c: number[]; note: string }> = [];
+      // v2.5.7: all-time = mostly total plays + average per track + biggest hits + a little of monthly listeners
+      // and career length. Feats and albums are BONUSES only: no feats / no albums is never a penalty.
+      const cmp = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} млрд` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} млн` : n >= 1e3 ? `${Math.round(n / 1e3)} тыс.` : `${Math.round(n)}`).replace('.', ',');
+      const albumsOf = new Map<string, Array<{ total: number; sc: number; title: string }>>();
+      for (const al of ents.albumEnts) {
+        if (al.releaseMs > T) continue;
+        const id = al.ref.artistId; if (!id) continue;
+        const arr = albumsOf.get(id) || []; arr.push({ total: playsAt(al, T), sc: al.ref.rating?.totalScore || 0, title: al.title }); albumsOf.set(id, arr);
+      }
+      const firstRel = new Map<string, number>();
+      for (const e of ents.trackEnts) { if (e.releaseMs > T) continue; const id = e.credits?.[0]?.[0]; if (id && (!firstRel.has(id) || e.releaseMs < firstRel.get(id)!)) firstRel.set(id, e.releaseMs); }
+      const raw: Array<{ e: ChartEnt; base: number; c: number[]; f: number[]; al: number[]; meta: { n: number; fn: number; best?: string; years: number } }> = [];
       for (const e of ents.artistEnts) {
         const base = sum.get(e.id) || 0;
         if (base <= 0) continue;
         const L = lead.get(e.id) || { tot: 0, n: 0, top: [] };
         const F = feat.get(e.id) || { tot: 0, n: 0 };
-        const avg = L.tot / (L.n + 2);                    // smoothed: one lucky track does not make a legend
-        const top5 = [...L.top].sort((a, b) => b - a).slice(0, 5).reduce((x, y) => x + y, 0);
-        const featAvg = F.n ? F.tot / (F.n + 1) : 0;
-        const fol = e.ref.followers || 0;
-        const cmp = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} млрд` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} млн` : n >= 1e3 ? `${Math.round(n / 1e3)} тыс.` : `${Math.round(n)}`).replace('.', ',');
-        raw.push({ e, base, c: [base, avg, top5, F.tot, featAvg, fol], note: `ср. ${cmp(L.tot / Math.max(1, L.n))} на трек${F.n ? ` · фиты ${cmp(F.tot)}` : ''}` });
+        const avg = L.tot / (L.n + 2);                     // smoothed: one lucky track does not make a legend
+        const top5 = [...L.top].sort((x, y) => y - x).slice(0, 5).reduce((x, y) => x + y, 0);
+        const years = firstRel.has(e.id) ? Math.max(0, (T - firstRel.get(e.id)!) / (365 * DAY)) : 0;
+        const albs = (albumsOf.get(e.id) || []).sort((x, y) => y.total - x.total);
+        raw.push({ e, base, c: [base, avg, top5, e.ref.followers || 0, Math.min(years, 12)], f: [F.tot, F.n ? F.tot / (F.n + 1) : 0], al: [albs[0]?.total || 0, Math.max(0, ...albs.map(x => x.sc))], meta: { n: L.n, fn: F.n, best: albs[0]?.title, years } });
       }
-      const W = [0.46, 0.15, 0.12, 0.09, 0.06, 0.12];
-      const mx = W.map((_, i) => Math.max(1, ...raw.map(r => r.c[i])));
+      const W = [0.52, 0.17, 0.14, 0.12, 0.05];
+      const LB = ['Все прослушивания', 'В среднем на трек', '5 главных хитов', 'Слушатели в месяц', 'Длина карьеры'];
+      const HB = ['Главный фактор: сколько прослушали всё вместе (свои треки и фиты)', 'Сглажено: один удачный трек не делает легендой', 'Самые большие треки артиста', 'Немного влияет текущая аудитория', 'Сколько лет с первого релиза (до 12)'];
+      const mx = W.map((_, i) => Math.max(1e-9, ...raw.map(r => r.c[i])));
+      const mf = [Math.max(1, ...raw.map(r => r.f[0])), Math.max(1, ...raw.map(r => r.f[1]))];
+      const ma = Math.max(1, ...raw.map(r => r.al[0]));
       for (const r of raw) {
-        const score = r.c.reduce((acc, x, i) => acc + W[i] * Math.sqrt(x / mx[i]), 0);
-        rows.push({ e: r.e, v: r.base, score, note: r.note });
+        const comp = r.c.map((x, i) => W[i] * Math.sqrt(x / mx[i]));
+        const baseScore = comp.reduce((x, y) => x + y, 0);
+        const fs = r.meta.fn ? 0.6 * Math.sqrt(r.f[0] / mf[0]) + 0.4 * Math.sqrt(r.f[1] / mf[1]) : 0;
+        const as = r.al[0] > 0 ? 0.7 * Math.sqrt(r.al[0] / ma) + 0.3 * Math.min(1, r.al[1] / 90) : 0;
+        const featB = 0.08 * fs, albB = 0.04 * as;
+        const score = baseScore * (1 + featB) * (1 + albB);
+        const vals = [cmp(r.c[0]), cmp(r.c[0] && r.meta.n ? (lead.get(r.e.id)!.tot / r.meta.n) : 0), cmp(r.c[2]), cmp(r.c[3]), r.meta.years >= 1 ? `${Math.floor(r.meta.years)} л.` : 'меньше года'];
+        const parts: ScorePart[] = comp.map((x, i) => ({ label: LB[i], hint: HB[i], value: vals[i], pts: x * 100, max: W[i] * 100 }));
+        parts.push({ label: 'Бонус за фиты', hint: r.meta.fn ? `${r.meta.fn} фит. · ${cmp(r.f[0])}. Без фитов штрафа нет` : 'Фитов нет: без штрафа', value: r.meta.fn ? `+${(featB * 100).toFixed(1).replace('.', ',')}%` : '—', pts: featB * 100, max: 8, bonus: true });
+        parts.push({ label: 'Бонус за альбомы', hint: r.meta.best ? `Лучший: «${r.meta.best}» · ${cmp(r.al[0])}${r.al[1] ? ` · оценка ${Math.round(r.al[1])}` : ''}` : 'Альбомов нет: без штрафа', value: r.al[0] > 0 ? `+${(albB * 100).toFixed(1).replace('.', ',')}%` : '—', pts: albB * 100, max: 4, bonus: true });
+        rows.push({ e: r.e, v: r.base, score, note: `ср. ${vals[1]} на трек${r.meta.fn ? ` · фиты ${cmp(r.f[0])}` : ''}`, parts });
       }
     } else {
       for (const e of ents.artistEnts) {
@@ -560,6 +582,7 @@ const Seg2 = <T extends string,>({ value, options, onChange, size = 'md' }: { va
 );
 
 interface ChartsProps {
+  initialKind?: string; initialMode?: string;
   artists: Artist[]; albums: Album[]; tracks: Track[];
   navigateTo: (view: ViewType, params?: any) => void;
   onPlayTrack: (t: Track) => void;
@@ -571,12 +594,13 @@ interface ChartsProps {
   onMoreOptionsClick?: (item: any) => void;
 }
 
-export const ChartsPro: React.FC<ChartsProps> = ({ artists, albums, tracks, navigateTo, onPlayTrack, openLightbox, currentTrackId, isPlaying, referenceDate, onMoreOptionsClick, followedArtistIds = [], toggleFollowArtist }) => {
+export const ChartsPro: React.FC<ChartsProps> = ({ initialKind, initialMode, artists, albums, tracks, navigateTo, onPlayTrack, openLightbox, currentTrackId, isPlaying, referenceDate, onMoreOptionsClick, followedArtistIds = [], toggleFollowArtist }) => {
   usePlusCss();
   const nowRef = useMemo(() => refToMs(referenceDate), [referenceDate]);
   const [kind, setKindRaw] = useState<ChartKind>(() => lsGet<ChartKind>('musaic.charts.kind', 'tracks'));
   const setKind = (k: ChartKind) => { setKindRaw(k); lsSet('musaic.charts.kind', k); };
-  const [mode, setMode] = useState<ChartMode>('now');
+  const [mode, setMode] = useState<ChartMode>(() => (initialMode === 'all' || initialMode === 'now' ? initialMode : 'now'));
+  useEffect(() => { if (initialKind) setKindRaw(initialKind as ChartKind); if (initialMode === 'all' || initialMode === 'now') setMode(initialMode); }, [initialKind, initialMode]); // eslint-disable-line react-hooks/exhaustive-deps
   const [chartDate, setChartDate] = useState<string>('');
   const [preset, setPreset] = useState<'30' | '90' | '365' | 'year' | 'custom'>('30');
   const [pYear, setPYear] = useState<number>(() => new Date(nowRef).getUTCFullYear());
@@ -656,6 +680,7 @@ export const ChartsPro: React.FC<ChartsProps> = ({ artists, albums, tracks, navi
     navigateTo('artist', a ? { id: a.id, artistName: a.name } : { id: `guest_${name}`, artistName: name });
   };
   const zoom = (e: ChartEnt) => openLightbox({ url: e.cover, title: e.title, subtitle: e.isArtist ? undefined : e.sub, type: kind === 'tracks' ? 'Трек' : kind === 'albums' ? 'Альбом' : 'Артист' });
+  const allRows = useMemo(() => (kind === 'artists' ? rankChart(ents, 'artists', 'all', nowRef, 0, 100) : []), [ents, kind, nowRef]);
   const histRow = historyId ? (rows.find(r => r.e.id === historyId)?.e || (kind === 'tracks' ? ents.trackEnts : kind === 'albums' ? ents.albumEnts : ents.artistEnts).find(e => e.id === historyId)) : undefined;
 
   return (
@@ -741,7 +766,7 @@ export const ChartsPro: React.FC<ChartsProps> = ({ artists, albums, tracks, navi
             {[1, 0, 2].map(i => {
               const r = rows[i]; const ex = artistExtras.get(r.e.id); const inf = info(r.e.id);
               return (
-                <motion.button key={r.e.id} type="button" onClick={() => openItem(r.e)} whileHover={{ y: -4 }} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                <motion.button key={r.e.id} type="button" onClick={() => (mode === 'all' ? setHistoryId(r.e.id) : openItem(r.e))} title={mode === 'all' ? 'Разбор места в топе' : undefined} whileHover={{ y: -4 }} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
                   className={`relative overflow-hidden rounded-3xl text-left border border-white/[0.08] bg-white/[0.03] ${i === 0 ? 'md:-mt-4' : 'md:mt-4'}`}>
                   <div className="aspect-[4/5] relative">
                     <CoverArt url={r.e.cover} title={r.e.title} isArtist className="absolute inset-0 w-full h-full" innerClassName="w-full h-full object-cover" />
@@ -777,13 +802,14 @@ export const ChartsPro: React.FC<ChartsProps> = ({ artists, albums, tracks, navi
         </div>
         <p className="text-[11px] text-zinc-600 mt-4 px-2 leading-relaxed">
           Чарт считается по недельным прослушиваниям: у каждого релиза быстрый старт и длинный хвост, промо и хайп влияют на долготу жизни.
-          Нажми на строку, чтобы открыть историю позиций.
+          {kind === 'artists' ? 'Нажми на артиста, чтобы увидеть разбор места в топе за всё время и историю позиций.' : 'Нажми на строку, чтобы открыть историю позиций.'}
         </p>
       </div>
 
       <AnimatePresence>
         {histRow && (
           <ChartHistoryModal key="hist" e={histRow} kind={kind} weeks={hist.weeks} T={hist.T} limit={limit}
+            breakdown={kind === 'artists' ? allRows.find(r => r.e.id === histRow.id) : undefined} allRank={kind === 'artists' ? allRows.findIndex(r => r.e.id === histRow.id) + 1 || undefined : undefined}
             onClose={() => setHistoryId(null)} onOpen={() => { setHistoryId(null); openItem(histRow); }} />
         )}
       </AnimatePresence>
@@ -882,7 +908,7 @@ const ArtistLinks: React.FC<{ lead?: string; extra?: string; sep: string; onArti
   );
 };
 
-const ChartHistoryModal: React.FC<{ e: ChartEnt; kind: ChartKind; weeks: Array<Map<string, number>>; T: number; limit: number; onClose: () => void; onOpen: () => void }> = ({ e, kind, weeks, T, limit, onClose, onOpen }) => {
+const ChartHistoryModal: React.FC<{ e: ChartEnt; kind: ChartKind; weeks: Array<Map<string, number>>; T: number; limit: number; onClose: () => void; onOpen: () => void; breakdown?: ChartRow; allRank?: number }> = ({ e, kind, weeks, T, limit, onClose, onOpen, breakdown, allRank }) => {
   useEsc(true, onClose);
   const inf = infoFrom(weeks, e.id);
   const pts = weeks.map((w, k) => ({ k, r: w.get(e.id), units: e.isArtist ? 0 : weeklyAt(e, T - k * 7 * DAY) })).reverse(); // oldest -> newest
@@ -913,6 +939,31 @@ const ChartHistoryModal: React.FC<{ e: ChartEnt; kind: ChartKind; weeks: Array<M
               <button type="button" onClick={onClose} className="self-start w-9 h-9 rounded-full bg-white/[0.06] hover:bg-white/[0.14] text-white/70 text-xl">×</button>
             </div>
           </div>
+          {breakdown?.parts && (
+            <div className="px-5 sm:px-6 pb-4">
+              <div className="rounded-2xl bg-white/[0.035] border border-white/[0.07] p-4">
+                <div className="flex items-baseline justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-zinc-400">Топ-100 за всё время{allRank ? ` · #${allRank}` : ''}</div>
+                    <div className="text-[13px] text-zinc-400 mt-0.5">Из чего складывается место. Баллы — доля от лидера по каждому показателю.</div>
+                  </div>
+                  <div className="text-right shrink-0"><div className="text-[26px] font-black text-white tabular-nums leading-none">{(breakdown.score! * 100).toFixed(1).replace('.', ',')}</div><div className="text-[10.5px] text-zinc-500">баллов</div></div>
+                </div>
+                <div className="mt-3 space-y-2.5">
+                  {breakdown.parts.map((p, k) => (
+                    <motion.div key={p.label} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.04 * k }}>
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className={`text-[13px] font-bold ${p.bonus ? 'text-amber-200' : 'text-white'}`}>{p.label}</span>
+                        <span className="text-[12.5px] tabular-nums"><span className="text-zinc-300 font-semibold">{p.value}</span>{!p.bonus && <span className="text-zinc-500"> · {p.pts.toFixed(1).replace('.', ',')} из {Math.round(p.max)}</span>}</span>
+                      </div>
+                      <div className="h-1.5 mt-1 rounded-full bg-white/[0.06] overflow-hidden"><motion.div initial={{ width: 0 }} animate={{ width: `${Math.max(1.5, (p.pts / p.max) * 100)}%` }} transition={{ duration: 0.6, delay: 0.04 * k, ease: [0.22, 1, 0.36, 1] }} className={`h-full rounded-full ${p.bonus ? 'bg-amber-300/80' : 'theme-bg-accent'}`} /></div>
+                      <div className="text-[11px] text-zinc-500 mt-0.5">{p.hint}</div>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="px-5 sm:px-6 grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
               ['Сейчас', inf.rank ? `#${inf.rank}` : 'вне чарта', inf.status === 'new' ? 'дебют недели' : inf.status === 're' ? 'возвращение' : inf.delta ? `${inf.delta > 0 ? '▲' : '▼'} ${Math.abs(inf.delta)}` : ''],

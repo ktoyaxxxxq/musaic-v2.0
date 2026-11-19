@@ -115,7 +115,7 @@ import './fontsExtra';
 // --- Musaic v2.4: charts, release stage, calendar, awards, eras, cover viewer, batch generators ---
 import { SocialFeed, SocialIcon } from './SocialFeed';
 // --- Musaic v2.5: listen engine, stats, release header, auto-save, export ---
-import { smartDuration, engineManualPlays, engineSetCatalog, estimateMonthlyListeners, requestPersistentStorage, maybeAutoBackup, useFlushOnHide, AutoBackupPanel, exportCatalogFile, exportSimSnapshot, importMediaFromFile, setLabAwards, ReleaseHeroHeader, PlaysStatButton, FeatPicker, ListenEngineButton, AUTO_COVER, offloadDataUrls, displayPeak, InterfaceSettingsPanel, ReleaseActionsBar, ArtistProfileLayout, ArtistRankStrip, ArtistProfilePanel, ListenersTopButton, ListenersTopBanner, setLabRefDate } from './MusaicLab';
+import { smartDuration, engineManualPlays, engineSetCatalog, estimateMonthlyListeners, requestPersistentStorage, maybeAutoBackup, useFlushOnHide, AutoBackupPanel, exportCatalogFile, exportSimSnapshot, importMediaFromFile, setLabAwards, ReleaseHeroHeader, PlaysStatButton, FeatPicker, ListenEngineButton, AUTO_COVER, offloadDataUrls, displayPeak, InterfaceSettingsPanel, ReleaseActionsBar, ArtistProfileLayout, ArtistRankStrip, ArtistProfilePanel, ListenersTopButton, ListenersTopBanner, setLabRefDate, CommandPaletteV2 } from './MusaicLab';
 import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource, ScoreRing, AlbumReviewsButton, TrackReviewsButton, WeeklyNewsFeed, ArtistPortfolioButton } from './MusaicPlus';
 
 // --- Types & Constants ---
@@ -6838,6 +6838,8 @@ export default function App() {
               )}
               {nav.view === 'charts' && (
                 <ChartsPro 
+                  initialKind={nav.params?.tab}
+                  initialMode={nav.params?.mode}
                   artists={viewArtists} 
                   albums={viewAlbums} 
                   tracks={viewTracks} 
@@ -7068,7 +7070,7 @@ export default function App() {
           </AnimatePresence>
         </div>
 
-        <CommandPaletteModal
+        <CommandPaletteV2
           isOpen={isCommandPaletteOpen}
           onClose={() => setIsCommandPaletteOpen(false)}
           artists={viewArtists}
@@ -7077,6 +7079,9 @@ export default function App() {
           navigateTo={navigateTo}
           onPlayTrack={playTrack}
           onOpenSettings={() => setIsSettingsOpen(true)}
+          isSimMode={isSimMode}
+          onOpenSimConsole={(tab?: string) => { setSimConsoleTab((tab as any) || 'semi'); setIsSimConsoleOpen(true); }}
+          onSimStep={handleQuickSimStep}
         />
 
         {isSimStartOpen && (
