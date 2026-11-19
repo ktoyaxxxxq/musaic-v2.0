@@ -7043,6 +7043,7 @@ export default function App() {
                   isActivityFeedOpen={isActivityFeedOpen}
                   setIsActivityFeedOpen={setIsActivityFeedOpen}
                   isSimMode={isSimMode}
+                  onCommitSimToMaster={() => handleCommitSimToMaster(false)}
                   onOpenSimulation={() => {
                     if (isSimMode) {
                       setSimConsoleTab('semi');
@@ -12375,7 +12376,13 @@ function LibraryView({
   );
 }
 
-function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks, initialTab = 'artist', targetId, theme, setTheme, followedArtistIds = [], setFollowedArtistIds, navigateTo, onPlayTrack, isActivityFeedOpen, setIsActivityFeedOpen, isSimMode = false, onOpenSimulation }: any) {
+function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks, initialTab = 'artist', targetId, theme, setTheme, followedArtistIds = [], setFollowedArtistIds, navigateTo, onPlayTrack, isActivityFeedOpen, setIsActivityFeedOpen, isSimMode = false, onOpenSimulation, onCommitSimToMaster }: any) {
+  // v2.5.3: while the simulation is on, the studio never writes into the regular database —
+  // changes stay in the simulation until you press «Перенести симуляцию в обычную базу»
+  const saveMasterDb = async (payload: any) => { if (isSimMode) return; await dbSet('musaic_master_db', payload); };
+  const [confirmSimCommit, setConfirmSimCommit] = useState(false);
+  const simLeftovers = isSimMode ? { tracks: 0, albums: 0 } : { tracks: tracks.filter((t: Track) => t.simGenerated).length, albums: albums.filter((a: Album) => a.simGenerated).length };
+  const [confirmCleanup, setConfirmCleanup] = useState(false);
   const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isGeneratingBio, setIsGeneratingBio] = useState(false);
@@ -12703,7 +12710,7 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
     setTracks(updatedTracks);
     setAlbums(updatedAlbums);
 
-    await dbSet('musaic_master_db', {
+    await saveMasterDb( {
       artists,
       albums: updatedAlbums,
       tracks: updatedTracks,
@@ -12770,7 +12777,7 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
   const handleSyncAllCovers = async () => {
     const synced = syncTracksWithAlbumCovers(tracks, albums);
     setTracks(synced);
-    await dbSet('musaic_master_db', { artists, albums, tracks: synced });
+    await saveMasterDb( { artists, albums, tracks: synced });
     showToast(`✓ Обложки ${synced.length} треков синхронизированы с альбомами!`);
   };
 
@@ -12796,7 +12803,7 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
         setArtists(currentArtists);
         setAlbums(currentAlbums);
         setTracks(currentTracks);
-        await dbSet('musaic_master_db', { artists: currentArtists, albums: currentAlbums, tracks: currentTracks, theme, followedArtistIds });
+        await saveMasterDb( { artists: currentArtists, albums: currentAlbums, tracks: currentTracks, theme, followedArtistIds });
       }
 
       const lightArtists = currentArtists.map(a => {
@@ -12884,7 +12891,7 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
         setArtists(currentArtists);
         setAlbums(currentAlbums);
         setTracks(currentTracks);
-        await dbSet('musaic_master_db', { artists: currentArtists, albums: currentAlbums, tracks: currentTracks, theme, followedArtistIds });
+        await saveMasterDb( { artists: currentArtists, albums: currentAlbums, tracks: currentTracks, theme, followedArtistIds });
       }
 
       const allMedia = await dbGetAllMedia();
@@ -12987,7 +12994,7 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
           setArtists(relinked.artists);
           setAlbums(relinked.albums);
           setTracks(relinked.tracks);
-          await dbSet('musaic_master_db', {
+          await saveMasterDb( {
             artists: relinked.artists,
             albums: relinked.albums,
             tracks: relinked.tracks,
@@ -13030,7 +13037,7 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
         setAlbums(rawAlbums);
         setTracks(rawTracks);
 
-        await dbSet('musaic_master_db', {
+        await saveMasterDb( {
           artists: rawArtists,
           albums: rawAlbums,
           tracks: rawTracks,
@@ -13066,7 +13073,7 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
     setArtists(relinked.artists);
     setAlbums(relinked.albums);
     setTracks(relinked.tracks);
-    await dbSet('musaic_master_db', {
+    await saveMasterDb( {
       artists: relinked.artists,
       albums: relinked.albums,
       tracks: relinked.tracks
@@ -13388,6 +13395,40 @@ function CreatorHub({ artists, setArtists, albums, setAlbums, tracks, setTracks,
             </div>
 
             {/* Section 1: Export Options */}
+            {isSimMode ? (
+              <div className="rounded-2xl border border-violet-400/25 bg-violet-500/[0.07] p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 max-w-2xl">
+                  <div className="text-[13px] font-bold text-white">Сейчас включена симуляция</div>
+                  <div className="text-[12px] text-zinc-300 mt-0.5 leading-snug">Всё, что ты меняешь, сохраняется только в симуляцию. Обычная база не меняется, пока ты сам не перенесёшь симуляцию в неё.</div>
+                </div>
+                {onCommitSimToMaster && (!confirmSimCommit ? (
+                  <button type="button" onClick={() => setConfirmSimCommit(true)} className="px-3.5 py-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-[12px] font-bold text-white">Перенести симуляцию в обычную базу…</button>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[12px] text-amber-200">Обычная база заменится текущей симуляцией. Прежняя сохранится в слот резервной копии.</span>
+                    <button type="button" onClick={() => { onCommitSimToMaster(); setConfirmSimCommit(false); }} className="px-3.5 py-2 rounded-xl theme-bg-accent text-black text-[12px] font-black">Да, перенести</button>
+                    <button type="button" onClick={() => setConfirmSimCommit(false)} className="px-3 py-2 rounded-xl text-[12px] text-zinc-400 hover:text-white">Отмена</button>
+                  </div>
+                ))}
+              </div>
+            ) : (simLeftovers.tracks + simLeftovers.albums > 0) && (
+              <div className="rounded-2xl border border-amber-400/25 bg-amber-500/[0.06] p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 max-w-2xl">
+                  <div className="text-[13px] font-bold text-white">В обычной базе есть релизы из симуляции: {simLeftovers.tracks} тр. и {simLeftovers.albums} альб.</div>
+                  <div className="text-[12px] text-zinc-300 mt-0.5 leading-snug">Раньше они могли попасть сюда автоматически. Если ты переносил симуляцию сам, ничего не трогай.</div>
+                </div>
+                {!confirmCleanup ? (
+                  <button type="button" onClick={() => setConfirmCleanup(true)} className="px-3.5 py-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-[12px] font-bold text-white">Убрать их из обычной базы…</button>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[12px] text-amber-200">Удалить {simLeftovers.tracks + simLeftovers.albums} релизов из симуляции? В симуляции они останутся.</span>
+                    <button type="button" onClick={() => { setTracks((prev: Track[]) => prev.filter(t => !t.simGenerated)); setAlbums((prev: Album[]) => prev.filter(a => !a.simGenerated)); setConfirmCleanup(false); showToast('Релизы из симуляции убраны из обычной базы'); }} className="px-3.5 py-2 rounded-xl bg-rose-500 text-white text-[12px] font-black">Да, убрать</button>
+                    <button type="button" onClick={() => setConfirmCleanup(false)} className="px-3 py-2 rounded-xl text-[12px] text-zinc-400 hover:text-white">Отмена</button>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <AutoBackupPanel
                 kind="both"
