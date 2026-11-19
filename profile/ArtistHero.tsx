@@ -36,14 +36,21 @@ export interface HeroSettings {
   nameCase: 'as' | 'upper' | 'lower';
   nameTracking: number;        // em
   textAlign: 'left' | 'center';
+  // v2.5.5
+  nameShadow?: 'none' | 'soft' | 'strong' | 'glow'; nameGradient?: boolean;
+  subtitleStyle?: 'text' | 'pill' | 'hidden'; verifiedStyle?: 'line' | 'icon' | 'hidden';
+  photoFilter?: 'none' | 'vivid' | 'fade' | 'film' | 'noir' | 'dream'; fade?: number; buttonsPos?: 'top' | 'bottom';
 }
 
 export const DEFAULT_HERO: HeroSettings = {
   mode: 'poster', classicLayout: 'left', avatarShape: 'circle', avatarSize: 200, avatarRing: 'thin', classicBg: 'blur',
   posterLayout: 'card-right', posterAspect: '3/4', posterFrame: 'shadow', cardWidth: 290, cardRadius: 22, posterBg: 'blur',
   focusX: 50, focusY: 35, zoom: 1, tint: 'none', bgBlur: 70, bgDim: 0.45, vignette: 0.3,
-  heroHeight: 'm', nameSize: 96, nameFont: '', nameCase: 'as', nameTracking: -0.035, textAlign: 'left'
+  heroHeight: 'm', nameSize: 96, nameFont: '', nameCase: 'as', nameTracking: -0.035, textAlign: 'left',
+  nameShadow: 'soft', nameGradient: false, subtitleStyle: 'text', verifiedStyle: 'line', photoFilter: 'none', fade: 0.67, buttonsPos: 'top'
 };
+const PHOTO_FILTER: Record<string, string> = { none: '', vivid: 'saturate(1.35) contrast(1.06)', fade: 'saturate(0.75) contrast(0.92) brightness(1.05)', film: 'sepia(0.22) saturate(1.1) contrast(1.05)', noir: 'grayscale(1) contrast(1.25)', dream: 'saturate(1.2) brightness(1.08) hue-rotate(-8deg)' };
+const photoFilterOf = (s: HeroSettings) => (s.tint === 'mono' ? 'grayscale(1) contrast(1.05)' : PHOTO_FILTER[s.photoFilter || 'none'] || undefined);
 
 export const HERO_PRESETS: Array<{ name: string; s: Partial<HeroSettings> }> = [
   { name: 'Минимал', s: { mode: 'classic', classicLayout: 'left', avatarShape: 'circle', avatarRing: 'thin', classicBg: 'gradient', tint: 'none', bgDim: 0.5 } },
@@ -119,7 +126,7 @@ const Photo: React.FC<{ src?: string; s: HeroSettings; className?: string; style
   <div className={`relative overflow-hidden bg-zinc-900 ${className}`} style={style}>
     {src && (
       <img src={src} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500"
-        style={{ objectPosition: `${s.focusX}% ${s.focusY}%`, transform: `scale(${s.zoom})`, transformOrigin: `${s.focusX}% ${s.focusY}%`, filter: s.tint === 'mono' ? 'grayscale(1) contrast(1.05)' : undefined }} />
+        style={{ objectPosition: `${s.focusX}% ${s.focusY}%`, transform: `scale(${s.zoom})`, transformOrigin: `${s.focusX}% ${s.focusY}%`, filter: photoFilterOf(s) }} />
     )}
     {!src && fb && <div className="absolute inset-0 [&>*]:!w-full [&>*]:!h-full" style={{ filter: s.tint === 'mono' ? 'grayscale(1)' : undefined }}>{fb}</div>}
   </div>
@@ -139,7 +146,8 @@ export const ArtistHeroV2: React.FC<{
   onZoom?: () => void;
   fallback?: React.ReactNode;
   children?: React.ReactNode;
-}> = ({ artistId, name, imageUrl, verified, subtitle, palette, defaultVariant, onZoom, fallback, children }) => {
+  profilePanel?: React.ReactNode;
+}> = ({ artistId, name, imageUrl, verified, subtitle, palette, defaultVariant, onZoom, fallback, children, profilePanel }) => {
   const base = useMemo<Partial<HeroSettings> | undefined>(() => (defaultVariant === 'cinema' ? { mode: 'poster', posterLayout: 'fullbleed' } : undefined), [defaultVariant]);
   const { s, scope, update, setScope, reset } = useHeroSettings(artistId, base);
   const [panel, setPanel] = useState(false);
@@ -165,16 +173,22 @@ export const ArtistHeroV2: React.FC<{
 
   const Title = (
     <div className={`relative z-10 min-w-0 flex flex-col ${center ? 'items-center text-center' : 'items-start text-left'}`}>
-      {verified && (
+      {verified && (s.verifiedStyle || 'line') === 'line' && (
         <div className="flex items-center gap-1.5 text-[13px] font-semibold text-white/90 mb-2">
           <span className="w-4 h-4 rounded-full bg-sky-500 text-[10px] text-black font-black flex items-center justify-center">✓</span>Подтверждённый исполнитель
         </div>
       )}
-      <h1 className="font-black text-white leading-[0.92] break-words drop-shadow-[0_4px_30px_rgba(0,0,0,0.45)]"
-        style={{ fontFamily: s.nameFont || undefined, fontSize: `clamp(36px, 7vw, ${s.nameSize}px)`, letterSpacing: `${s.nameTracking}em` }}>
-        {shownName}
+      <h1 className={`font-black leading-[0.92] break-words ${s.nameGradient ? '' : 'text-white'}`}
+        style={{
+          fontFamily: s.nameFont || undefined, fontSize: `clamp(36px, 7vw, ${s.nameSize}px)`, letterSpacing: `${s.nameTracking}em`,
+          textShadow: s.nameGradient ? undefined : s.nameShadow === 'none' ? 'none' : s.nameShadow === 'strong' ? '0 6px 40px rgba(0,0,0,0.85), 0 2px 6px rgba(0,0,0,0.6)' : s.nameShadow === 'glow' ? `0 0 40px ${c0}, 0 0 80px ${c0}88` : '0 4px 30px rgba(0,0,0,0.45)',
+          ...(s.nameGradient ? { backgroundImage: `linear-gradient(120deg, #fff 0%, ${c0} 55%, ${c1} 100%)`, WebkitBackgroundClip: 'text', color: 'transparent', filter: 'drop-shadow(0 4px 24px rgba(0,0,0,0.45))' } : {})
+        }}>
+        {shownName}{verified && s.verifiedStyle === 'icon' && <span className="inline-flex align-middle ml-3 w-[0.32em] h-[0.32em] min-w-5 min-h-5 rounded-full bg-sky-500 text-black text-[0.16em] font-black items-center justify-center" style={{ WebkitTextFillColor: '#000' }}>✓</span>}
       </h1>
-      {subtitle && <p className="mt-3 text-sm md:text-base text-white/80 font-medium tabular-nums">{subtitle}</p>}
+      {subtitle && s.subtitleStyle !== 'hidden' && (s.subtitleStyle === 'pill'
+        ? <p className="mt-3 inline-flex px-3.5 py-1.5 rounded-full bg-black/35 border border-white/10 backdrop-blur-md text-[13px] md:text-sm text-white font-semibold tabular-nums">{subtitle}</p>
+        : <p className="mt-3 text-sm md:text-base text-white/80 font-medium tabular-nums">{subtitle}</p>)}
       {children}
     </div>
   );
@@ -280,11 +294,11 @@ export const ArtistHeroV2: React.FC<{
         <div className="absolute inset-0" style={{ background: tintBg, mixBlendMode: s.tint === 'palette' ? 'soft-light' : 'normal' }} />
         <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${s.bgDim})` }} />
         {s.vignette > 0 && <div className="absolute inset-0" style={{ background: `radial-gradient(120% 90% at 50% 40%, transparent 50%, rgba(0,0,0,${s.vignette}) 100%)` }} />}
-        <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-[var(--bg-color,#09090b)] via-[var(--bg-color,#09090b)]/40 to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[var(--bg-color,#09090b)] via-[var(--bg-color,#09090b)]/40 to-transparent" style={{ height: `${Math.round((s.fade ?? 0.67) * 100)}%` }} />
       </div>
       <div className="relative w-full max-w-7xl mx-auto px-6 md:px-8 pt-16 pb-8 md:pb-10 flex-1 flex flex-col justify-end">{body}</div>
 
-      <div className="absolute top-4 right-4 z-20 flex gap-2">
+      <div className={`absolute ${s.buttonsPos === 'bottom' ? 'bottom-4' : 'top-4'} right-4 z-20 flex gap-2`}>
         {isPoster && L === 'fullbleed' && ratio && (
           <button type="button" onClick={() => setExpanded(v => !v)} className="px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/10 text-xs font-bold text-white/80 hover:text-white">
             {expanded ? 'Свернуть' : 'Фото целиком'}
@@ -296,7 +310,7 @@ export const ArtistHeroV2: React.FC<{
       </div>
       {typeof document !== 'undefined' && createPortal(
         <AnimatePresence>
-          {panel && <HeroSettingsDrawer s={s} scope={scope} setScope={setScope} update={update} reset={reset} imageUrl={imageUrl} onClose={() => setPanel(false)} />}
+          {panel && <HeroSettingsDrawer s={s} scope={scope} setScope={setScope} update={update} reset={reset} imageUrl={imageUrl} profilePanel={profilePanel} onClose={() => setPanel(false)} />}
         </AnimatePresence>,
         document.body
       )}
@@ -327,9 +341,9 @@ const FONTS_FOR_NAME = ["'Unbounded', sans-serif", "'Dela Gothic One', sans-seri
 
 export const HeroSettingsDrawer: React.FC<{
   s: HeroSettings; scope: 'artist' | 'all'; setScope: (v: 'artist' | 'all') => void;
-  update: (p: Partial<HeroSettings>) => void; reset: () => void; imageUrl?: string; onClose: () => void;
-}> = ({ s, scope, setScope, update, reset, imageUrl, onClose }) => {
-  const [tab, setTab] = useState<'look' | 'size' | 'photo' | 'bg' | 'text'>('look');
+  update: (p: Partial<HeroSettings>) => void; reset: () => void; imageUrl?: string; onClose: () => void; profilePanel?: React.ReactNode;
+}> = ({ s, scope, setScope, update, reset, imageUrl, onClose, profilePanel }) => {
+  const [tab, setTab] = useState<'look' | 'size' | 'photo' | 'bg' | 'text' | 'more' | 'profile'>('look');
   const focusRef = useRef<HTMLDivElement>(null);
   const setFocus = (e: React.MouseEvent) => {
     const b = focusRef.current!.getBoundingClientRect();
@@ -360,7 +374,7 @@ export const HeroSettingsDrawer: React.FC<{
               <button key={p.name} type="button" onClick={() => update(p.s)} className="py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.06] text-[11px] font-bold text-zinc-300">{p.name}</button>
             ))}
           </div>
-          <Seg value={tab} onChange={setTab} options={[['look', 'Макет'], ['size', 'Размеры'], ['photo', 'Фото'], ['bg', 'Фон'], ['text', 'Имя']]} />
+          <Seg value={tab} onChange={setTab} options={[['look', 'Макет'], ['size', 'Размеры'], ['photo', 'Фото'], ['bg', 'Фон'], ['text', 'Имя'], ['more', 'Детали'], ...(profilePanel ? [['profile', 'Профиль'] as ['profile', string]] : [])]} />
 
           {tab === 'look' && (
             <div className="space-y-3">
@@ -417,6 +431,19 @@ export const HeroSettingsDrawer: React.FC<{
               <Row label={`Виньетка · ${Math.round(s.vignette * 100)}%`}><Range value={s.vignette} min={0} max={0.9} step={0.01} onChange={v => update({ vignette: v })} /></Row>
             </div>
           )}
+
+          {tab === 'more' && (
+            <div className="space-y-3">
+              <Row label="Тень имени"><Seg value={s.nameShadow || 'soft'} onChange={v => update({ nameShadow: v })} options={[['none', 'Нет'], ['soft', 'Мягкая'], ['strong', 'Сильная'], ['glow', 'Свечение']]} /></Row>
+              <Row label="Имя градиентом из цветов фото"><Seg value={s.nameGradient ? 'on' : 'off'} onChange={v => update({ nameGradient: v === 'on' })} options={[['off', 'Нет'], ['on', 'Да']]} /></Row>
+              <Row label="Строка со слушателями"><Seg value={s.subtitleStyle || 'text'} onChange={v => update({ subtitleStyle: v })} options={[['text', 'Текстом'], ['pill', 'Плашкой'], ['hidden', 'Скрыть']]} /></Row>
+              <Row label="Галочка"><Seg value={s.verifiedStyle || 'line'} onChange={v => update({ verifiedStyle: v })} options={[['line', 'Строкой сверху'], ['icon', 'Значком у имени'], ['hidden', 'Скрыть']]} /></Row>
+              <Row label="Фильтр фото"><Seg value={s.photoFilter || 'none'} onChange={v => update({ photoFilter: v })} options={[['none', 'Нет'], ['vivid', 'Сочный'], ['fade', 'Мягкий'], ['film', 'Плёнка'], ['noir', 'Нуар'], ['dream', 'Мечта']]} /></Row>
+              <Row label={`Переход в страницу · ${Math.round((s.fade ?? 0.67) * 100)}%`}><Range value={s.fade ?? 0.67} min={0.2} max={1} step={0.01} onChange={v => update({ fade: v })} /></Row>
+              <Row label="Кнопки «Вид шапки»"><Seg value={s.buttonsPos || 'top'} onChange={v => update({ buttonsPos: v })} options={[['top', 'Сверху'], ['bottom', 'Снизу']]} /></Row>
+            </div>
+          )}
+          {tab === 'profile' && profilePanel && <div>{profilePanel}</div>}
 
           {tab === 'text' && (
             <div className="space-y-3">

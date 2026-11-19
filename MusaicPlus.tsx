@@ -20,7 +20,7 @@ import type { ArtistEra, EraRelease } from './profile/ArtistHero';
 import { generateModernTitle, analyzeArtistNamingStyle } from './titleGen';
 import { recomputeAward } from './awards/awardEngine';
 import { computeAllArtistMetrics, forecastReleasePlays, generateAlbumTracksWithFeats, getPromoStrategyConfig, computeFanExpectation } from './SimulationMode';
-import { smartDuration, openReleaseHeroSettings } from './MusaicLab';
+import { smartDuration, openReleaseHeroSettings, getLabRefIso, registerArtistRanker } from './MusaicLab';
 
 // ---------------------------------------------------------------------------
 // shared helpers
@@ -59,7 +59,7 @@ export function parseDayMs(d?: string, year?: number | string): number | null {
   return year ? Date.UTC(+year, 0, 1) : null;
 }
 const dayStart = (ms: number) => { const d = new Date(ms); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
-const refToMs = (ref?: string) => { const p = parseDayMs(ref); return p !== null ? p : dayStart(Date.now()); };
+const refToMs = (ref?: string) => { const p = parseDayMs(ref) ?? parseDayMs(getLabRefIso()); return p !== null ? p : dayStart(Date.now()); };
 
 const lsGet = <T,>(k: string, def: T): T => { try { const v = localStorage.getItem(k); return v ? (JSON.parse(v) as T) : def; } catch { return def; } };
 const lsSet = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* quota */ } };
@@ -1347,7 +1347,7 @@ export const BatchSmartTools: React.FC<{
   const artist = artists.find(a => a.id === artistId);
   const [ideas, setIdeas] = useState<string[]>([]);
   const [note, setNote] = useState('');
-  const date = dateIso && /^\d{4}-\d{2}-\d{2}$/.test(dateIso) ? dateIso : toISO(Date.now());
+  const date = dateIso && /^\d{4}-\d{2}-\d{2}$/.test(dateIso) ? dateIso : getLabRefIso() || toISO(Date.now());
   const isAlbum = mode === 'album';
   const genTitles = () => {
     const list = Array.from({ length: 4 }, () => smartTitle(artist, tracks, albums, isAlbum));
@@ -1421,7 +1421,7 @@ const ANN_LS = 'musaic.announcements';
 const RUMOR_LS = 'musaic.rumors.v1';
 const TYPE_RU: Record<string, string> = { single: 'Сингл', ep: 'EP', album: 'Альбом', snippet: 'Сниппет', clip: 'Клип' };
 
-function presavesOf(a: Announcement, artist?: Artist, now = Date.now()) {
+function presavesOf(a: Announcement, artist?: Artist, now = refToMs() + (Date.now() - dayStart(Date.now()))) {
   const fol = artist?.followers || 50_000;
   const daysOut = (new Date(`${a.date}T${a.time || '00:00'}`).getTime() - a.createdAt) / DAY;
   const passed = clamp((now - a.createdAt) / Math.max(1, daysOut * DAY), 0, 1);
@@ -1515,7 +1515,7 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
   const playsMap = useMemo(() => { const m = new Map<string, number>(); tracks.forEach(t => m.set(`t-${t.id}`, t.plays || 0)); albums.forEach(a => m.set(`a-${a.id}`, a.totalPlays || 0)); return m; }, [tracks, albums]);
   const openArtistByName = onOpenArtist ? (name: string) => { onClose(); onOpenArtist(name); } : undefined;
   useEsc(true, onClose);
-  const today = todayIso && /^\d{4}-\d{2}-\d{2}/.test(todayIso) ? todayIso.slice(0, 10) : toISO(Date.now());
+  const today = todayIso && /^\d{4}-\d{2}-\d{2}/.test(todayIso) ? todayIso.slice(0, 10) : getLabRefIso() || toISO(Date.now());
   const [ann, setAnn] = useState<Announcement[]>(() => lsGet<Announcement[]>(ANN_LS, []));
   useEffect(() => lsSet(ANN_LS, ann), [ann]);
   const [rs, setRs] = useState(() => lsGet<{ seed: number; skip: string[] }>(RUMOR_LS, { seed: 1, skip: [] }));
@@ -1527,8 +1527,10 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t); }, [toast]);
   const onSaved = useCallback((date: string, text: string) => { setMonth(date.slice(0, 7)); setSelDay(date); setFilter('all'); setToast(text); }, []);
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  // in the simulation «now» is the sim date (same time of day), so countdowns and «N дней» follow it
+  const simOffset = (parseDayMs(today) ?? dayStart(Date.now())) - dayStart(Date.now());
+  const [now, setNow] = useState(Date.now() + simOffset);
+  useEffect(() => { setNow(Date.now() + simOffset); const t = setInterval(() => setNow(Date.now() + simOffset), 1000); return () => clearInterval(t); }, [simOffset]);
   const artistOf = useCallback((name: string) => artists.find(a => norm(a.name) === norm(name)), [artists]);
 
   const items = useMemo<CalItem[]>(() => {
@@ -2188,8 +2190,8 @@ export const ScoreRing: React.FC<{ rating?: any; size?: 'sm' | 'md' | 'lg'; show
   const gid = React.useId().replace(/:/g, '');
   const ref = useRef<HTMLSpanElement>(null);
   const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
-  const sc = typeof rating?.totalScore === 'number' ? Math.round(rating.totalScore) : null;
-  if (sc === null) return null;
+  const sc = typeof rating?.totalScore === 'number' && rating.totalScore > 0 ? Math.round(rating.totalScore) : null;
+  if (sc === null) return null; // v2.5.5: an empty rating (0) is not shown as «0»
   const { s, w, f } = RING[size] || RING.md;
   const t = scoreTier(sc);
   const r = (s - w) / 2; const C = 2 * Math.PI * r; const pct = clamp(sc / 90, 0, 1);
@@ -2708,7 +2710,7 @@ const PortfolioModal: React.FC<{ artist: Artist; tracks: Track[]; albums: Album[
     const real = mineT.filter(t => !t.isSnippet);
     const dated = [...real.map(t => ({ ms: parseDayMs(t.releaseDate), plays: t.plays || 0, title: t.title, album: t.albumId && t.albumId !== 'single' })), ...mineA.map(a => ({ ms: parseDayMs(a.releaseDate, a.releaseYear), plays: a.totalPlays || 0, title: a.title, album: true }))].filter(x => x.ms !== null) as Array<{ ms: number; plays: number; title: string; album: boolean }>;
     dated.sort((a, b) => a.ms - b.ms);
-    const nowMs = dayStart(Date.now());
+    const nowMs = refToMs();
     const first = dated[0]?.ms ?? nowMs - 365 * DAY;
     const lastMs = Math.max(nowMs, dated[dated.length - 1]?.ms ?? nowMs);
     const totalPlays = real.reduce((s, t) => s + (t.plays || 0), 0);
@@ -2762,7 +2764,7 @@ const PortfolioModal: React.FC<{ artist: Artist; tracks: Track[]; albums: Album[
     return { mineT: real, mineA, featT, first, totalPlays, listeners, labels, marks, avgL, peakI, yearAgo, weeks, bestPeak, chartTop, charted, yearRows, avgGap, maxGap, silent, collabs, top, avgScore, wins, no1: charted.filter(t => t.peakChartPosition === 1).length, top10: charted.filter(t => t.peakChartPosition! <= 10).length };
   }, [artist, tracks, albums, awards]);
   const growth = d.yearAgo ? Math.round(((d.listeners[d.listeners.length - 1] - d.yearAgo) / Math.max(1, d.yearAgo)) * 100) : 0;
-  const yearsIn = Math.max(0, (Date.now() - d.first) / (365 * DAY));
+  const yearsIn = Math.max(0, (refToMs() - d.first) / (365 * DAY));
   const maxYear = Math.max(1, ...d.yearRows.map(([, v]) => v.plays));
   const K = ({ v, l, s }: { v: React.ReactNode; l: string; s?: React.ReactNode }) => (
     <div className="rounded-2xl bg-white/[0.035] border border-white/[0.05] px-3.5 py-3 min-w-0"><div className="text-lg sm:text-xl font-black text-white tabular-nums truncate">{v}</div><div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mt-0.5">{l}</div>{s && <div className="text-[10px] text-zinc-500 mt-0.5 truncate">{s}</div>}</div>
@@ -2968,3 +2970,16 @@ const RecordsModal: React.FC<{ artists: Artist[]; albums: Album[]; tracks: Track
     </Portal>
   );
 };
+
+// v2.5.5: the same artist ranking as «Чарты» → used on artist pages
+const ranksCache = new WeakMap<object, { ref?: string; al: Album[]; ar: Artist[]; v: { now: Map<string, number>; all: Map<string, number> } }>();
+registerArtistRanker((artists, albums, tracks, ref) => {
+  const hit = ranksCache.get(tracks);
+  if (hit && hit.ref === ref && hit.al === albums && hit.ar === artists) return hit.v;
+  const T = refToMs(ref) + DAY - 1;
+  const ents = buildEntities(artists, albums, tracks, T);
+  const toMap = (rows: ChartRow[]) => { const m = new Map<string, number>(); rows.forEach((r, i) => m.set(r.e.id, i + 1)); return m; };
+  const v = { now: toMap(rankChart(ents, 'artists', 'now', T, 0, 100)), all: toMap(rankChart(ents, 'artists', 'all', T, 0, 100)) };
+  ranksCache.set(tracks, { ref, al: albums, ar: artists, v });
+  return v;
+});

@@ -382,7 +382,8 @@ function calibration(tracks: Track[], artists: AL[], now: number, w: ListenerWei
 }
 export function estimateMonthlyListeners(artist: AL, tracks: Track[], _albums: Album[], refIso?: string, keepOrW: number | Partial<ListenerWeights> = 0.45, artistsForCalib?: AL[]): ListenerEstimate {
   const w: ListenerWeights = typeof keepOrW === 'number' ? { ...DEFAULT_LW, keep: keepOrW } : { ...DEFAULT_LW, ...keepOrW };
-  const now = refIso ? msOf(refIso) || Date.now() : Date.now();
+  const refX = refIso || getLabRefIso();
+  const now = refX ? msOf(refX) || Date.now() : Date.now();
   const m = monthlyOf(artist, tracks, now, w);
   const pool: AL[] = artistsForCalib || [...statMap.values()].map(x => ({ id: x.id, name: x.name, followers: x.followers, hype: x.hype, verified: x.verified }));
   const calib = calibration(tracks, pool, now, w);
@@ -1184,7 +1185,8 @@ export const ReleaseStatsModal: React.FC<ReleaseStatsProps> = ({ kind, track, al
   const it: any = kind === 'album' ? album : track;
   const data = useMemo(() => {
     if (!it) return null;
-    const now = refIso ? msOf(refIso) || Date.now() : Date.now();
+    const rX = refIso || getLabRefIso();
+    const now = rX ? msOf(rX) || Date.now() : Date.now();
     const relIso = it.releaseDate || (it.releaseYear ? `${it.releaseYear}-01-01` : '');
     const rel = msOf(relIso);
     const age = isNaN(rel) ? 365 : Math.round((now - rel) / DAY);
@@ -1327,30 +1329,39 @@ export const PlaysStatButton: React.FC<Omit<ReleaseStatsProps, 'onClose'> & { ch
 // ============================================================================
 // 6. RELEASE HEADER SETTINGS (album page) — small button next to «Атмосфера»
 // ============================================================================
+export type ScoreStyle = 'ring' | 'pill' | 'big' | 'minimal' | 'tile' | 'bar' | 'stars' | 'badge';
 export interface RelHero {
   layout: 'original' | 'big' | 'center' | 'poster' | 'split' | 'compact';
   coverSize: number; coverRadius: number; coverShadow: 'soft' | 'deep' | 'glow' | 'none'; coverFrame: 'none' | 'border' | 'vinyl' | 'polaroid';
   bg: 'cover' | 'palette' | 'solid' | 'custom' | 'none'; c1: string; c2: string; bgBlur: number; bgDim: number;
+  posterBlur: number; posterShowCover: boolean; posterCoverSide: 'left' | 'right'; bgFocusY: number; bgZoom: number;
   height: 's' | 'm' | 'l' | 'xl'; titleSize: number; titleCase: 'as' | 'upper' | 'lower'; titleFont: string; titleTracking: number;
   artist: 'link' | 'chip' | 'big' | 'hidden'; align: 'left' | 'center'; grain: boolean; tilt: boolean;
-  scorePos: 'below' | 'beside' | 'above' | 'artist' | 'meta' | 'cover' | 'right' | 'hidden';
-  scoreStyle: 'ring' | 'pill' | 'big' | 'minimal'; scoreSize: number; showValue: boolean;
+  scorePos: 'below' | 'beside' | 'above' | 'artist' | 'meta' | 'cover' | 'right' | 'actions' | 'hidden';
+  scoreStyle: ScoreStyle; scoreSize: number; showValue: boolean;
+  metaPos: 'header' | 'actions' | 'below-actions' | 'hidden'; metaStyle: 'text' | 'chips';
+  actHidden: string[]; actStyle: 'normal' | 'compact' | 'pill'; actAlign: 'between' | 'left' | 'center';
 }
 export const DEFAULT_REL_HERO: RelHero = {
   layout: 'original', coverSize: 320, coverRadius: 18, coverShadow: 'deep', coverFrame: 'none', bg: 'cover', c1: '#1e1b4b', c2: '#0a0a0f', bgBlur: 80, bgDim: 0.35,
+  posterBlur: 0, posterShowCover: false, posterCoverSide: 'left', bgFocusY: 50, bgZoom: 1,
   height: 'm', titleSize: 84, titleCase: 'as', titleFont: '', titleTracking: -0.035, artist: 'chip', align: 'left', grain: false, tilt: true,
-  scorePos: 'below', scoreStyle: 'ring', scoreSize: 1, showValue: true
+  scorePos: 'below', scoreStyle: 'ring', scoreSize: 1, showValue: true,
+  metaPos: 'header', metaStyle: 'text', actHidden: [], actStyle: 'normal', actAlign: 'between'
 };
 const REL_PRESETS: Array<{ name: string; s: Partial<RelHero> }> = [
   { name: 'Как было', s: { layout: 'original' } },
   { name: 'Большая обложка', s: { layout: 'big', coverSize: 360, coverShadow: 'deep', bg: 'cover', artist: 'chip', height: 'l' } },
   { name: 'По центру', s: { layout: 'center', coverSize: 300, align: 'center', artist: 'big', bg: 'palette' } },
   { name: 'Постер', s: { layout: 'poster', height: 'xl', bgDim: 0.3, artist: 'big', titleSize: 110 } },
+  { name: 'Постер + обложка', s: { layout: 'poster', posterShowCover: true, posterBlur: 18, bgDim: 0.4, height: 'l', coverSize: 300, titleSize: 90 } },
+  { name: 'Спокойный постер', s: { layout: 'poster', posterBlur: 40, bgDim: 0.5, height: 'l', titleSize: 76, scoreStyle: 'pill', scorePos: 'artist', metaPos: 'below-actions' } },
   { name: 'Журнал', s: { layout: 'split', coverSize: 380, coverShadow: 'soft', titleCase: 'upper', titleTracking: -0.02, bg: 'solid' } },
   { name: 'Компакт', s: { layout: 'compact', coverSize: 180, height: 's', titleSize: 56, artist: 'link' } },
   { name: 'Винил', s: { layout: 'big', coverFrame: 'vinyl', coverRadius: 6, coverSize: 320 } },
   { name: 'Полароид', s: { layout: 'center', coverFrame: 'polaroid', coverRadius: 4, bgBlur: 110, bgDim: 0.55, align: 'center' } },
-  { name: 'Неон', s: { layout: 'big', bg: 'custom', c1: '#3b0764', c2: '#020617', coverShadow: 'glow', grain: true } }
+  { name: 'Неон', s: { layout: 'big', bg: 'custom', c1: '#3b0764', c2: '#020617', coverShadow: 'glow', grain: true } },
+  { name: 'Чистый', s: { layout: 'big', bg: 'none', coverShadow: 'soft', scorePos: 'actions', scoreStyle: 'tile', metaPos: 'below-actions', actStyle: 'pill' } }
 ];
 const RH_ALL = 'musaic.relhero.__all';
 const RH_KEY = (id: string) => `musaic.relhero.${id}`;
@@ -1374,6 +1385,50 @@ const scoreTierLab = (sc: number) =>
 export const openReleaseHeroSettings = (id: string) => window.dispatchEvent(new CustomEvent('musaic-relhero', { detail: id }));
 const HERO_H = { s: 300, m: 400, l: 500, xl: 620 };
 const TITLE_FONTS = ["'Unbounded', sans-serif", "'Dela Gothic One', sans-serif", "'Playfair Display', serif", "'Prata', serif", "'Oswald', sans-serif", "'Sofia Sans Extra Condensed', sans-serif", "'Russo One', sans-serif", "'Inter Tight', sans-serif", "'Tenor Sans', sans-serif", "'Montserrat Alternates', sans-serif"];
+const CRIT_LAB: Array<[string, string]> = [['rhymes', 'Рифмы'], ['structure', 'Структура'], ['style', 'Стиль'], ['charisma', 'Харизма'], ['vibe', 'Вайб']];
+
+/** any score style + details on hover (criteria, nominations) */
+export const ReleaseScore: React.FC<{ rating?: any; style: ScoreStyle; size?: number; renderRating?: (size: 'sm' | 'md' | 'lg') => React.ReactNode; extra?: React.ReactNode; tipSide?: 'below' | 'above' }> = ({ rating, style, size = 1, renderRating, extra, tipSide = 'below' }) => {
+  const [tip, setTip] = useState(false);
+  const score = typeof rating?.totalScore === 'number' && rating.totalScore > 0 ? Math.round(rating.totalScore) : null;
+  if (score === null) return extra ? <span className="inline-flex items-center gap-3">{extra}</span> : null;
+  const t = scoreTierLab(score); const z = size;
+  const ringSize = z >= 1.25 ? 'lg' : z <= 0.8 ? 'sm' : z < 1 ? 'md' : 'lg';
+  const ringZoom = z >= 1.25 ? z / 1.25 : z <= 0.8 ? 1 : z < 1 ? 1 : z;
+  const grad = `linear-gradient(135deg, ${t.c1}, ${t.c2})`;
+  let inner: React.ReactNode;
+  if (style === 'ring' && renderRating) inner = <span style={{ zoom: ringZoom } as React.CSSProperties} className="inline-flex">{renderRating(ringSize)}</span>;
+  else if (style === 'pill') inner = <span className="inline-flex items-center gap-1.5 rounded-full bg-black/35 border border-white/15 backdrop-blur-md font-black" style={{ padding: `${4 * z}px ${12 * z}px`, fontSize: 13 * z }}><span style={{ color: t.c2 }}>★</span><span className="text-white tabular-nums">{score}</span><span className="text-white/60 font-bold" style={{ fontSize: 11 * z }}>{t.label}</span></span>;
+  else if (style === 'big') inner = <span className="inline-flex items-end gap-2 leading-none"><span className="font-black tabular-nums" style={{ fontSize: 40 * z, backgroundImage: grad, WebkitBackgroundClip: 'text', color: 'transparent' }}>{score}</span><span className="flex flex-col pb-1"><span className="text-white/50 font-bold" style={{ fontSize: 11 * z }}>/90</span><span className="text-white/80 font-black uppercase tracking-wider" style={{ fontSize: 10 * z }}>{t.label}</span></span></span>;
+  else if (style === 'tile') inner = <span className="inline-flex flex-col items-center justify-center rounded-2xl border border-white/15 bg-black/35 backdrop-blur-md" style={{ width: 58 * z, height: 58 * z }}><span className="font-black tabular-nums leading-none" style={{ fontSize: 22 * z, backgroundImage: grad, WebkitBackgroundClip: 'text', color: 'transparent' }}>{score}</span><span className="text-white/60 font-bold uppercase" style={{ fontSize: 8 * z, letterSpacing: '0.08em', marginTop: 3 * z }}>{t.label}</span></span>;
+  else if (style === 'bar') inner = <span className="inline-flex flex-col gap-1" style={{ width: 130 * z }}><span className="flex items-baseline justify-between"><span className="font-black text-white tabular-nums" style={{ fontSize: 15 * z }}>{score}<span className="text-white/40" style={{ fontSize: 10 * z }}> /90</span></span><span className="font-bold" style={{ fontSize: 10.5 * z, color: t.c2 }}>{t.label}</span></span><span className="block rounded-full bg-white/10 overflow-hidden" style={{ height: 5 * z }}><span className="block h-full rounded-full" style={{ width: `${(score / 90) * 100}%`, background: grad }} /></span></span>;
+  else if (style === 'stars') { const st = (score / 90) * 5; inner = <span className="inline-flex items-center gap-2"><span className="tracking-tight" style={{ fontSize: 16 * z, color: t.c2 }}>{'★'.repeat(Math.floor(st))}{st % 1 >= 0.5 ? '⯪' : ''}<span className="text-white/20">{'★'.repeat(5 - Math.floor(st) - (st % 1 >= 0.5 ? 1 : 0))}</span></span><span className="font-black text-white tabular-nums" style={{ fontSize: 13 * z }}>{score}</span></span>; }
+  else if (style === 'badge') inner = <span className="inline-flex items-center justify-center rounded-full font-black text-black tabular-nums shadow-lg" style={{ width: 44 * z, height: 44 * z, fontSize: 16 * z, background: grad }}>{score}</span>;
+  else inner = <span className="font-black tabular-nums" style={{ fontSize: 16 * z, color: t.c2 }}>{score}<span className="text-white/40 font-bold" style={{ fontSize: 11 * z }}> /90</span></span>;
+  const crit = CRIT_LAB.filter(([k]) => typeof rating?.[k] === 'number');
+  const noms: string[] = rating?.nominations || [];
+  return (
+    <span className="relative inline-flex items-center gap-3 shrink-0" onMouseEnter={() => setTip(true)} onMouseLeave={() => setTip(false)}>
+      {inner}{extra}
+      <AnimatePresence>
+        {tip && style !== 'ring' && (crit.length > 0 || noms.length > 0) && (
+          <motion.span initial={{ opacity: 0, y: tipSide === 'below' ? -4 : 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
+            className={`absolute left-0 z-40 w-60 rounded-2xl bg-[#121318]/97 border border-white/10 shadow-2xl p-3 text-left pointer-events-none ${tipSide === 'below' ? 'top-full mt-2' : 'bottom-full mb-2'}`}>
+            <span className="flex items-baseline justify-between"><span className="text-[13px] font-black text-white">{score} <span className="text-white/40 text-[11px]">/90</span></span><span className="text-[11px] font-bold" style={{ color: t.c2 }}>{t.label}</span></span>
+            {crit.map(([k, l]) => (
+              <span key={k} className="flex items-center gap-2 mt-1.5"><span className="w-16 text-[11px] text-zinc-400">{l}</span><span className="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden"><span className="block h-full rounded-full" style={{ width: `${(rating[k] / 10) * 100}%`, background: grad }} /></span><span className="w-5 text-right text-[11px] font-bold text-white tabular-nums">{rating[k]}</span></span>
+            ))}
+            {noms.length > 0 && <span className="flex flex-wrap gap-1 mt-2">{noms.slice(0, 6).map(n => <span key={n} className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/[0.07] text-zinc-200">{n}</span>)}</span>}
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </span>
+  );
+};
+
+const metaWrap = (meta: React.ReactNode, style: 'text' | 'chips', center: boolean) => (
+  <div className={`flex flex-wrap items-center ${style === 'chips' ? 'gap-1.5 [&>span]:px-2.5 [&>span]:py-1 [&>span]:rounded-full [&>span]:bg-black/30 [&>span]:border [&>span]:border-white/10 [&>span.text-zinc-500]:hidden [&>button]:px-2.5 [&>button]:py-1 [&>button]:rounded-full [&>button]:bg-black/30 [&>button]:border [&>button]:border-white/10' : 'gap-1.5 md:gap-2'} text-xs md:text-sm text-zinc-300 ${center ? 'justify-center' : ''}`}>{meta}</div>
+);
 
 export const ReleaseHeroHeader: React.FC<{
   id: string; cover?: string; title: string; kindLabel: string; artistName: string; artist?: Artist | null;
@@ -1388,158 +1443,211 @@ export const ReleaseHeroHeader: React.FC<{
   if (s.layout === 'original') return <>{legacy}<Portal>{drawer}</Portal></>;
   const c0 = palette?.[0] || '#3f3f46', c1 = palette?.[1] || '#18181b';
   const src = resolveMedia(cover, { id, title, artistName });
+  const isPoster = s.layout === 'poster';
   const center = s.align === 'center' || s.layout === 'center';
   const shownTitle = s.titleCase === 'upper' ? title.toUpperCase() : s.titleCase === 'lower' ? title.toLowerCase() : title;
   const shadow = s.coverShadow === 'none' ? 'none' : s.coverShadow === 'soft' ? '0 18px 50px -12px rgba(0,0,0,0.6)' : s.coverShadow === 'glow' ? `0 30px 90px -10px ${c0}, 0 0 0 1px rgba(255,255,255,0.08)` : '0 30px 80px -18px rgba(0,0,0,0.9)';
   const size = s.layout === 'compact' ? Math.min(s.coverSize, 220) : s.coverSize;
-  const score = typeof rating?.totalScore === 'number' ? Math.round(rating.totalScore) : null;
-  const tier = score === null ? null : scoreTierLab(score);
-  const ring = renderRating ? renderRating(s.scoreSize >= 1.25 ? 'lg' : s.scoreSize <= 0.8 ? 'sm' : s.scoreSize < 1 ? 'md' : 'lg') : null;
-  const ringZoom = s.scoreSize >= 1.25 ? s.scoreSize / 1.25 : s.scoreSize <= 0.8 ? 1 : s.scoreSize < 1 ? 1 : s.scoreSize;
-  let scoreEl: React.ReactNode = null;
-  if (s.scorePos !== 'hidden' && (score !== null || badges)) {
-    const z = s.scoreSize;
-    const inner = score === null || !tier ? badges
-      : s.scoreStyle === 'ring' ? (ring ? <span style={{ zoom: ringZoom } as React.CSSProperties} className="inline-flex">{ring}</span> : badges)
-      : s.scoreStyle === 'pill' ? (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-black/35 border border-white/15 backdrop-blur-md font-black" style={{ padding: `${4 * z}px ${12 * z}px`, fontSize: 13 * z }}>
-          <span style={{ color: tier.c2 }}>★</span><span className="text-white tabular-nums">{score}</span><span className="text-white/60 font-bold" style={{ fontSize: 11 * z }}>{tier.label}</span>
-        </span>)
-      : s.scoreStyle === 'big' ? (
-        <span className="inline-flex items-end gap-2 leading-none">
-          <span className="font-black tabular-nums" style={{ fontSize: 40 * z, backgroundImage: `linear-gradient(135deg, ${tier.c1}, ${tier.c2})`, WebkitBackgroundClip: 'text', color: 'transparent' }}>{score}</span>
-          <span className="flex flex-col pb-1"><span className="text-white/50 font-bold" style={{ fontSize: 11 * z }}>/90</span><span className="text-white/80 font-black uppercase tracking-wider" style={{ fontSize: 10 * z }}>{tier.label}</span></span>
-        </span>)
-      : <span className="font-black tabular-nums" style={{ fontSize: 16 * z, color: tier.c2 }}>{score}<span className="text-white/40 font-bold" style={{ fontSize: 11 * z }}> /90</span></span>;
-    scoreEl = <span className="inline-flex items-center gap-3 shrink-0">{inner}{s.showValue && extraBadges}</span>;
-  } else if (s.scorePos !== 'hidden' && s.showValue && extraBadges) scoreEl = <span className="inline-flex items-center gap-3">{extraBadges}</span>;
-  const coverVisible = s.layout !== 'poster';
+  const coverVisible = !isPoster || s.posterShowCover;
   const pos = s.scorePos === 'cover' && !coverVisible ? 'below' : s.scorePos;
+  const scoreEl = pos === 'hidden' || pos === 'actions' ? null : <ReleaseScore rating={rating} style={s.scoreStyle} size={s.scoreSize} renderRating={renderRating} extra={s.showValue ? extraBadges : undefined} />;
+  const showScore = Boolean(scoreEl) && (Boolean(rating?.totalScore > 0) || (s.showValue && Boolean(extraBadges)));
   const coverEl = (
     <motion.div layout whileHover={s.tilt ? { rotate: -1.2, scale: 1.015 } : undefined} transition={{ type: 'spring', stiffness: 260, damping: 22 }}
       className={`relative shrink-0 ${s.coverFrame === 'polaroid' ? 'p-3 pb-10 bg-[#f4f2ee]' : s.coverFrame === 'border' ? 'p-1.5 bg-white/10 border border-white/20 backdrop-blur-md' : ''}`}
       style={{ width: `min(${size}px, 72vw)`, borderRadius: s.coverFrame === 'polaroid' ? 6 : s.coverRadius + (s.coverFrame === 'border' ? 6 : 0), boxShadow: shadow }}>
       {s.coverFrame === 'vinyl' && <div aria-hidden className="absolute top-[4%] h-[92%] aspect-square rounded-full left-[34%] -z-0" style={{ background: `radial-gradient(circle, ${c0} 0 15%, #111 15.5% 17%, #0a0a0a 17.5% 100%)`, boxShadow: '0 20px 60px rgba(0,0,0,.6)' }} />}
       <CoverArt url={cover} title={title} onZoom={onZoom} className="relative w-full aspect-square overflow-hidden bg-zinc-800" innerClassName="w-full h-full object-cover" />
-      {pos === 'cover' && scoreEl && <div className="absolute bottom-3 right-3 z-10 drop-shadow-[0_4px_14px_rgba(0,0,0,0.6)]">{scoreEl}</div>}
+      {pos === 'cover' && showScore && <div className="absolute bottom-3 right-3 z-10 drop-shadow-[0_4px_14px_rgba(0,0,0,0.6)]">{scoreEl}</div>}
     </motion.div>
   );
-  const artistEl = s.artist === 'hidden' ? null : s.artist === 'link' ? (
-    <div className="text-[14px] text-zinc-200"><span onClick={onArtist} className="font-bold text-white hover:underline cursor-pointer">{artistName}</span>{artistLine}</div>
+  const artistEl = s.artist === 'hidden' ? (pos === 'artist' && showScore ? <div>{scoreEl}</div> : null) : s.artist === 'link' ? (
+    <div className={`flex items-center gap-3 text-[14px] text-zinc-200 ${center ? 'justify-center' : ''}`}><span><span onClick={onArtist} className="font-bold text-white hover:underline cursor-pointer">{artistName}</span>{artistLine}</span>{pos === 'artist' && showScore && scoreEl}</div>
   ) : (
-    <div className={`flex items-center gap-2.5 ${center ? 'justify-center' : ''}`}>
+    <div className={`flex items-center gap-2.5 flex-wrap ${center ? 'justify-center' : ''}`}>
       <span onClick={onArtist} className={`inline-flex items-center gap-2 cursor-pointer rounded-full bg-black/25 hover:bg-black/40 border border-white/10 backdrop-blur-md transition-colors ${s.artist === 'big' ? 'pl-1 pr-4 py-1' : 'pl-0.5 pr-3 py-0.5'}`}>
         <CoverArt url={artist?.imageUrl} title={artistName} isArtist className={`${s.artist === 'big' ? 'w-10 h-10' : 'w-7 h-7'} rounded-full overflow-hidden`} innerClassName="w-full h-full object-cover" />
         <span className={`${s.artist === 'big' ? 'text-[16px]' : 'text-[13px]'} font-black text-white`}>{artistName}</span>
         {artist?.verified && <span className="w-3.5 h-3.5 rounded-full bg-sky-500 text-[8px] text-black font-black flex items-center justify-center">✓</span>}
       </span>
       {artistLine && <span className="text-[13px] text-zinc-300">{artistLine}</span>}
-      {pos === 'artist' && scoreEl}
+      {pos === 'artist' && showScore && scoreEl}
     </div>
   );
   const info = (
     <div className={`relative z-10 min-w-0 flex-1 flex flex-col gap-3 ${center ? 'items-center text-center' : 'items-start text-left'}`}>
       <div className={`flex items-center gap-3 ${center ? 'justify-center' : ''}`}>
         <span className="text-[11px] font-bold text-white/80 uppercase tracking-[0.2em]">{kindLabel}</span>
-        {pos === 'above' && scoreEl}
+        {pos === 'above' && showScore && scoreEl}
       </div>
       <div className={`flex items-center gap-5 max-w-full ${center ? 'justify-center' : ''}`}>
         <h1 className="font-black text-white break-words drop-shadow-[0_4px_30px_rgba(0,0,0,0.45)] min-w-0"
           style={{ fontFamily: s.titleFont || undefined, fontSize: `clamp(30px, 6vw, ${s.layout === 'compact' ? Math.min(s.titleSize, 64) : s.titleSize}px)`, letterSpacing: `${s.titleTracking}em`, lineHeight: 1 }}>{shownTitle}</h1>
-        {pos === 'beside' && scoreEl}
+        {pos === 'beside' && showScore && scoreEl}
       </div>
-      {pos === 'below' && scoreEl && <div className="flex items-center gap-3">{scoreEl}</div>}
+      {pos === 'below' && showScore && <div className="flex items-center gap-3">{scoreEl}</div>}
       {artistEl}
-      {(meta || (pos === 'meta' && scoreEl)) && <div className={`flex flex-wrap items-center gap-1.5 md:gap-2 text-xs md:text-sm text-zinc-300 ${center ? 'justify-center' : ''}`}>{pos === 'meta' && scoreEl && <span className="mr-1">{scoreEl}</span>}{meta}</div>}
+      {((meta && s.metaPos === 'header') || (pos === 'meta' && showScore)) && metaWrap(<>{pos === 'meta' && showScore && <span className="mr-1 !bg-transparent !border-0 !p-0">{scoreEl}</span>}{s.metaPos === 'header' && meta}</>, s.metaStyle, center)}
     </div>
   );
+  const bgImg = (blur: number) => src ? <img src={src} alt="" className="absolute inset-0 w-full h-full object-cover" style={{ objectPosition: `50% ${s.bgFocusY}%`, transform: `scale(${Math.max(blur > 0 ? 1.15 : 1, s.bgZoom)})`, filter: blur > 0 ? `blur(${blur}px) saturate(1.1)` : undefined }} /> : null;
   let bg: React.ReactNode = null;
-  if (s.layout === 'poster' && src) bg = <img src={src} alt="" className="absolute inset-0 w-full h-full object-cover" />;
-  else if (s.bg === 'cover' && src) bg = <img src={src} alt="" className="absolute inset-0 w-full h-full object-cover scale-125" style={{ filter: `blur(${s.bgBlur}px) saturate(1.15)` }} />;
+  if (isPoster && src) bg = bgImg(s.posterBlur);
+  else if (s.bg === 'cover' && src) bg = bgImg(s.bgBlur);
   else if (s.bg === 'palette' || (s.bg === 'cover' && !src)) bg = <div className="absolute inset-0" style={{ background: `radial-gradient(90% 120% at 15% 10%, ${c0}aa 0%, transparent 60%), radial-gradient(80% 100% at 85% 30%, ${c1}88 0%, transparent 65%)` }} />;
   else if (s.bg === 'solid') bg = <div className="absolute inset-0" style={{ background: `${c0}40` }} />;
   else if (s.bg === 'custom') bg = <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${s.c1}, ${s.c2})` }} />;
   let body: React.ReactNode;
   if (s.layout === 'center') body = <div className="flex flex-col items-center gap-7">{coverEl}{info}</div>;
-  else if (s.layout === 'poster') body = <div className="flex items-end h-full">{info}</div>;
+  else if (isPoster && !s.posterShowCover) body = <div className="flex items-end h-full">{info}</div>;
+  else if (isPoster) body = <div className={`flex flex-col ${s.posterCoverSide === 'right' ? 'sm:flex-row-reverse' : 'sm:flex-row'} items-center sm:items-end gap-6 md:gap-9`}>{coverEl}{info}</div>;
   else if (s.layout === 'split') body = <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-8 items-end">{info}<div className="flex justify-center md:justify-end">{coverEl}</div></div>;
   else body = <div className={`flex flex-col sm:flex-row ${center ? 'items-center' : 'items-center sm:items-end'} gap-6 md:gap-9`}>{coverEl}{info}</div>;
   return (
     <section className="relative overflow-hidden flex flex-col justify-end" style={{ minHeight: `min(${HERO_H[s.height]}px, 90vh)` }}>
       <div className="absolute inset-0 pointer-events-none">
         <AnimatePresence mode="wait"><motion.div key={`${s.layout}-${s.bg}`} className="absolute inset-0" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }}>{bg}</motion.div></AnimatePresence>
-        <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${s.layout === 'poster' ? Math.max(0.15, s.bgDim) : s.bgDim})` }} />
+        <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${isPoster ? Math.max(0.15, s.bgDim) : s.bgDim})` }} />
         {s.grain && <div className="absolute inset-0 opacity-[0.12] mix-blend-overlay" style={{ backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")" }} />}
         <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-[var(--bg-color,#09090b)] via-[var(--bg-color,#09090b)]/40 to-transparent" />
       </div>
       <motion.div layout className="relative w-full max-w-7xl mx-auto px-6 md:px-8 pt-16 pb-8 md:pb-10">
         {body}
-        {pos === 'right' && scoreEl && <div className="hidden md:flex absolute right-8 bottom-10 z-10">{scoreEl}</div>}
+        {pos === 'right' && showScore && <div className="hidden md:flex absolute right-8 bottom-10 z-10">{scoreEl}</div>}
       </motion.div>
       <Portal>{drawer}</Portal>
     </section>
   );
 };
 
-const RRow: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => <div className="space-y-1.5"><div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">{label}</div>{children}</div>;
+/** the row with «Переоценить / Сравнить / Рецензии»: what to show and where, from the same settings */
+export const ReleaseActionsBar: React.FC<{
+  id: string; rating?: any; renderRating?: (size: 'sm' | 'md' | 'lg') => React.ReactNode; extraBadges?: React.ReactNode; meta?: React.ReactNode;
+  play: React.ReactNode; shuffle: React.ReactNode; like: React.ReactNode; rate: React.ReactNode; compare: React.ReactNode; reviews: React.ReactNode; more: React.ReactNode; sort: React.ReactNode;
+}> = ({ id, rating, renderRating, extraBadges, meta, play, shuffle, like, rate, compare, reviews, more, sort }) => {
+  const { s } = useReleaseHero(id);
+  const custom = s.layout !== 'original';
+  const hid = new Set(custom ? s.actHidden : []);
+  const scoreHere = custom && s.scorePos === 'actions';
+  const metaInline = custom && s.metaPos === 'actions';
+  const metaBelow = custom && s.metaPos === 'below-actions';
+  const show = (k: string, n: React.ReactNode) => (hid.has(k) ? null : n);
+  const left = (
+    <div className={`flex flex-wrap items-center ${s.actStyle === 'compact' ? 'gap-3' : 'gap-6'}`}>
+      {show('play', play)}{show('shuffle', shuffle)}{show('like', like)}
+      {scoreHere && <ReleaseScore rating={rating} style={s.scoreStyle} size={s.scoreSize * (s.actStyle === 'compact' ? 0.85 : 1)} renderRating={renderRating} extra={s.showValue ? extraBadges : undefined} tipSide="above" />}
+      {(!hid.has('rate') || !hid.has('compare') || !hid.has('reviews')) && <div className="flex items-center gap-2">{show('rate', rate)}{show('compare', compare)}{show('reviews', reviews)}</div>}
+      {show('more', more)}
+      {metaInline && meta && metaWrap(meta, s.metaStyle, false)}
+    </div>
+  );
+  return (
+    <div className={`py-6 ${s.actStyle === 'compact' ? '[&_button]:scale-[0.94]' : ''}`}>
+      <div className={`flex flex-wrap items-center gap-4 ${s.actAlign === 'between' || !custom ? 'justify-between' : s.actAlign === 'center' ? 'justify-center' : 'justify-start'} ${s.actStyle === 'pill' && custom ? 'rounded-[28px] bg-white/[0.035] border border-white/[0.07] px-4 py-2.5 backdrop-blur-md' : ''}`}>
+        {left}
+        {show('sort', sort)}
+      </div>
+      {metaBelow && meta && <div className="mt-3">{metaWrap(meta, s.metaStyle, s.actAlign === 'center')}</div>}
+    </div>
+  );
+};
+
+const RRow: React.FC<{ label: string; hint?: string; children: React.ReactNode }> = ({ label, hint, children }) => <div className="space-y-1.5"><div className="text-[11px] uppercase tracking-widest text-zinc-400 font-bold">{label}</div>{hint && <div className="text-[11.5px] text-zinc-500 -mt-1">{hint}</div>}{children}</div>;
 const RRange: React.FC<{ value: number; min: number; max: number; step?: number; onChange: (v: number) => void }> = ({ value, min, max, step = 1, onChange }) => <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} className="w-full accent-white" />;
-const RelHeroDrawer: React.FC<{ s: RelHero; scope: 'all' | 'release'; setScope: (v: 'all' | 'release') => void; update: (p: Partial<RelHero>) => void; reset: () => void; onClose: () => void }> = ({ s, scope, setScope, update, reset, onClose }) => {
-  const [tab, setTab] = useState<'look' | 'cover' | 'bg' | 'text' | 'score'>('look');
+const ACT_KEYS: Array<[string, string]> = [['play', 'Play'], ['shuffle', 'Перемешать'], ['like', 'Лайк'], ['rate', 'Переоценить'], ['compare', 'Сравнить'], ['reviews', 'Рецензии'], ['more', '•••'], ['sort', 'Сортировка']];
+type RhTab = 'look' | 'cover' | 'bg' | 'text' | 'score' | 'details';
+export const RelHeroDrawer: React.FC<{ s: RelHero; scope: 'all' | 'release'; setScope: (v: 'all' | 'release') => void; update: (p: Partial<RelHero>) => void; reset: () => void; onClose: () => void }> = ({ s, scope, setScope, update, reset, onClose }) => {
+  const [tab, setTab] = useState<RhTab>('look');
   useEsc(true, onClose);
+  const off = s.layout === 'original';
+  const tabs: Array<[RhTab, string]> = [['look', 'Макет'], ['cover', 'Обложка'], ['bg', 'Фон'], ['text', 'Текст'], ['score', 'Оценка'], ['details', 'Детали']];
   return (
     <div className="fixed inset-0 z-[560]">
       <motion.div className="absolute inset-0 bg-black/20" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
-      <motion.aside initial={{ x: 380 }} animate={{ x: 0 }} exit={{ x: 380 }} transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-        className="absolute top-0 right-0 h-full w-[360px] max-w-[92vw] bg-[#0f1014]/97 backdrop-blur-2xl border-l border-white/10 shadow-2xl flex flex-col">
+      <motion.aside initial={{ x: 420 }} animate={{ x: 0 }} exit={{ x: 420 }} transition={{ type: 'spring', stiffness: 320, damping: 34 }}
+        className="absolute top-0 right-0 h-full w-[400px] max-w-[94vw] bg-[#0f1014]/97 backdrop-blur-2xl border-l border-white/10 shadow-2xl flex flex-col">
         <div className="px-5 pt-5 pb-3 border-b border-white/[0.06] space-y-3">
-          <div className="flex items-center justify-between"><span className="text-base font-black text-white">Шапка релиза</span>
-            <div className="flex gap-3"><button type="button" onClick={reset} className="text-[11px] text-zinc-500 hover:text-white">Сбросить</button><button type="button" onClick={onClose} className="text-[11px] font-bold text-white">Готово</button></div></div>
+          <div className="flex items-center justify-between"><span className="text-[17px] font-black text-white">Шапка релиза</span>
+            <div className="flex gap-3"><button type="button" onClick={reset} className="text-[12px] text-zinc-500 hover:text-white">Сбросить</button><button type="button" onClick={onClose} className="text-[12px] font-bold text-white">Готово</button></div></div>
           <Seg value={scope} onChange={setScope} options={[['all', 'Для всех релизов'], ['release', 'Только этот']]} />
+          <div className="grid grid-cols-6 gap-1 p-1 rounded-xl bg-black/30 border border-white/[0.06]">
+            {tabs.map(([id, l]) => <button key={id} type="button" onClick={() => setTab(id)} className={`relative py-1.5 rounded-lg text-[11.5px] font-bold transition-colors ${tab === id ? 'text-black' : 'text-zinc-400 hover:text-white'}`}>{tab === id && <motion.span layoutId="rh-tab" className="absolute inset-0 rounded-lg bg-white" transition={{ type: 'spring', stiffness: 420, damping: 36 }} />}<span className="relative">{l}</span></button>)}
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4 space-y-4">
-          <div className="grid grid-cols-3 gap-1.5">{REL_PRESETS.map(p => <button key={p.name} type="button" onClick={() => update(p.name === 'Как было' ? { layout: 'original' } : { ...DEFAULT_REL_HERO, ...p.s })} className={`py-2 rounded-xl border text-[10.5px] font-bold ${(p.s.layout === s.layout && p.name === 'Как было') ? 'bg-white text-black border-white' : 'bg-white/[0.04] hover:bg-white/[0.09] border-white/[0.06] text-zinc-300'}`}>{p.name}</button>)}</div>
-          <Seg value={tab} onChange={setTab} options={[['look', 'Макет'], ['cover', 'Обложка'], ['bg', 'Фон'], ['text', 'Текст'], ['score', 'Оценка']]} />
-          {tab === 'look' && <div className="space-y-3">
+          {off && tab !== 'look' && <p className="text-[12px] text-amber-200/90 rounded-xl bg-amber-500/10 border border-amber-400/20 px-3 py-2">Сейчас выбран макет «Как было». Выбери другой макет на вкладке «Макет», чтобы эти настройки заработали.</p>}
+          {tab === 'look' && <div className="space-y-4">
+            <RRow label="Готовые варианты"><div className="grid grid-cols-3 gap-1.5">{REL_PRESETS.map(p => <button key={p.name} type="button" onClick={() => update(p.name === 'Как было' ? { layout: 'original' } : { ...DEFAULT_REL_HERO, ...p.s })} className="py-2 px-1 rounded-xl border text-[11px] font-bold border-white/[0.07] bg-white/[0.03] text-zinc-200 hover:bg-white/[0.08]">{p.name}</button>)}</div></RRow>
             <RRow label="Макет"><Seg value={s.layout} onChange={v => update({ layout: v })} options={[['original', 'Как было'], ['big', 'Большая'], ['center', 'Центр'], ['poster', 'Постер'], ['split', 'Журнал'], ['compact', 'Компакт']]} /></RRow>
             <RRow label="Высота"><Seg value={s.height} onChange={v => update({ height: v })} options={[['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL']]} /></RRow>
             <RRow label="Артист"><Seg value={s.artist} onChange={v => update({ artist: v })} options={[['chip', 'С фото'], ['big', 'Крупно'], ['link', 'Ссылкой'], ['hidden', 'Скрыть']]} /></RRow>
             <RRow label="Выравнивание"><Seg value={s.align} onChange={v => update({ align: v })} options={[['left', 'Слева'], ['center', 'По центру']]} /></RRow>
-            {s.layout === 'original' && <p className="text-[11px] text-zinc-500">«Как было» — исходная шапка. Выбери другой макет, чтобы включить настройки.</p>}
           </div>}
-          {tab === 'cover' && <div className="space-y-3">
-            <RRow label={`Размер · ${s.coverSize}px`}><RRange value={s.coverSize} min={160} max={460} onChange={v => update({ coverSize: v })} /></RRow>
+          {tab === 'cover' && <div className="space-y-4">
+            {s.layout === 'poster' && <div className="rounded-2xl bg-white/[0.03] border border-white/[0.07] p-3 space-y-3">
+              <Toggle on={s.posterShowCover} onChange={v => update({ posterShowCover: v })} label="Обычная обложка поверх постера" hint="Растянутое фото фоном и квадратная обложка рядом с названием" />
+              {s.posterShowCover && <RRow label="Сторона"><Seg value={s.posterCoverSide} onChange={v => update({ posterCoverSide: v })} options={[['left', 'Слева'], ['right', 'Справа']]} /></RRow>}
+            </div>}
+            <RRow label={`Размер · ${s.coverSize}px`}><RRange value={s.coverSize} min={140} max={460} onChange={v => update({ coverSize: v })} /></RRow>
             <RRow label={`Скругление · ${s.coverRadius}px`}><RRange value={s.coverRadius} min={0} max={48} onChange={v => update({ coverRadius: v })} /></RRow>
             <RRow label="Тень"><Seg value={s.coverShadow} onChange={v => update({ coverShadow: v })} options={[['soft', 'Мягкая'], ['deep', 'Глубокая'], ['glow', 'Свечение'], ['none', 'Нет']]} /></RRow>
             <RRow label="Рамка"><Seg value={s.coverFrame} onChange={v => update({ coverFrame: v })} options={[['none', 'Нет'], ['border', 'Стекло'], ['vinyl', 'Винил'], ['polaroid', 'Полароид']]} /></RRow>
             <Toggle on={s.tilt} onChange={v => update({ tilt: v })} label="Живая обложка" hint="Лёгкий наклон при наведении" />
           </div>}
-          {tab === 'bg' && <div className="space-y-3">
-            <RRow label="Фон"><Seg value={s.bg} onChange={v => update({ bg: v })} options={[['cover', 'Размытая обложка'], ['palette', 'Цвета обложки'], ['solid', 'Ровный'], ['custom', 'Свои цвета'], ['none', 'Нет']]} /></RRow>
-            {s.bg === 'custom' && <div className="flex items-center gap-3"><input type="color" value={s.c1} onChange={e => update({ c1: e.target.value })} className="w-10 h-10 rounded-lg bg-transparent" /><input type="color" value={s.c2} onChange={e => update({ c2: e.target.value })} className="w-10 h-10 rounded-lg bg-transparent" /><div className="flex-1 h-10 rounded-xl" style={{ background: `linear-gradient(135deg, ${s.c1}, ${s.c2})` }} /></div>}
-            <RRow label={`Размытие · ${s.bgBlur}px`}><RRange value={s.bgBlur} min={0} max={140} onChange={v => update({ bgBlur: v })} /></RRow>
+          {tab === 'bg' && <div className="space-y-4">
+            {s.layout === 'poster' ? (
+              <RRow label={`Размытие постера · ${s.posterBlur}px`} hint="Если картинка перегружена, размой её или затемни сильнее"><RRange value={s.posterBlur} min={0} max={80} onChange={v => update({ posterBlur: v })} /></RRow>
+            ) : (
+              <>
+                <RRow label="Фон"><Seg value={s.bg} onChange={v => update({ bg: v })} options={[['cover', 'Размытая обложка'], ['palette', 'Цвета обложки'], ['solid', 'Ровный'], ['custom', 'Свои цвета'], ['none', 'Нет']]} /></RRow>
+                {s.bg === 'custom' && <div className="flex items-center gap-3"><input type="color" value={s.c1} onChange={e => update({ c1: e.target.value })} className="w-10 h-10 rounded-lg bg-transparent" /><input type="color" value={s.c2} onChange={e => update({ c2: e.target.value })} className="w-10 h-10 rounded-lg bg-transparent" /></div>}
+                <RRow label={`Размытие · ${s.bgBlur}px`}><RRange value={s.bgBlur} min={0} max={140} onChange={v => update({ bgBlur: v })} /></RRow>
+              </>
+            )}
             <RRow label={`Затемнение · ${Math.round(s.bgDim * 100)}%`}><RRange value={s.bgDim} min={0} max={0.9} step={0.01} onChange={v => update({ bgDim: v })} /></RRow>
+            <RRow label={`Фокус по высоте · ${s.bgFocusY}%`} hint="Какая часть картинки видна: верх, центр или низ"><RRange value={s.bgFocusY} min={0} max={100} onChange={v => update({ bgFocusY: v })} /></RRow>
+            <RRow label={`Приближение · ×${s.bgZoom.toFixed(2)}`}><RRange value={s.bgZoom} min={1} max={1.8} step={0.01} onChange={v => update({ bgZoom: v })} /></RRow>
             <Toggle on={s.grain} onChange={v => update({ grain: v })} label="Плёночное зерно" />
           </div>}
-          {tab === 'score' && <div className="space-y-3">
-            <RRow label="Где показывать"><Seg value={s.scorePos} onChange={v => update({ scorePos: v })} options={[['below', 'Под названием'], ['beside', 'Рядом с названием'], ['above', 'Над названием'], ['artist', 'Возле артиста'], ['meta', 'В строке с цифрами'], ['cover', 'На обложке'], ['right', 'Справа'], ['hidden', 'Скрыть']]} /></RRow>
-            <RRow label="Вид"><Seg value={s.scoreStyle} onChange={v => update({ scoreStyle: v })} options={[['ring', 'Кольцо'], ['pill', 'Плашка'], ['big', 'Крупная цифра'], ['minimal', 'Только число']]} /></RRow>
-            <RRow label={`Размер · ${Math.round(s.scoreSize * 100)}%`}><RRange value={s.scoreSize} min={0.6} max={2} step={0.05} onChange={v => update({ scoreSize: v })} /></RRow>
-            <Toggle on={s.showValue} onChange={v => update({ showValue: v })} label="Показывать ценность альбома" hint="Значок рядом с оценкой (серебро, золото, рубин…)" />
-            {s.layout === 'poster' && s.scorePos === 'cover' && <p className="text-[11px] text-zinc-500">В макете «Постер» обложки нет, поэтому оценка будет под названием.</p>}
-            <button type="button" onClick={() => update({ scorePos: DEFAULT_REL_HERO.scorePos, scoreStyle: DEFAULT_REL_HERO.scoreStyle, scoreSize: 1, showValue: true })} className="text-[11px] text-zinc-500 hover:text-white">↺ Вернуть оценку как было</button>
-          </div>}
-          {tab === 'text' && <div className="space-y-3">
+          {tab === 'text' && <div className="space-y-4">
             <RRow label={`Размер названия · ${s.titleSize}px`}><RRange value={s.titleSize} min={36} max={150} onChange={v => update({ titleSize: v })} /></RRow>
             <RRow label={`Межбуквенный · ${s.titleTracking.toFixed(3)}em`}><RRange value={s.titleTracking} min={-0.08} max={0.12} step={0.005} onChange={v => update({ titleTracking: v })} /></RRow>
             <RRow label="Регистр"><Seg value={s.titleCase} onChange={v => update({ titleCase: v })} options={[['as', 'Как есть'], ['upper', 'ЗАГЛАВНЫЕ'], ['lower', 'строчные']]} /></RRow>
-            <RRow label="Шрифт"><select value={s.titleFont} onChange={e => update({ titleFont: e.target.value })} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none"><option value="">Шрифт сайта</option>{TITLE_FONTS.map(f => <option key={f} value={f}>{f.split("'")[1]}</option>)}</select></RRow>
+            <RRow label="Шрифт"><select value={s.titleFont} onChange={e => update({ titleFont: e.target.value })} className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-[13px] text-white outline-none"><option value="">Шрифт сайта</option>{TITLE_FONTS.map(f => <option key={f} value={f}>{f.split(',')[0].replace(/'/g, '')}</option>)}</select></RRow>
+          </div>}
+          {tab === 'score' && <div className="space-y-4">
+            <RRow label="Где показывать"><Seg value={s.scorePos} onChange={v => update({ scorePos: v })} options={[['below', 'Под названием'], ['beside', 'Рядом с названием'], ['above', 'Над названием'], ['artist', 'Возле артиста'], ['meta', 'В строке с цифрами'], ['actions', 'В строке кнопок'], ['cover', 'На обложке'], ['right', 'Справа'], ['hidden', 'Скрыть']]} /></RRow>
+            <RRow label="Вид">
+              <div className="grid grid-cols-4 gap-1.5">
+                {([['ring', 'Кольцо'], ['badge', 'Круг'], ['tile', 'Плитка'], ['pill', 'Плашка'], ['big', 'Крупно'], ['bar', 'Шкала'], ['stars', 'Звёзды'], ['minimal', 'Число']] as Array<[ScoreStyle, string]>).map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => update({ scoreStyle: k })} className={`rounded-xl border p-2 flex flex-col items-center gap-1.5 transition-colors ${s.scoreStyle === k ? 'bg-white/[0.1] border-white/30' : 'bg-black/30 border-white/[0.06] hover:bg-white/[0.06]'}`}>
+                    <span className="h-9 flex items-center pointer-events-none">{k === 'ring' ? <span className="w-8 h-8 rounded-full border-[3px] border-amber-300 text-[11px] font-black text-amber-200 flex items-center justify-center">84</span> : <ReleaseScore rating={{ totalScore: 84 }} style={k} size={k === 'big' ? 0.55 : k === 'bar' ? 0.5 : k === 'tile' ? 0.6 : 0.7} />}</span>
+                    <span className="text-[10.5px] font-bold text-zinc-300">{l}</span>
+                  </button>
+                ))}
+              </div>
+            </RRow>
+            <RRow label={`Размер · ${Math.round(s.scoreSize * 100)}%`}><RRange value={s.scoreSize} min={0.6} max={2} step={0.05} onChange={v => update({ scoreSize: v })} /></RRow>
+            <Toggle on={s.showValue} onChange={v => update({ showValue: v })} label="Показывать ценность альбома" hint="Значок рядом с оценкой (серебро, золото, рубин…)" />
+            <p className="text-[11.5px] text-zinc-500">При наведении на оценку любого вида видны баллы по критериям и номинации.</p>
+            <button type="button" onClick={() => update({ scorePos: DEFAULT_REL_HERO.scorePos, scoreStyle: DEFAULT_REL_HERO.scoreStyle, scoreSize: 1, showValue: true })} className="text-[12px] text-zinc-500 hover:text-white">↺ Вернуть оценку как было</button>
+          </div>}
+          {tab === 'details' && <div className="space-y-4">
+            <RRow label="Строка с информацией" hint="Год, треки, длительность, прослушивания, пик в чарте"><Seg value={s.metaPos} onChange={v => update({ metaPos: v })} options={[['header', 'В шапке'], ['actions', 'В строке кнопок'], ['below-actions', 'Под кнопками'], ['hidden', 'Скрыть']]} /></RRow>
+            <RRow label="Вид информации"><Seg value={s.metaStyle} onChange={v => update({ metaStyle: v })} options={[['text', 'Текстом'], ['chips', 'Плашками']]} /></RRow>
+            <div className="h-px bg-white/[0.06]" />
+            <RRow label="Строка кнопок" hint="Что показывать рядом с «Переоценить» и «Сравнить»">
+              <div className="flex flex-wrap gap-1.5">{ACT_KEYS.map(([k, l]) => { const on = !s.actHidden.includes(k); return <button key={k} type="button" onClick={() => update({ actHidden: on ? [...s.actHidden, k] : s.actHidden.filter(x => x !== k) })} className={`px-2.5 py-1.5 rounded-lg text-[12px] font-bold transition-colors ${on ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-500 line-through'}`}>{l}</button>; })}</div>
+            </RRow>
+            <RRow label="Вид строки"><Seg value={s.actStyle} onChange={v => update({ actStyle: v })} options={[['normal', 'Обычный'], ['compact', 'Компактный'], ['pill', 'Панелью']]} /></RRow>
+            <RRow label="Выравнивание строки"><Seg value={s.actAlign} onChange={v => update({ actAlign: v })} options={[['between', 'По краям'], ['left', 'Слева'], ['center', 'По центру']]} /></RRow>
+            <button type="button" onClick={() => update({ metaPos: 'header', metaStyle: 'text', actHidden: [], actStyle: 'normal', actAlign: 'between' })} className="text-[12px] text-zinc-500 hover:text-white">↺ Вернуть детали как было</button>
           </div>}
         </div>
       </motion.aside>
     </div>
   );
 };
-
 
 // ============================================================================
 // 7. SIMULATION DIGEST PRO + WEEK BUZZ
@@ -1746,22 +1854,26 @@ export const SimDigestFullscreen: React.FC<React.ComponentProps<typeof SimDigest
 };
 
 /** compact strip for manual batch / semi-auto: rumors, teasers and drops of this week */
-export const WeekBuzzStrip: React.FC<{ simState: SimState; rumors: Array<{ id: string; artistName: string; kind: string; date: string; title?: string; feat?: string; source?: string; used?: string }>; onUse?: (id: string) => void; target?: 'manual' | 'semi' }> = memo(({ simState, rumors, onUse, target = 'semi' }) => {
+export const WeekBuzzStrip: React.FC<{ simState: SimState; rumors: Array<{ id: string; artistName: string; kind: string; date: string; title?: string; feat?: string; source?: string; used?: string }>; onUse?: (id: string) => void; target?: 'manual' | 'semi'; anns?: any[]; onUseAnn?: (id: string) => void }> = memo(({ simState, rumors, onUse, target = 'semi', anns = [], onUseAnn }) => {
   const { items, fri } = useMemo(() => {
     const now = msOf(simState.currentDate);
     const dow = new Date(now).getUTCDay();
     const friMs = now + ((5 - dow + 7) % 7) * DAY; // today if it is Friday
     const fri = isoDay(friMs);
     const end = isoDay(now + 7 * DAY), from = isoDay(now - 3 * DAY), recent = isoDay(now - 14 * DAY);
-    const out: Array<{ k: string; tag: string; cls: string; text: string; date?: string; rid?: string; prio: number }> = [];
+    const out: Array<{ k: string; tag: string; cls: string; text: string; date?: string; rid?: string; aid?: string; cover?: string; prio: number }> = [];
     const prio = (d?: string) => (d === fri ? 0 : d && d > simState.currentDate ? 1 : 2);
     rumors.filter(r => !r.used && r.date >= from && r.date <= end).forEach(r => out.push({ k: `r${r.id}`, tag: 'Слух', cls: 'bg-violet-400/15 text-violet-200 border-violet-400/25', text: `${r.artistName} · ${r.title ? `«${r.title}»` : ({ single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет' } as any)[r.kind] || r.kind}${r.feat ? ` ft. ${r.feat}` : ''}`, date: r.date, rid: r.id, prio: prio(r.date) }));
+    const kindL: Record<string, string> = { single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет', clip: 'клип' };
+    const taken = new Set(simState.tracks.map(t => `${norm(t.artistName)}|${norm(t.title)}`).concat(simState.albums.map(a => `${norm(a.artistName)}|${norm(a.title)}`)));
+    anns.filter(a => a && !a.released && !a.simUsed && a.date >= from && a.date <= end && !taken.has(`${norm(a.artistName)}|${norm(a.title)}`))
+      .forEach(a => out.push({ k: `n${a.id}`, tag: 'Календарь', cls: 'bg-emerald-400/15 text-emerald-200 border-emerald-400/25', text: `${a.artistName} · «${a.title}»${a.featuredArtist ? ` ft. ${a.featuredArtist}` : ''} · ${kindL[a.type] || a.type}`, date: a.date, aid: a.id, cover: a.coverUrl, prio: prio(a.date) }));
     simState.tracks.filter(t => (t.releaseDate || '') > simState.currentDate && (t.releaseDate || '') <= end).slice(0, 6).forEach(t => out.push({ k: `s${t.id}`, tag: t.isSnippet ? 'Тизер' : 'Анонс', cls: 'bg-amber-400/15 text-amber-200 border-amber-400/25', text: `${t.artistName} · «${t.title}»`, date: t.releaseDate, prio: prio(t.releaseDate) }));
     simState.albums.filter(a => (a.releaseDate || '') > simState.currentDate && (a.releaseDate || '') <= end).slice(0, 4).forEach(a => out.push({ k: `a${a.id}`, tag: 'Альбом', cls: 'bg-amber-400/15 text-amber-200 border-amber-400/25', text: `${a.artistName} · «${a.title}»`, date: a.releaseDate, prio: prio(a.releaseDate) }));
     simState.tracks.filter(t => t.isSnippet && (t.releaseDate || '') >= recent && (t.releaseDate || '') <= simState.currentDate).slice(-6).forEach(t => out.push({ k: `t${t.id}`, tag: 'Сниппет', cls: 'bg-sky-400/15 text-sky-200 border-sky-400/25', text: `${t.artistName} · «${t.title}»${t.snippetTeaser ? ` — ${t.snippetTeaser.slice(0, 40)}` : ''}`, date: t.releaseDate, prio: 3 }));
     out.sort((x, y) => x.prio - y.prio || (x.date || '').localeCompare(y.date || ''));
     return { items: out, fri };
-  }, [simState.currentDate, simState.tracks, simState.albums, rumors]);
+  }, [simState.currentDate, simState.tracks, simState.albums, rumors, anns]);
   if (!items.length) return null;
   const friCount = items.filter(i => i.prio === 0).length;
   const isToday = fri === simState.currentDate;
@@ -1772,12 +1884,12 @@ export const WeekBuzzStrip: React.FC<{ simState: SimState; rumors: Array<{ id: s
         <span className="text-[12.5px] font-black text-white whitespace-nowrap">{isToday ? 'Сегодня пятница' : `Пятница ${fmtDate(fri).slice(0, 5)}`}</span>
         <span className="text-[11.5px] text-zinc-400 whitespace-nowrap">{friCount ? `${friCount} на пятницу` : 'на пятницу пусто'} · всего {items.length}</span>
         <div className="flex gap-1.5 overflow-x-auto custom-scrollbar py-0.5 min-w-0">
-          {items.map(it => (
-            <button key={it.k} type="button" disabled={!it.rid || !onUse} onClick={() => it.rid && onUse && onUse(it.rid)} title={it.rid && onUse ? (target === 'manual' ? 'Добавить в ручной батч' : 'Добавить в полуавтомат') : undefined}
-              className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11.5px] ${it.cls} ${it.prio === 0 ? 'ring-1 ring-white/25' : 'opacity-85'} ${it.rid && onUse ? 'hover:brightness-125 cursor-pointer' : 'cursor-default'}`}>
-              <b className="uppercase tracking-wide text-[9.5px]">{it.prio === 0 ? `★ ${it.tag}` : it.tag}</b><span className="max-w-[240px] truncate">{it.text}</span>{it.date && <span className="opacity-60 tabular-nums">{it.date === simState.currentDate ? 'сегодня' : fmtDate(it.date).slice(0, 5)}</span>}{it.rid && onUse && <span className="opacity-80 font-bold">＋ {target === 'manual' ? 'в батч' : 'в релизы'}</span>}
-            </button>
-          ))}
+          {items.map(it => { const can = (it.rid && onUse) || (it.aid && onUseAnn); return (
+            <button key={it.k} type="button" disabled={!can} onClick={() => { if (it.rid && onUse) onUse(it.rid); else if (it.aid && onUseAnn) onUseAnn(it.aid); }} title={can ? (target === 'manual' ? 'Открыть в форме ручного батча' : 'Добавить в полуавтомат') : undefined}
+              className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11.5px] ${it.cls} ${it.prio === 0 ? 'ring-1 ring-white/25' : 'opacity-85'} ${can ? 'hover:brightness-125 cursor-pointer' : 'cursor-default'}`}>
+              {it.cover && <CoverArt url={it.cover} title={it.text} className="w-5 h-5 rounded overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />}
+              <b className="uppercase tracking-wide text-[9.5px]">{it.prio === 0 ? `★ ${it.tag}` : it.tag}</b><span className="max-w-[240px] truncate">{it.text}</span>{it.date && <span className="opacity-60 tabular-nums">{it.date === simState.currentDate ? 'сегодня' : fmtDate(it.date).slice(0, 5)}</span>}{can && <span className="opacity-80 font-bold">＋ {target === 'manual' ? 'в форму' : 'в релизы'}</span>}
+            </button>); })}
         </div>
       </div>
     </motion.div>
@@ -2012,5 +2124,255 @@ export const InterfaceSettingsPanel: React.FC = () => {
         ))}
       </div>
     </section>
+  );
+};
+
+// ============================================================================
+// 11. SIMULATION REFERENCE DATE — every «N дней назад» counts from the sim date
+// ============================================================================
+// stored on globalThis + function declarations: safe even while modules are still loading (circular imports)
+export function setLabRefDate(iso?: string) { (globalThis as any).__musaicRefIso = iso && /^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10) : undefined; }
+export function getLabRefIso(): string | undefined { return (globalThis as any).__musaicRefIso; }
+
+// ============================================================================
+// 12. ARTIST PROFILE — ranks (actual / all-time / monthly listeners), sections, top
+// ============================================================================
+export interface ProfileSettings {
+  rankPos: 'top' | 'actions' | 'tracks' | 'about' | 'bottom' | 'hero' | 'hidden';
+  rankStyle: 'cards' | 'chips' | 'minimal'; rankNow: boolean; rankAll: boolean; rankLis: boolean; rankMove: boolean;
+  order: string[]; hidden: string[]; gap: 's' | 'm' | 'l';
+}
+export const PROFILE_SECTIONS: Array<[string, string]> = [['actions', 'Кнопки (Play, подписка)'], ['tracks', 'Популярные треки и актуальный релиз'], ['discography', 'Дискография'], ['about', 'О себе'], ['collabs', 'Сеть коллабораций'], ['extras', 'Награды, сравнение, портфолио'], ['eras', 'Эры творчества']];
+export const DEFAULT_PROFILE: ProfileSettings = { rankPos: 'actions', rankStyle: 'cards', rankNow: true, rankAll: true, rankLis: true, rankMove: true, order: PROFILE_SECTIONS.map(x => x[0]), hidden: [], gap: 'm' };
+const PROF_LS = 'musaic.profile.v1';
+const profStore = createStore<ProfileSettings>(typeof localStorage !== 'undefined' ? { ...DEFAULT_PROFILE, ...lsGet<Partial<ProfileSettings>>(PROF_LS, {}) } : DEFAULT_PROFILE);
+export const useProfileSettings = () => useStore(profStore);
+export const setProfileSettings = (p: Partial<ProfileSettings>) => { const n = { ...profStore.get(), ...p }; lsSet(PROF_LS, n); profStore.set(n); };
+
+// ranks are computed once per data change and shared by every artist page
+let rankMemo: { key: unknown[]; v: any } | null = null;
+type RankFn = (a: Artist[], al: Album[], t: Track[], ref?: string) => { now: Map<string, number>; all: Map<string, number> };
+export function registerArtistRanker(f: RankFn) { (globalThis as any).__musaicRanker = f; }
+export function getArtistRanks(artists: Artist[], albums: Album[], tracks: Track[], refIso?: string) {
+  const ref = refIso || getLabRefIso();
+  const key = [artists, albums, tracks, ref];
+  if (rankMemo && rankMemo.key.every((x, i) => x === key[i])) return rankMemo.v;
+  const rankFn: RankFn | undefined = (globalThis as any).__musaicRanker;
+  const base = rankFn ? rankFn(artists, albums, tracks, ref) : { now: new Map<string, number>(), all: new Map<string, number>() };
+  const lis = new Map<string, number>();
+  [...artists].sort((a, b) => (b.followers || 0) - (a.followers || 0)).forEach((a, i) => lis.set(a.id, i + 1));
+  const v = { ...base, lis, total: artists.length };
+  rankMemo = { key, v };
+  return v;
+}
+// listeners top snapshots → movement ▲▼ since the previous day/week
+const SNAP_LS = 'musaic.lisTop.snaps';
+function lisMovement(lis: Map<string, number>, ref?: string): Map<string, number> {
+  const date = ref || getLabRefIso() || new Date().toISOString().slice(0, 10);
+  const snaps = lsGet<{ cur?: { d: string; r: Record<string, number> }; prev?: { d: string; r: Record<string, number> } }>(SNAP_LS, {});
+  const nowR: Record<string, number> = {}; lis.forEach((v, k) => { nowR[k] = v; });
+  if (!snaps.cur || snaps.cur.d !== date) { snaps.prev = snaps.cur; snaps.cur = { d: date, r: nowR }; try { lsSet(SNAP_LS, snaps); } catch { /* */ } }
+  else snaps.cur.r = nowR;
+  const out = new Map<string, number>();
+  const prev = snaps.prev?.r || {};
+  lis.forEach((v, k) => { if (prev[k]) out.set(k, prev[k] - v); });
+  return out;
+}
+
+export const ArtistRankStrip: React.FC<{ artist: Artist; artists: Artist[]; albums: Album[]; tracks: Track[]; slot: ProfileSettings['rankPos']; navigateTo?: (v: string, p?: any) => void }> = ({ artist, artists, albums, tracks, slot, navigateTo }) => {
+  const P = useProfileSettings();
+  const [top, setTop] = useState(false);
+  const [cfg, setCfg] = useState(false);
+  if (P.rankPos !== slot || P.rankPos === 'hidden') return null;
+  const R = getArtistRanks(artists, albums, tracks);
+  const mv = P.rankMove ? lisMovement(R.lis) : new Map<string, number>();
+  const items: Array<{ k: string; label: string; rank?: number; of?: string; sub?: string; on: () => void; move?: number }> = [];
+  if (P.rankNow) items.push({ k: 'now', label: 'Актуальный топ-100', rank: R.now.get(artist.id), of: 'за неделю', on: () => navigateTo && navigateTo('charts', { tab: 'artists', mode: 'now' }) });
+  if (P.rankAll) items.push({ k: 'all', label: 'Топ-100 за всё время', rank: R.all.get(artist.id), of: 'по всем прослушиваниям', on: () => navigateTo && navigateTo('charts', { tab: 'artists', mode: 'all' }) });
+  if (P.rankLis) items.push({ k: 'lis', label: 'По слушателям в месяц', rank: R.lis.get(artist.id), of: `из ${R.total}`, sub: fmtC(artist.followers || 0), on: () => setTop(true), move: mv.get(artist.id) });
+  if (!items.length) return null;
+  const pos = (r?: number, lim = 100) => (r && r <= lim ? `#${r}` : '—');
+  const hero = slot === 'hero';
+  const gear = <button type="button" title="Настроить блок" onClick={() => setCfg(true)} className="w-8 h-8 rounded-full text-zinc-500 hover:text-white hover:bg-white/[0.07] shrink-0">⚙</button>;
+  return (
+    <>
+      {P.rankStyle === 'cards' && !hero ? (
+        <div className="flex items-stretch gap-2.5 mb-6 overflow-x-auto custom-scrollbar">
+          {items.map(it => { const lim = it.k === 'lis' ? 1e9 : 100; const r = it.rank; const tier = r && r <= lim ? (r <= 3 ? 'from-amber-300/25' : r <= 10 ? 'from-violet-400/20' : 'from-white/[0.08]') : 'from-white/[0.03]'; return (
+            <motion.button key={it.k} type="button" whileHover={{ y: -2 }} onClick={it.on} className={`min-w-[170px] text-left rounded-2xl px-4 py-3 border border-white/[0.07] bg-gradient-to-br ${tier} to-transparent hover:border-white/20 transition-colors`}>
+              <div className="text-[11px] uppercase tracking-wider text-zinc-400 font-bold">{it.label}</div>
+              <div className="flex items-baseline gap-2 mt-1"><span className="text-[26px] font-black text-white tabular-nums leading-none">{it.k === 'lis' ? `#${r}` : pos(r)}</span>
+                {typeof it.move === 'number' && it.move !== 0 && <span className={`text-[12px] font-black ${it.move > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{it.move > 0 ? '▲' : '▼'}{Math.abs(it.move)}</span>}</div>
+              <div className="text-[11.5px] text-zinc-500 mt-1">{it.sub ? `${it.sub} · ` : ''}{it.k !== 'lis' && !(r && r <= 100) ? 'не в топ-100' : it.of}</div>
+            </motion.button>); })}
+          <div className="flex flex-col justify-center gap-1">{gear}<button type="button" title="Весь топ по слушателям" onClick={() => setTop(true)} className="w-8 h-8 rounded-full text-zinc-500 hover:text-white hover:bg-white/[0.07]">☰</button></div>
+        </div>
+      ) : (
+        <div className={`flex flex-wrap items-center gap-1.5 ${hero ? 'mt-1' : 'mb-6'}`}>
+          {items.map(it => { const r = it.rank; const txt = it.k === 'lis' ? `#${r} по слушателям` : `${pos(r)} ${it.k === 'now' ? 'в актуальном топе' : 'за всё время'}`; return (
+            <button key={it.k} type="button" onClick={it.on} className={`inline-flex items-center gap-1.5 rounded-full text-[12.5px] font-bold transition-colors ${P.rankStyle === 'minimal' && !hero ? 'px-1 text-zinc-300 hover:text-white' : 'px-3 py-1.5 bg-black/30 border border-white/10 text-white hover:bg-black/45 backdrop-blur-md'}`}>
+              <span>{txt}</span>{typeof it.move === 'number' && it.move !== 0 && <span className={it.move > 0 ? 'text-emerald-400' : 'text-rose-400'}>{it.move > 0 ? '▲' : '▼'}{Math.abs(it.move)}</span>}
+            </button>); })}
+          {!hero && gear}
+        </div>
+      )}
+      <AnimatePresence>{top && <ListenersTopModal key="lt" artists={artists} albums={albums} tracks={tracks} highlightId={artist.id} navigateTo={navigateTo} onClose={() => setTop(false)} />}</AnimatePresence>
+      <AnimatePresence>{cfg && <ProfileDrawer key="pd" onClose={() => setCfg(false)} />}</AnimatePresence>
+    </>
+  );
+};
+
+export const ArtistProfilePanel: React.FC = () => {
+  const P = useProfileSettings();
+  const move = (k: string, d: number) => { const o = [...P.order]; const i = o.indexOf(k); const j = i + d; if (i < 0 || j < 0 || j >= o.length) return; [o[i], o[j]] = [o[j], o[i]]; setProfileSettings({ order: o }); };
+  const names = new Map(PROFILE_SECTIONS);
+  const order = [...P.order.filter(k => names.has(k)), ...PROFILE_SECTIONS.map(x => x[0]).filter(k => !P.order.includes(k))];
+  return (
+    <div className="space-y-4">
+      <RRow label="Место в топах" hint="Актуальный топ-100, топ-100 за всё время и место по месячным слушателям">
+        <Seg value={P.rankPos} onChange={v => setProfileSettings({ rankPos: v })} options={[['actions', 'Под кнопками'], ['top', 'Над кнопками'], ['tracks', 'Над треками'], ['about', 'Возле «О себе»'], ['bottom', 'Внизу'], ['hero', 'В шапке (кратко)'], ['hidden', 'Скрыть']]} />
+      </RRow>
+      <RRow label="Вид"><Seg value={P.rankStyle} onChange={v => setProfileSettings({ rankStyle: v })} options={[['cards', 'Карточки'], ['chips', 'Плашки'], ['minimal', 'Строкой']]} /></RRow>
+      <div className="grid grid-cols-2 gap-2">
+        <Toggle on={P.rankNow} onChange={v => setProfileSettings({ rankNow: v })} label="Актуальный топ" />
+        <Toggle on={P.rankAll} onChange={v => setProfileSettings({ rankAll: v })} label="За всё время" />
+        <Toggle on={P.rankLis} onChange={v => setProfileSettings({ rankLis: v })} label="По слушателям" />
+        <Toggle on={P.rankMove} onChange={v => setProfileSettings({ rankMove: v })} label="Движение ▲▼" />
+      </div>
+      <div className="h-px bg-white/[0.06]" />
+      <RRow label="Разделы профиля" hint="Порядок стрелками, видимость глазом">
+        <div className="space-y-1.5">
+          {order.map((k, i) => { const hid = P.hidden.includes(k); return (
+            <motion.div layout key={k} className={`flex items-center gap-2 rounded-xl px-3 py-2 border ${hid ? 'border-white/[0.04] bg-white/[0.01]' : 'border-white/[0.08] bg-white/[0.04]'}`}>
+              <span className={`flex-1 text-[13px] font-semibold ${hid ? 'text-zinc-600 line-through' : 'text-white'}`}>{names.get(k)}</span>
+              <button type="button" onClick={() => move(k, -1)} disabled={i === 0} className="w-7 h-7 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 disabled:opacity-20">↑</button>
+              <button type="button" onClick={() => move(k, 1)} disabled={i === order.length - 1} className="w-7 h-7 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 disabled:opacity-20">↓</button>
+              <button type="button" onClick={() => setProfileSettings({ hidden: hid ? P.hidden.filter(x => x !== k) : [...P.hidden, k] })} className="w-7 h-7 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10" title={hid ? 'Показать' : 'Скрыть'}>{hid ? '◌' : '◉'}</button>
+            </motion.div>); })}
+        </div>
+      </RRow>
+      <RRow label="Расстояние между разделами"><Seg value={P.gap} onChange={v => setProfileSettings({ gap: v })} options={[['s', 'Плотно'], ['m', 'Обычно'], ['l', 'Просторно']]} /></RRow>
+      <button type="button" onClick={() => setProfileSettings({ ...DEFAULT_PROFILE })} className="text-[12px] text-zinc-500 hover:text-white">↺ Профиль как было</button>
+    </div>
+  );
+};
+const ProfileDrawer: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  useEsc(true, onClose);
+  return (
+    <Portal>
+      <div className="fixed inset-0 z-[560]">
+        <motion.div className="absolute inset-0 bg-black/20" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+        <motion.aside initial={{ x: 420 }} animate={{ x: 0 }} exit={{ x: 420 }} transition={{ type: 'spring', stiffness: 320, damping: 34 }} className="absolute top-0 right-0 h-full w-[400px] max-w-[94vw] bg-[#0f1014]/97 backdrop-blur-2xl border-l border-white/10 shadow-2xl flex flex-col">
+          <div className="px-5 pt-5 pb-3 border-b border-white/[0.06] flex items-center justify-between"><span className="text-[17px] font-black text-white">Профиль артиста</span><button type="button" onClick={onClose} className="text-[12px] font-bold text-white">Готово</button></div>
+          <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-4"><ArtistProfilePanel /></div>
+        </motion.aside>
+      </div>
+    </Portal>
+  );
+};
+
+/** renders the artist page sections in the chosen order, hides switched-off ones */
+export const ArtistProfileLayout: React.FC<{ blocks: Record<string, React.ReactNode>; rank: (slot: ProfileSettings['rankPos']) => React.ReactNode }> = ({ blocks, rank }) => {
+  const P = useProfileSettings();
+  const names = PROFILE_SECTIONS.map(x => x[0]);
+  const order = [...P.order.filter(k => names.includes(k)), ...names.filter(k => !P.order.includes(k))];
+  const gap = P.gap === 's' ? '-mb-5' : P.gap === 'l' ? 'mb-6' : '';
+  const out: React.ReactNode[] = [];
+  if (P.rankPos === 'top') out.push(<React.Fragment key="rank-top">{rank('top')}</React.Fragment>);
+  order.forEach(k => {
+    if (P.rankPos === 'tracks' && k === 'tracks') out.push(<React.Fragment key="rank-tracks">{rank('tracks')}</React.Fragment>);
+    if (P.rankPos === 'about' && k === 'about') out.push(<React.Fragment key="rank-about">{rank('about')}</React.Fragment>);
+    if (!P.hidden.includes(k) && blocks[k]) out.push(<div key={k} className={gap}>{blocks[k]}</div>);
+    if (P.rankPos === 'actions' && k === 'actions') out.push(<React.Fragment key="rank-actions">{rank('actions')}</React.Fragment>);
+  });
+  if (P.rankPos === 'actions' && P.hidden.includes('actions')) out.unshift(<React.Fragment key="rank-a2">{rank('actions')}</React.Fragment>);
+  if (P.rankPos === 'bottom') out.push(<React.Fragment key="rank-bottom">{rank('bottom')}</React.Fragment>);
+  return <>{out}</>;
+};
+
+export const ListenersTopModal: React.FC<{ artists: Artist[]; albums: Album[]; tracks: Track[]; highlightId?: string; navigateTo?: (v: string, p?: any) => void; onClose: () => void }> = ({ artists, albums, tracks, highlightId, navigateTo, onClose }) => {
+  useEsc(true, onClose);
+  const [q, setQ] = useState('');
+  const [genre, setGenre] = useState('');
+  const [limit, setLimit] = useState(100);
+  const R = getArtistRanks(artists, albums, tracks);
+  const mv = useMemo(() => lisMovement(R.lis), [R]);
+  const genres = useMemo(() => [...new Set(artists.map(a => (a.genre || '').split(/[/,]/)[0].trim()).filter(Boolean))].slice(0, 12), [artists]);
+  const list = useMemo(() => [...artists].sort((a, b) => (b.followers || 0) - (a.followers || 0)), [artists]);
+  const max = list[0]?.followers || 1;
+  const shown = list.filter(a => (!q || norm(a.name).includes(norm(q))) && (!genre || (a.genre || '').includes(genre)));
+  const total = list.reduce((s, a) => s + (a.followers || 0), 0);
+  const ref = getLabRefIso();
+  return (
+    <Portal>
+      <div className="fixed inset-0 z-[620] flex items-center justify-center p-3 md:p-6">
+        <motion.div className="absolute inset-0 bg-black/75 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
+        <motion.div initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.98 }} transition={{ type: 'spring', stiffness: 320, damping: 32 }}
+          className="relative w-full max-w-4xl h-[90vh] rounded-[30px] bg-[#0e0f13] border border-white/10 shadow-2xl overflow-hidden flex flex-col">
+          <div className="absolute inset-x-0 top-0 h-48 pointer-events-none opacity-25" style={{ background: 'radial-gradient(70% 100% at 30% 0%, var(--accent-color), transparent 70%)' }} />
+          <div className="relative px-6 pt-6 pb-4 border-b border-white/[0.07]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.2em] text-zinc-400 font-bold">Рейтинг · {ref ? `симуляция ${fmtDate(ref)}` : 'сейчас'}</div>
+                <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight mt-1">Топ по слушателям в месяц</h2>
+                <p className="text-[13px] text-zinc-400 mt-1">{artists.length} артистов · всего {fmtC(total)} слушателей. ▲▼ — движение с прошлого обновления{ref ? ' (недели симуляции)' : ' (дня)'}.</p>
+              </div>
+              <button type="button" onClick={onClose} className="w-9 h-9 rounded-full hover:bg-white/10 text-zinc-400 hover:text-white text-xl shrink-0">×</button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-4">
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="Найти артиста…" className="flex-1 min-w-[180px] h-10 px-3.5 rounded-xl bg-black/40 border border-white/10 text-[13px] text-white outline-none" />
+              <Seg value={String(limit)} onChange={v => setLimit(+v)} options={[['50', 'Топ-50'], ['100', 'Топ-100'], ['100000', 'Все']]} />
+            </div>
+            {genres.length > 1 && <div className="flex flex-wrap gap-1.5 mt-2">{['', ...genres].map(g => <button key={g || 'all'} type="button" onClick={() => setGenre(g)} className={`px-2.5 py-1 rounded-lg text-[11.5px] font-bold ${genre === g ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-400 hover:text-white'}`}>{g || 'Все жанры'}</button>)}</div>}
+          </div>
+          <div className="relative flex-1 overflow-y-auto custom-scrollbar px-3 md:px-4 py-3">
+            {shown.slice(0, limit).map(a => { const r = R.lis.get(a.id) || 0; const m = mv.get(a.id); const now = R.now.get(a.id); const hl = a.id === highlightId; return (
+              <motion.button key={a.id} type="button" layout="position" onClick={() => { navigateTo && navigateTo('artist', { id: a.id, artistName: a.name }); onClose(); }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-left transition-colors ${hl ? 'bg-white/[0.09] ring-1 ring-white/20' : 'hover:bg-white/[0.04]'}`}>
+                <span className={`w-10 text-right font-black tabular-nums ${r <= 3 ? 'text-[20px] text-amber-200' : r <= 10 ? 'text-[17px] text-white' : 'text-[15px] text-zinc-400'}`}>{r}</span>
+                <span className="w-8 text-center text-[11px] font-black tabular-nums">{m ? <span className={m > 0 ? 'text-emerald-400' : 'text-rose-400'}>{m > 0 ? '▲' : '▼'}{Math.abs(m)}</span> : <span className="text-zinc-700">—</span>}</span>
+                <CoverArt url={a.imageUrl} title={a.name} isArtist className={`${r <= 3 ? 'w-12 h-12' : 'w-10 h-10'} rounded-full overflow-hidden shrink-0`} innerClassName="w-full h-full object-cover" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5"><span className="text-[14.5px] font-bold text-white truncate">{a.name}</span>{a.verified && <span className="w-3.5 h-3.5 rounded-full bg-sky-500 text-[8px] text-black font-black flex items-center justify-center shrink-0">✓</span>}</span>
+                  <span className="block h-1 mt-1.5 rounded-full bg-white/[0.06] overflow-hidden max-w-[320px]"><span className="block h-full rounded-full theme-bg-accent" style={{ width: `${Math.max(2, ((a.followers || 0) / max) * 100)}%`, opacity: 0.75 }} /></span>
+                </span>
+                <span className="text-right shrink-0">
+                  <span className="block text-[15px] font-black text-white tabular-nums">{fmtC(a.followers || 0)}</span>
+                  <span className="block text-[11px] text-zinc-500">{now && now <= 100 ? `#${now} в актуальном` : a.genre || ''}</span>
+                </span>
+              </motion.button>); })}
+            {!shown.length && <div className="p-10 text-center text-[13px] text-zinc-500">Никого не нашлось</div>}
+          </div>
+        </motion.div>
+      </div>
+    </Portal>
+  );
+};
+export const ListenersTopButton: React.FC<{ artists: Artist[]; albums: Album[]; tracks: Track[]; navigateTo?: (v: string, p?: any) => void; className?: string }> = ({ className, ...p }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className={className || 'h-10 inline-flex items-center gap-2 px-4 rounded-full border border-white/10 bg-white/[0.04] hover:bg-white/[0.09] text-[13px] font-bold text-white transition-colors'}>👥 Топ по слушателям</button>
+      <AnimatePresence>{open && <ListenersTopModal key="ltm" {...p} onClose={() => setOpen(false)} />}</AnimatePresence>
+    </>
+  );
+};
+/** compact banner for «Рейтинг»: top-5 by monthly listeners, opens the full top */
+export const ListenersTopBanner: React.FC<{ artists: Artist[]; albums: Album[]; tracks: Track[]; navigateTo?: (v: string, p?: any) => void }> = ({ artists, albums, tracks, navigateTo }) => {
+  const [open, setOpen] = useState(false);
+  const top = useMemo(() => [...artists].sort((a, b) => (b.followers || 0) - (a.followers || 0)).slice(0, 5), [artists]);
+  if (!top.length) return null;
+  return (
+    <>
+      <motion.button type="button" whileHover={{ y: -2 }} onClick={() => setOpen(true)} className="w-full text-left rounded-3xl border border-white/10 bg-gradient-to-r from-white/[0.06] via-white/[0.02] to-transparent px-5 py-4 flex flex-wrap items-center gap-4 hover:border-white/20 transition-colors">
+        <div className="flex -space-x-3">{top.map((a, i) => <CoverArt key={a.id} url={a.imageUrl} title={a.name} isArtist className="w-11 h-11 rounded-full overflow-hidden ring-2 ring-[#0b0b0f] shrink-0" innerClassName="w-full h-full object-cover" style={{ zIndex: 10 - i } as any} />)}</div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-zinc-400 font-bold">Топ по слушателям в месяц{getLabRefIso() ? ' · симуляция' : ''}</div>
+          <div className="text-[15px] font-black text-white mt-0.5 truncate">{top.map((a, i) => `${i + 1}. ${a.name}`).join('  ·  ')}</div>
+        </div>
+        <span className="px-4 py-2 rounded-full bg-white text-black text-[12.5px] font-black shrink-0">Открыть весь топ · {artists.length}</span>
+      </motion.button>
+      <AnimatePresence>{open && <ListenersTopModal key="ltb" artists={artists} albums={albums} tracks={tracks} navigateTo={navigateTo} onClose={() => setOpen(false)} />}</AnimatePresence>
+    </>
   );
 };

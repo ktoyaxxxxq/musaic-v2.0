@@ -8635,6 +8635,8 @@ export const SimConsoleModal: React.FC<{
   onExportSimAsCatalog?: (mode: 'light' | 'full' | 'media') => void;
   onExportSimSnapshot?: (withMedia: boolean) => void;
   onRestoreBackup?: (kind: 'master' | 'sim', data: any) => void;
+  onQuickStep?: (days: number) => void;
+  onShiftDate?: (days: number) => void;
 }> = ({
   isOpen,
   onClose,
@@ -8657,6 +8659,8 @@ export const SimConsoleModal: React.FC<{
   onGenerateArtistBio,
   onOpenRelease,
   onOpenArtist,
+  onQuickStep,
+  onShiftDate,
   onExitSim,
   onSetArtistFollowers,
   onExportSimAsCatalog,
@@ -9022,11 +9026,21 @@ export const SimConsoleModal: React.FC<{
     setTab('manual');
   }, []);
 
+  // v2.5.5: announcements from the release calendar are offered in the batchers too
+  const readAnns = () => { try { const v = JSON.parse(localStorage.getItem('musaic.announcements') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
+  const [anns, setAnns] = useState<any[]>(readAnns);
+  useEffect(() => { if (!isOpen) return; setAnns(readAnns()); const f = () => setAnns(readAnns()); window.addEventListener('focus', f); window.addEventListener('storage', f); const t = setInterval(f, 4000); return () => { window.removeEventListener('focus', f); window.removeEventListener('storage', f); clearInterval(t); }; }, [isOpen]);
   if (!isOpen) return null;
 
   const selectedProposalsCount = proposals.filter(p => p.selected).length;
   const openRumors = confirmedRumors.filter(r => !r.used);
-  const sendRumor = (rm: ConfirmedRumor, target: 'semi' | 'manual') => {
+  const markAnnUsed = (id: string, target: 'semi' | 'manual') => { const list = readAnns().map((a: any) => (a.id === id ? { ...a, simUsed: target } : a)); try { localStorage.setItem('musaic.announcements', JSON.stringify(list)); } catch { /* */ } setAnns(list); };
+  const sendAnn = (id: string, target: 'semi' | 'manual') => {
+    const a = anns.find((x: any) => x.id === id); if (!a) return;
+    const kind = a.type === 'clip' ? 'single' : a.type;
+    sendRumor({ id: `ann-${a.id}`, postId: '', source: 'Календарь', text: a.note || '', createdAt: a.createdAt || Date.now(), artistId: a.artistId || '', artistName: a.artistName, kind, date: a.date, title: a.title, feat: a.featuredArtist, coverUrl: a.coverUrl, annId: a.id } as any, target);
+  };
+  const sendRumor = (rm: ConfirmedRumor & { coverUrl?: string; annId?: string }, target: 'semi' | 'manual') => {
     const art = simState.artists.find(a => a.id === rm.artistId) || simState.artists.find(a => a.name.toLowerCase() === rm.artistName.toLowerCase());
     if (!art) { setRumorMsg(`${rm.artistName} нет в симуляции`); return; }
     const m = metricsMap.get(art.id);
@@ -9043,7 +9057,7 @@ export const SimConsoleModal: React.FC<{
     if (target === 'semi') {
       const prop: SimProposal = {
         id: makeId('prop'), selected: true, itemType, releaseFormat: isBig ? (rm.kind as 'ep' | 'album') : itemType === 'snippet' ? 'snippet' : 'single',
-        artistId: art.id, artistName: art.name, featuredArtist: rm.feat, title, coverUrl: '', duration: itemType === 'snippet' ? `0:${randInt(24, 46)}` : getRandomDuration(), isExplicit: false,
+        artistId: art.id, artistName: art.name, featuredArtist: rm.feat, title, coverUrl: rm.coverUrl || '', duration: itemType === 'snippet' ? `0:${randInt(24, 46)}` : getRandomDuration(), isExplicit: false,
         genre: art.genre || 'Hip-Hop / Pop', estimatedPlays: est, qualityScore: m?.avgQuality || 70, artistHype: hype, daysSilent: m?.daysSilent ?? 30, hasWarmupBoost: Boolean(m?.activeSnippet), reason,
         albumTracksCount: isBig ? albumTracks?.length || count : undefined, albumTracks, albumTrackTitles: albumTracks?.map(t => t.title)
       };
@@ -9051,11 +9065,13 @@ export const SimConsoleModal: React.FC<{
       if (!lightMode) setTab('semi');
       setEditingProposal(prop);
     } else {
-      setManualQueue(q => [...q, { id: makeId('manual'), itemType, artistId: art.id, artistName: art.name, featuredArtist: rm.feat, title, genre: art.genre, plays: est, albumTracksCount: isBig ? albumTracks?.length || count : undefined, albumTracks }]);
+      // v2.5.5: goes straight into the manual form (title, artist, feat, cover) — check it and add
+      setIdeaAssignSignal({ seq: Date.now(), draft: { id: makeId('manual'), itemType, artistId: art.id, artistName: art.name, featuredArtist: rm.feat, title, genre: art.genre, plays: est, coverUrl: rm.coverUrl || undefined, duration: itemType === 'snippet' ? `0:${randInt(24, 46)}` : getRandomDuration(rm.feat), albumTracksCount: isBig ? albumTracks?.length || count : undefined, albumTracks } as ManualSimItem });
       setLightMode(false); setTab('manual');
     }
-    saveConfirmed(confirmedRumors.map(x => (x.id === rm.id ? { ...x, used: target } : x)));
-    setRumorMsg(target === 'semi' ? `«${title}» в полуавтомате — открыт редактор` : `«${title}» в ручном батче`);
+    if (rm.annId) markAnnUsed(rm.annId, target);
+    else saveConfirmed(confirmedRumors.map(x => (x.id === rm.id ? { ...x, used: target } : x)));
+    setRumorMsg(target === 'semi' ? `«${title}» в полуавтомате — открыт редактор` : `«${title}» в форме ручного батча — проверь и добавь`);
   };
 
   const updateAutopilot = <K extends keyof SimAutopilotConfig>(key: K, val: SimAutopilotConfig[K]) => {
@@ -9188,7 +9204,7 @@ export const SimConsoleModal: React.FC<{
             <SimLightPanel proposals={proposals} setProposals={setProposals} regenerate={regenerateProposals} autopilot={autopilot} setAuto={updateAutopilot} simState={simState} advanceDays={advanceDays} setAdvanceDays={setAdvanceDays} />
           )}
           {(tab === 'semi' || tab === 'manual') && (
-            <WeekBuzzStrip simState={simState} rumors={confirmedRumors} target={tab === 'manual' ? 'manual' : 'semi'} onUse={id => { const rm = confirmedRumors.find(x => x.id === id); if (rm) sendRumor(rm, tab === 'manual' ? 'manual' : 'semi'); }} />
+            <WeekBuzzStrip simState={simState} rumors={confirmedRumors} anns={anns} onUseAnn={id => sendAnn(id, tab === 'manual' ? 'manual' : 'semi')} target={tab === 'manual' ? 'manual' : 'semi'} onUse={id => { const rm = confirmedRumors.find(x => x.id === id); if (rm) sendRumor(rm, tab === 'manual' ? 'manual' : 'semi'); }} />
           )}
           {!lightMode && tab === 'semi' && (
             <div className="space-y-4">
@@ -10301,6 +10317,21 @@ export const SimConsoleModal: React.FC<{
                         }}
                       />
                     </label>
+                    {(onQuickStep || onShiftDate) && (() => {
+                      const dow = new Date(simState.currentDate + 'T12:00:00Z').getUTCDay();
+                      const toFri = ((5 - dow + 7) % 7) || 7;
+                      const btn = 'px-3 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs font-semibold text-zinc-200 cursor-pointer';
+                      return (
+                        <span className="inline-flex flex-wrap items-center gap-1.5 pr-2 mr-1 border-r border-white/10">
+                          <span className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">Время</span>
+                          {onShiftDate && <button type="button" className={btn} title="Сдвинуть дату симуляции на день назад. Релизы и цифры не отменяются; чтобы отменить шаг целиком, используй «Откатить 1 шаг»" onClick={() => onShiftDate(-1)}>−1 день</button>}
+                          {onQuickStep && <button type="button" className={btn} onClick={() => onQuickStep(1)}>+1 день</button>}
+                          {onQuickStep && <button type="button" className={btn} onClick={() => onQuickStep(toFri)}>До пятницы · {toFri} дн.</button>}
+                          {onQuickStep && <button type="button" className={btn} onClick={() => onQuickStep(14)}>+2 недели</button>}
+                          {onQuickStep && <button type="button" className={btn} onClick={() => onQuickStep(30)}>+1 месяц</button>}
+                        </span>
+                      );
+                    })()}
                     {simState.undoStack.length > 0 && (
                       <button
                         type="button"

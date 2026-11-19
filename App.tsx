@@ -115,7 +115,7 @@ import './fontsExtra';
 // --- Musaic v2.4: charts, release stage, calendar, awards, eras, cover viewer, batch generators ---
 import { SocialFeed, SocialIcon } from './SocialFeed';
 // --- Musaic v2.5: listen engine, stats, release header, auto-save, export ---
-import { smartDuration, engineManualPlays, engineSetCatalog, estimateMonthlyListeners, requestPersistentStorage, maybeAutoBackup, useFlushOnHide, AutoBackupPanel, exportCatalogFile, exportSimSnapshot, importMediaFromFile, setLabAwards, ReleaseHeroHeader, PlaysStatButton, FeatPicker, ListenEngineButton, AUTO_COVER, offloadDataUrls, displayPeak, InterfaceSettingsPanel } from './MusaicLab';
+import { smartDuration, engineManualPlays, engineSetCatalog, estimateMonthlyListeners, requestPersistentStorage, maybeAutoBackup, useFlushOnHide, AutoBackupPanel, exportCatalogFile, exportSimSnapshot, importMediaFromFile, setLabAwards, ReleaseHeroHeader, PlaysStatButton, FeatPicker, ListenEngineButton, AUTO_COVER, offloadDataUrls, displayPeak, InterfaceSettingsPanel, ReleaseActionsBar, ArtistProfileLayout, ArtistRankStrip, ArtistProfilePanel, ListenersTopButton, ListenersTopBanner, setLabRefDate } from './MusaicLab';
 import { ChartsPro, CoverPeek, ReleaseStage, ArtistAwardsButton, ReleaseCalendarPro, BatchSmartTools, computeArtistEras, setArtistAwardsSource, ScoreRing, AlbumReviewsButton, TrackReviewsButton, WeeklyNewsFeed, ArtistPortfolioButton } from './MusaicPlus';
 
 // --- Types & Constants ---
@@ -1605,7 +1605,9 @@ const QuickRatingModal: React.FC<{
   onSave: (rating: RatingData | undefined) => void;
 }> = ({ isOpen, type, item, onClose, onSave }) => {
   const [currentRating, setCurrentRating] = useState<RatingData | undefined>(item?.rating);
-  
+  // v2.5.5: re-rating starts from the saved rating of THIS item (the modal stays mounted between items)
+  useEffect(() => { if (isOpen) setCurrentRating(item?.rating); }, [isOpen, item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!isOpen || !item) return null;
 
   return (
@@ -5392,12 +5394,21 @@ export default function App() {
     item: Track | Album | Artist;
   } | null>(null);
 
+  setLabRefDate(isSimMode ? simActiveDate : undefined); // sync, so the very first render already uses the sim date
+
   const handleSaveQuickRating = (rating: RatingData | undefined) => {
     if (!quickRatingTarget) return;
+    const id = (quickRatingTarget.item as any).id;
+    const withHistory = (x: any) => {
+      const hist = Array.isArray(x.ratingHistory) ? x.ratingHistory : [];
+      const prev = x.rating && typeof x.rating.totalScore === 'number' && x.rating.totalScore > 0 ? [...hist, { at: new Date().toISOString(), simDate: isSimMode ? simActiveDate : undefined, rating: x.rating }].slice(-20) : hist;
+      return { ...x, rating, ratingHistory: prev };
+    };
     if (quickRatingTarget.type === 'track') {
-      handleSaveEditedTrack({ ...quickRatingTarget.item as Track, rating });
+      activeSetTracks(prev => prev.map(t => (t.id === id ? withHistory(t) : t)));
+      if (currentTrack && currentTrack.id === id) setCurrentTrack(withHistory(currentTrack));
     } else {
-      handleSaveEditedAlbum({ ...quickRatingTarget.item as Album, rating });
+      activeSetAlbums(prev => prev.map(a => (a.id === id ? withHistory(a) : a)));
     }
   };
 
@@ -7096,6 +7107,8 @@ export default function App() {
             saveSlots={simSaveSlots}
             onRunWeek={handleRunSimulationWeek}
             onUndoStep={handleUndoSimStep}
+            onQuickStep={handleQuickSimStep}
+            onShiftDate={(d: number) => setSimState(prev => { if (!prev) return prev; const ms = Date.parse(prev.currentDate + 'T12:00:00Z') + d * 86400000; const nd = new Date(ms).toISOString().slice(0, 10); if (nd < prev.startDate) return prev; return { ...prev, currentDate: nd }; })}
             onResetToStart={handleResetSimToStart}
             onSaveSlot={handleSaveSimSlot}
             onLoadSlot={handleLoadSimSlot}
@@ -9068,6 +9081,9 @@ function RatingView({
               Официальные оценки музыкальных экспертов
             </p>
           </div>
+
+          {/* v2.5.5: monthly listeners top */}
+          <ListenersTopBanner artists={artists} albums={albums} tracks={tracks} navigateTo={navigateTo} />
 
       {/* Filter & Sort Bar */}
       <div className="bg-zinc-900/60 p-4 rounded-3xl border border-white/10 flex flex-wrap items-center justify-between gap-5 shadow-2xl backdrop-blur-2xl">
@@ -11377,7 +11393,10 @@ function ArtistView({
           palette={headerPalette}
           defaultVariant={uiPrefs?.artistHeroStyle || 'cinema'}
           onZoom={() => openLightbox && openLightbox({ url: artist.imageUrl, title: artist.name, subtitle: formatListeners(artist.followers), type: 'Исполнитель' })}
-        />
+          profilePanel={<ArtistProfilePanel />}
+        >
+          <ArtistRankStrip slot="hero" artist={artist} artists={artists} albums={albums} tracks={tracks} navigateTo={navigateTo} />
+        </ArtistHeroV2>
       )}
       {!heroOn && (
         <>
@@ -11453,6 +11472,11 @@ function ArtistView({
 
       {/* Main Content Area */}
       <div className="max-w-7xl mx-auto px-6 md:px-8 relative z-10">
+        <ArtistProfileLayout
+          rank={slot => <ArtistRankStrip slot={slot} artist={artist} artists={artists} albums={albums} tracks={tracks} navigateTo={navigateTo} />}
+          blocks={{
+            actions: (
+              <>
         {/* Action Bar (Play, Shuffle, Follow, More) */}
         <div className="flex items-center gap-6 py-6">
           <button 
@@ -11496,7 +11520,10 @@ function ArtistView({
             <MoreHorizontal className="w-6 h-6" />
           </button>
         </div>
-
+              </>
+            ),
+            tracks: (
+              <>
         {/* Popular Tracks & Latest Drop Section (Side by side with more horizontal room for tracks) */}
         <div className={`grid grid-cols-1 ${latestRelease ? 'lg:grid-cols-12' : ''} gap-6 mb-12 items-start`}>
           {/* Left Column: Popular / Newest Tracks (List or Grid) */}
@@ -11847,7 +11874,10 @@ function ArtistView({
             </aside>
           )}
         </div>
-
+              </>
+            ),
+            discography: (
+              <>
         {/* Discography Section */}
         {filteredArtistAlbums.length > 0 && (
           <section className="mb-12">
@@ -11920,7 +11950,10 @@ function ArtistView({
             </div>
           </section>
         )}
-
+              </>
+            ),
+            about: (
+              <>
         {/* About Section (О себе) */}
         <section className="mb-12">
           <h2 className="text-xl md:text-2xl font-bold text-white mb-4">О себе</h2>
@@ -11950,7 +11983,10 @@ function ArtistView({
             </div>
           </div>
         </section>
-
+              </>
+            ),
+            collabs: (
+              <>
         {/* --- Collaborators Network (Визуальная сеть связей — расположена под «О себе») --- */}
         {collaborators.length > 0 && (
           <section className="mb-12">
@@ -11979,7 +12015,10 @@ function ArtistView({
             </div>
           </section>
         )}
-
+              </>
+            ),
+            extras: (
+              <>
         {/* --- Awards & nominations (Musaic v2.4) --- */}
         <div className="flex flex-wrap items-center gap-2 mb-6">
           <ArtistAwardsButton artist={artist} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} />
@@ -11989,7 +12028,10 @@ function ArtistView({
           </button>
           <ArtistPortfolioButton artist={artist} tracks={tracks} albums={albums} navigateTo={navigateTo} />
         </div>
-
+              </>
+            ),
+            eras: (
+              <>
         {/* --- Eras of the artist (Musaic v2.3) --- */}
         <ArtistEras
           eras={eras}
@@ -11999,6 +12041,10 @@ function ArtistView({
           navigateTo={navigateTo}
           totalTracks={artistTracks.length}
           renderCover={(url, title) => <CoverArt url={url} title={title} className="w-full h-full" innerClassName="w-full h-full object-cover" />}
+        />
+              </>
+            )
+          }}
         />
       </div>
     </div>
@@ -16587,6 +16633,16 @@ function AlbumView({
   const releaseKind = rawAlbumTracks.length <= 1 ? 'Сингл' : rawAlbumTracks.length <= 6 ? 'EP' : 'Альбом';
 
   const albumPeak = displayPeak(album, 'album', tracks, albums);
+  const albumMetaNode = (
+          <>
+            <span className="text-zinc-400">{album.releaseYear}</span>
+            <span className="text-zinc-500">•</span>
+            <span className="text-zinc-400">{rawAlbumTracks.length} {rawAlbumTracks.length === 1 ? 'трек' : (rawAlbumTracks.length < 5 ? 'трека' : 'треков')}, {calcTotalDuration(rawAlbumTracks)}</span>
+            <span className="text-zinc-500">•</span>
+            <PlaysStatButton kind="album" album={album} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} className="text-zinc-300 font-medium tabular-nums">{totalAlbumPlays.toLocaleString('ru-RU')} прослушиваний</PlaysStatButton>
+            {albumPeak.pos && (<><span className="text-zinc-500">•</span><span className="theme-accent font-bold">Пик в чарте: {albumPeak.est ? '≈' : ''}#{albumPeak.pos}</span></>)}
+          </>
+  );
   return (
     <div
       className={`min-h-full pb-20 relative isolate ${coverColorsOn ? 'page-accent-scope' : ''}`}
@@ -16607,16 +16663,7 @@ function AlbumView({
         rating={album.rating}
         renderRating={size => (album.rating ? <RatingScoreBadge rating={album.rating} size={size} /> : null)}
         extraBadges={album.albumValue ? <AlbumValueBadge albumValue={album.albumValue} size="lg" onClick={() => setIsValueModalOpen(true)} /> : null}
-        meta={
-          <>
-            <span className="text-zinc-400">{album.releaseYear}</span>
-            <span className="text-zinc-500">•</span>
-            <span className="text-zinc-400">{rawAlbumTracks.length} {rawAlbumTracks.length === 1 ? 'трек' : (rawAlbumTracks.length < 5 ? 'трека' : 'треков')}, {calcTotalDuration(rawAlbumTracks)}</span>
-            <span className="text-zinc-500">•</span>
-            <PlaysStatButton kind="album" album={album} tracks={tracks} albums={albums} artists={artists} navigateTo={navigateTo} className="text-zinc-300 font-medium tabular-nums">{totalAlbumPlays.toLocaleString('ru-RU')} прослушиваний</PlaysStatButton>
-            {albumPeak.pos && (<><span className="text-zinc-500">•</span><span className="theme-accent font-bold">Пик в чарте: {albumPeak.est ? '≈' : ''}#{albumPeak.pos}</span></>)}
-          </>
-        }
+        meta={albumMetaNode}
         legacy={
           <>
       {/* Top Banner (Spotify style with rich gradient & larger cover) */}
@@ -16727,18 +16774,21 @@ function AlbumView({
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-6 md:px-8">
-        {/* Actions Bar */}
-        <div className="flex items-center justify-between py-6">
-          <div className="flex items-center gap-6">
-            <button 
+        {/* Actions Bar (v2.5.5: arranged by «Шапка» → «Детали») */}
+        <ReleaseActionsBar
+          id={album.id}
+          rating={album.rating}
+          renderRating={size => (album.rating ? <RatingScoreBadge rating={album.rating} size={size} /> : null)}
+          extraBadges={album.albumValue ? <AlbumValueBadge albumValue={album.albumValue} size="lg" onClick={() => setIsValueModalOpen(true)} /> : null}
+          meta={albumMetaNode}
+          play={<><button 
               onClick={() => sortedAlbumTracks[0] && (onPlayTrack ? onPlayTrack(sortedAlbumTracks[0]) : navigateTo('track', { id: sortedAlbumTracks[0].id }))}
               className="w-14 h-14 rounded-full theme-bg-accent page-accent-bg hover:opacity-90 hover:scale-105 active:scale-95 transition-all shadow-xl flex items-center justify-center cursor-pointer group"
               title="Воспроизвести альбом"
             >
               <Play className="text-black fill-black ml-1 w-6 h-6" />
-            </button>
-            
-            <button 
+            </button></>}
+          shuffle={<><button 
               onClick={() => {
                 if (rawAlbumTracks.length > 0) {
                   const randomTrack = rawAlbumTracks[Math.floor(Math.random() * rawAlbumTracks.length)];
@@ -16750,36 +16800,29 @@ function AlbumView({
               title="Перемешать"
             >
               <Shuffle className="w-6 h-6" />
-            </button>
-
-            <button 
+            </button></>}
+          like={<><button 
               onClick={() => toggleLikeAlbum && toggleLikeAlbum(album.id)}
               className="text-zinc-400 hover:text-white transition-colors cursor-pointer p-1"
               title="Сохранить в любимые альбомы"
             >
               <Heart className={`w-6 h-6 ${album.isLiked ? 'theme-accent fill-current' : ''}`} />
-            </button>
-
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => onRateClick && onRateClick(album)} className="h-9 inline-flex items-center gap-2 px-3.5 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer active:scale-95" title="Оценить альбом по 90-балльной системе">
+            </button></>}
+          rate={<><button type="button" onClick={() => onRateClick && onRateClick(album)} className="h-9 inline-flex items-center gap-2 px-3.5 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer active:scale-95" title="Оценить альбом по 90-балльной системе">
                 <Star className="w-3.5 h-3.5" /><span>{album.rating ? 'Переоценить' : 'Оценить'}</span>
-              </button>
-              <button type="button" onClick={() => navigateTo('compare', { mode: 'albums', leftId: album.id })} className="h-9 inline-flex items-center gap-2 px-3.5 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer active:scale-95" title="Сравнить с другим альбомом">
+              </button></>}
+          compare={<><button type="button" onClick={() => navigateTo('compare', { mode: 'albums', leftId: album.id })} className="h-9 inline-flex items-center gap-2 px-3.5 rounded-full border border-white/10 hover:border-white/25 bg-white/[0.03] hover:bg-white/[0.08] text-xs font-semibold text-zinc-300 hover:text-white transition-all cursor-pointer active:scale-95" title="Сравнить с другим альбомом">
                 <ArrowLeftRight className="w-3.5 h-3.5" /><span>Сравнить</span>
-              </button>
-              <AlbumReviewsButton album={album} tracks={tracks} albums={albums} artists={artists} />
-            </div>
-
-            <button 
+              </button></>}
+          reviews={<><AlbumReviewsButton album={album} tracks={tracks} albums={albums} artists={artists} /></>}
+          more={<><button 
               onClick={() => onMoreOptionsClick && onMoreOptionsClick(album)} 
               className="text-zinc-400 hover:text-white transition-colors cursor-pointer p-1"
               title="Действия с альбомом"
             >
               <MoreHorizontal className="w-6 h-6" />
-            </button>
-          </div>
-
-          <div className="text-xs font-bold flex items-center gap-1.5 p-1 bg-black/30 rounded-xl border border-white/5">
+            </button></>}
+          sort={<><div className="text-xs font-bold flex items-center gap-1.5 p-1 bg-black/30 rounded-xl border border-white/5">
             {[
               { id: 'relevance', label: 'Популярные' },
               { id: 'added', label: 'Порядок добавления' },
@@ -16795,9 +16838,8 @@ function AlbumView({
                 {opt.label}
               </button>
             ))}
-          </div>
-
-        </div>
+          </div></>}
+        />
 
         {/* Tracks Table Header */}
         <div className="grid grid-cols-[24px_1fr_auto] md:grid-cols-[32px_1fr_160px_80px] gap-3 md:gap-4 items-center px-4 py-2 border-b border-white/10 text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
