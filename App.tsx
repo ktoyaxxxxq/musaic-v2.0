@@ -105,6 +105,8 @@ import {
   generateWeekProposals,
   advanceSimulationStep,
   formatSimDate,
+  loadManualQueue,
+  saveManualQueue,
   ManualSimItem,
   RELEASE_PROMO_LABELS,
   getPromoStrategyConfig,
@@ -5579,9 +5581,12 @@ export default function App() {
     const autoProps = days >= 5
       ? generateWeekProposals(simState.artists, simState.albums, simState.tracks, simState.currentDate, 'balanced')
       : [];
-    const next = advanceSimulationStep({ simState, proposals: autoProps, advanceDays: days });
+    // v2.5.8: the manual batch queue is released by quick steps too (on the Friday inside the step)
+    const queued = loadManualQueue(simState.startDate);
+    const next = advanceSimulationStep({ simState, proposals: autoProps, manualItems: queued, advanceDays: days });
+    if (queued.length) saveManualQueue(simState.startDate, []);
     setSimState(next);
-    showToast(`+${days} дн. → ${formatSimDate(next.currentDate)}`);
+    showToast(`+${days} дн. → ${formatSimDate(next.currentDate)}${queued.length ? ` · ручной батч: ${queued.length}` : ''}`);
   };
 
   const handleUndoSimStep = () => {

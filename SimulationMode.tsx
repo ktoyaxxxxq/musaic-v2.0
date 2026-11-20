@@ -1286,6 +1286,13 @@ export function getReleaseHypeMultiplier(releaseHype?: number): number {
   return 0.65 + ((clamped - 10) / 89) * 0.80;
 }
 
+// v2.5.8: the manual batch (queue + form) survives closing the console and reloading the page
+function draftKey(sim: string) { return `musaic.sim.manualDraft.${sim}`; }
+function loadManualDraft(sim: string): any { try { const c = (globalThis as any).__musaicManualDraft; if (c && c.sim === sim) return c.d; const v = JSON.parse(localStorage.getItem(draftKey(sim)) || 'null'); return v || {}; } catch { return {}; } }
+function saveManualDraft(sim: string, d: any) { (globalThis as any).__musaicManualDraft = { sim, d }; try { localStorage.setItem(draftKey(sim), JSON.stringify(d)); } catch { /* quota */ } }
+export function loadManualQueue(sim: string): ManualSimItem[] { try { const c = (globalThis as any).__musaicManualQueue; if (c && c.sim === sim) return c.q; const v = JSON.parse(localStorage.getItem(`musaic.sim.manualQueue.${sim}`) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } }
+export function saveManualQueue(sim: string, q: ManualSimItem[]) { (globalThis as any).__musaicManualQueue = { sim, q }; try { localStorage.setItem(`musaic.sim.manualQueue.${sim}`, JSON.stringify(q)); } catch { /* quota */ } }
+
 export const ReleaseHypeControl: React.FC<{
   promoStrategy?: ReleasePromoStrategy;
   releaseHype?: number;
@@ -1294,6 +1301,8 @@ export const ReleaseHypeControl: React.FC<{
   compact?: boolean;
 }> = ({ promoStrategy, releaseHype, defaultHype = 70, onChange, compact = false }) => {
   const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!open) return; const t = setTimeout(() => panelRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 40); return () => clearTimeout(t); }, [open]);
   const activeStrat = getPromoStrategyConfig(promoStrategy);
   const hasCustom = Boolean(activeStrat || typeof releaseHype === 'number');
 
@@ -1325,7 +1334,7 @@ export const ReleaseHypeControl: React.FC<{
       </div>
 
       {open && (
-        <div className="p-3.5 rounded-2xl bg-zinc-950/95 border border-white/15 space-y-3 shadow-xl">
+        <div ref={panelRef} className="p-3.5 rounded-2xl bg-zinc-950/95 border border-white/15 space-y-3 shadow-xl scroll-mb-24">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-xs font-bold text-white">Тип хайпа и промо-стратегия</p>
@@ -2236,7 +2245,9 @@ export function advanceSimulationStep(params: {
   const { simState, proposals = [], manualItems = [], advanceDays = 7, virality = 'balanced' } = params;
   const fromDate = simState.currentDate;
   const toDate = addDaysISO(fromDate, advanceDays);
-  const nextWeek = simState.weekNumber + Math.max(1, Math.round(advanceDays / 7));
+  // v2.5.8: the week number follows the calendar, so day-by-day steps do not inflate it
+  const dayIdx = (iso: string) => Math.floor((Date.parse(iso + 'T12:00:00Z') - Date.parse((simState.startDate || fromDate) + 'T12:00:00Z')) / 86400000);
+  const nextWeek = simState.weekNumber + Math.max(advanceDays >= 7 ? 1 : 0, Math.floor(dayIdx(toDate) / 7) - Math.floor(dayIdx(fromDate) / 7));
   const stepFactor = Math.max(0.15, advanceDays / 7);
 
   // 1. Save undo snapshot (keep last 5 to keep IndexedDB fast & lean)
@@ -2849,8 +2860,20 @@ export function advanceSimulationStep(params: {
     : simState.lastDigest
       ? [simState.lastDigest]
       : [];
+  // day steps inside one week are merged into the same weekly digest
+  const same = prevHistory.find(d => d.weekNumber === digest.weekNumber);
+  const mergedDigest: SimWeekDigest = same && advanceDays < 7 ? {
+    ...digest,
+    fromDate: same.fromDate && same.fromDate < fromDate ? same.fromDate : fromDate,
+    newReleasesCount: (same.newReleasesCount || 0) + (digest.newReleasesCount || 0),
+    newSnippetsCount: (same.newSnippetsCount || 0) + (digest.newSnippetsCount || 0),
+    topDebut: digest.topDebut || same.topDebut,
+    biggestClimber: digest.biggestClimber || same.biggestClimber,
+    highlights: [...new Set([...(digest.highlights || []), ...(same.highlights || [])])].slice(0, 14),
+    weeklyDrops: [...(same.weeklyDrops || []), ...(digest.weeklyDrops || [])]
+  } : digest;
   const nextDigestHistory = [
-    digest,
+    mergedDigest,
     ...prevHistory.filter(d => d.weekNumber !== digest.weekNumber)
   ].slice(0, 120);
 
@@ -2861,7 +2884,7 @@ export function advanceSimulationStep(params: {
     artists: finalArtists,
     albums: finalAlbums,
     tracks: finalTracks,
-    lastDigest: digest,
+    lastDigest: mergedDigest,
     digestHistory: nextDigestHistory,
     undoStack: nextUndoStack
   };
@@ -7001,7 +7024,9 @@ const RadarArtistRow = memo<{
   onAddToSemi: (artist: Artist) => void;
   onCreateManual: (artist: Artist) => void;
   onOpenArtist?: (artistId: string) => void;
-}>(({ m, radarSeed = 0, suggestedPartner, onAdjustHype, onAddToSemi, onCreateManual, onOpenArtist }) => {
+  onQuickManual?: (artist: Artist, kind: 'single' | 'ep' | 'album') => void;
+  queued?: number;
+}>(({ m, radarSeed = 0, suggestedPartner, onAdjustHype, onAddToSemi, onCreateManual, onOpenArtist, onQuickManual, queued = 0 }) => {
   useRadarVersion();
   const [open, setOpen] = useState(false);
   const [localSeed, setLocalSeed] = useState(0);
@@ -7059,7 +7084,15 @@ const RadarArtistRow = memo<{
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          <button type="button" onClick={() => onCreateManual(m.artist)} className="px-3 py-1.5 rounded-xl theme-bg-accent text-black text-xs font-black hover:opacity-90 cursor-pointer" title="Создать релиз для этого артиста">Дроп</button>
+          {onQuickManual && (
+            <span className="hidden sm:inline-flex items-center rounded-xl border border-white/10 bg-white/[0.04] overflow-hidden" title="Сразу добавить в ручной батч (название и стримы подберутся сами)">
+              <span className="pl-2.5 pr-1.5 text-[10.5px] font-bold text-zinc-400">{queued ? `в батче ${queued} ·` : '＋ батч'}</span>
+              {(['single', 'ep', 'album'] as const).map(k => (
+                <button key={k} type="button" onClick={() => onQuickManual(m.artist, k)} className="px-2 py-1.5 text-[11px] font-black text-white hover:bg-white/[0.12] cursor-pointer border-l border-white/[0.06]">{k === 'single' ? 'Сингл' : k === 'ep' ? 'EP' : 'Альбом'}</button>
+              ))}
+            </span>
+          )}
+          <button type="button" onClick={() => onCreateManual(m.artist)} className="px-3 py-1.5 rounded-xl theme-bg-accent text-black text-xs font-black hover:opacity-90 cursor-pointer" title="Открыть форму ручного батча с этим артистом">Дроп</button>
           <button type="button" onClick={() => onAddToSemi(m.artist)} className="hidden sm:block px-2.5 py-1.5 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-bold text-white cursor-pointer" title="Добавить в кандидаты недели">+ Неделя</button>
           <button type="button" onClick={() => setRadarHidden(m.artist.id, !hidden)} className="w-8 h-8 rounded-xl bg-white/[0.04] hover:bg-white/[0.12] text-zinc-400 hover:text-white text-xs cursor-pointer" title={hidden ? 'Вернуть на радар' : 'Убрать с радара'}>{hidden ? '↺' : '✕'}</button>
           <button type="button" onClick={() => setOpen(v => !v)} className={`w-8 h-8 rounded-xl bg-white/[0.04] hover:bg-white/[0.12] text-zinc-300 text-xs cursor-pointer transition-transform ${open ? 'rotate-180' : ''}`} title="Подробнее">▾</button>
@@ -7259,22 +7292,23 @@ const SimManualTab = memo(({
   editingManualSignal: { seq: number; item: ManualSimItem } | null;
   ideaAssignSignal: { seq: number; draft: ManualSimItem } | null;
 }) => {
-  const [manualItemType, setManualItemType] = useState<'track' | 'album' | 'snippet'>('track');
-  const [manualTitle, setManualTitle] = useState('');
-  const [manualArtistId, setManualArtistId] = useState(simState.artists[0]?.id || '');
-  const [manualCustomArtistMode, setManualCustomArtistMode] = useState(false);
-  const [manualCustomArtist, setManualCustomArtist] = useState('');
-  const [manualGenre, setManualGenre] = useState(simState.artists[0]?.genre || 'Hip-Hop / Rap');
-  const [manualCoverUrl, setManualCoverUrl] = useState('');
-  const [manualPlays, setManualPlays] = useState('');
-  const [manualDuration, setManualDuration] = useState('2:34');
-  const [manualFeat, setManualFeat] = useState('');
-  const [manualCoArtist, setManualCoArtist] = useState('');
-  const [manualSnippetTeaser, setManualSnippetTeaser] = useState('');
-  const [manualPromoStrategy, setManualPromoStrategy] = useState<ReleasePromoStrategy | undefined>(undefined);
-  const [manualReleaseHype, setManualReleaseHype] = useState<number | undefined>(undefined);
-  const [manualAlbumTracksCount, setManualAlbumTracksCount] = useState<number>(10);
-  const [manualAlbumTracks, setManualAlbumTracks] = useState<SimAlbumTrack[]>([]);
+  const D = loadManualDraft(simState.startDate);
+  const [manualItemType, setManualItemType] = useState<'track' | 'album' | 'snippet'>(D.itemType || 'track');
+  const [manualTitle, setManualTitle] = useState<string>(D.title ?? '');
+  const [manualArtistId, setManualArtistId] = useState<string>(D.artistId && simState.artists.some(a => a.id === D.artistId) ? D.artistId : simState.artists[0]?.id || '');
+  const [manualCustomArtistMode, setManualCustomArtistMode] = useState<boolean>(D.customMode ?? false);
+  const [manualCustomArtist, setManualCustomArtist] = useState<string>(D.customArtist ?? '');
+  const [manualGenre, setManualGenre] = useState<string>(D.genre ?? (simState.artists[0]?.genre || 'Hip-Hop / Rap'));
+  const [manualCoverUrl, setManualCoverUrl] = useState<string>(D.cover ?? '');
+  const [manualPlays, setManualPlays] = useState<string>(D.plays ?? '');
+  const [manualDuration, setManualDuration] = useState<string>(D.duration ?? '2:34');
+  const [manualFeat, setManualFeat] = useState<string>(D.feat ?? '');
+  const [manualCoArtist, setManualCoArtist] = useState<string>(D.co ?? '');
+  const [manualSnippetTeaser, setManualSnippetTeaser] = useState<string>(D.teaser ?? '');
+  const [manualPromoStrategy, setManualPromoStrategy] = useState<ReleasePromoStrategy | undefined>(D.promo);
+  const [manualReleaseHype, setManualReleaseHype] = useState<number | undefined>(D.hype);
+  const [manualAlbumTracksCount, setManualAlbumTracksCount] = useState<number>(D.count ?? 10);
+  const [manualAlbumTracks, setManualAlbumTracks] = useState<SimAlbumTrack[]>(D.tracks ?? []);
   const [manualTitleMood, setManualTitleMood] = useState<TitleMood>('all');
 
   // Child track draft inside album builder
@@ -7284,7 +7318,12 @@ const SimManualTab = memo(({
   const [childTrFeat, setChildTrFeat] = useState('');
 
   // Editing an existing queued item
-  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(D.editingId ?? null);
+  // v2.5.8: the form survives closing the console (and a page reload)
+  useEffect(() => {
+    const t = setTimeout(() => saveManualDraft(simState.startDate, { itemType: manualItemType, title: manualTitle, artistId: manualArtistId, customMode: manualCustomArtistMode, customArtist: manualCustomArtist, genre: manualGenre, cover: manualCoverUrl, plays: manualPlays, duration: manualDuration, feat: manualFeat, co: manualCoArtist, teaser: manualSnippetTeaser, promo: manualPromoStrategy, hype: manualReleaseHype, count: manualAlbumTracksCount, tracks: manualAlbumTracks, editingId: editingItemId }), 250);
+    return () => clearTimeout(t);
+  }, [simState.startDate, manualItemType, manualTitle, manualArtistId, manualCustomArtistMode, manualCustomArtist, manualGenre, manualCoverUrl, manualPlays, manualDuration, manualFeat, manualCoArtist, manualSnippetTeaser, manualPromoStrategy, manualReleaseHype, manualAlbumTracksCount, manualAlbumTracks, editingItemId]);
 
   // Sub-modals inside Manual Tab
   const [pickerTarget, setPickerTarget] = useState<'main' | 'feat' | 'co' | 'child_feat' | null>(null);
@@ -7373,7 +7412,17 @@ const SimManualTab = memo(({
     setManualPromoStrategy(item.promoStrategy);
     setManualReleaseHype(item.releaseHype);
     setManualAlbumTracksCount(item.albumTracksCount || item.albumTracks?.length || 10);
-    setManualAlbumTracks(item.albumTracks || []);
+    let tl = item.albumTracks || [];
+    if (item.itemType === 'album' && !tl.length) {
+      const art = artistByIdMap.get(item.artistId);
+      if (art) {
+        const ex = new Set<string>([...simState.tracks.map(t => t.title.toLowerCase()), ...simState.albums.map(a => a.title.toLowerCase())]);
+        const m = metricsMap.get(art.id);
+        try { tl = generateAlbumTracksWithFeats({ artist: art, allArtists: simState.artists, count: clamp(item.albumTracksCount || 10, 3, 30), estimatedAlbumPlays: item.plays && item.plays > 0 ? item.plays : 3_000_000, existingTitles: ex, namingProfile: m?.namingProfile || false, languageOverride: autopilot.languageMix }); } catch { tl = []; }
+      }
+    }
+    setManualAlbumTracks(tl);
+    if (item.itemType === 'album' && tl.length) setManualPlays('');
   }, [ideaAssignSignal, artistByIdMap]);
 
   const selectedArt = artistByIdMap.get(manualArtistId) || simState.artists[0];
@@ -7450,6 +7499,8 @@ const SimManualTab = memo(({
   const resetForm = () => {
     setEditingItemId(null);
     setManualTitle('');
+    setManualDuration('2:34');
+    setManualAlbumTracksCount(10);
     setManualCoverUrl('');
     setManualPlays('');
     setManualFeat('');
@@ -7616,6 +7667,11 @@ const SimManualTab = memo(({
     );
   };
 
+  const randomChildTitle = (extra?: Set<string>) => {
+    const ex = new Set<string>([...simState.tracks.map(t => t.title.toLowerCase()), ...manualAlbumTracks.map(t => t.title.toLowerCase()), ...(extra || [])]);
+    return generateModernTitle(ex, false, selectedArtMetrics?.namingProfile ?? false, autopilot.languageMix);
+  };
+
   const handleAddManualItem = () => {
     const existing = new Set<string>([
       ...simState.tracks.map(t => t.title.toLowerCase()),
@@ -7631,9 +7687,14 @@ const SimManualTab = memo(({
       );
 
     const parsedManualPlays = parseFormattedNumber(manualPlays);
+    let autoTracks: SimAlbumTrack[] = [];
+    if (manualItemType === 'album' && manualAlbumTracks.length === 0 && selectedArt && !manualCustomArtistMode) {
+      try { autoTracks = generateAlbumTracksWithFeats({ artist: selectedArt, allArtists: simState.artists, count: clamp(manualAlbumTracksCount || 10, 3, 30), estimatedAlbumPlays: parsedManualPlays > 0 ? parsedManualPlays : autoForecastPlays, existingTitles: existing, namingProfile: selectedArtMetrics?.namingProfile ?? false, languageOverride: autopilot.languageMix, coArtist: manualCoArtist.trim() || undefined }); } catch { autoTracks = []; }
+    }
+    const tracksForItem = manualAlbumTracks.length > 0 ? manualAlbumTracks : autoTracks;
     const resolvedPlays =
-      manualItemType === 'album' && manualAlbumTracks.length > 0
-        ? albumTracksTotalPlays
+      manualItemType === 'album' && tracksForItem.length > 0
+        ? tracksForItem.reduce((s2, t) => s2 + (t.plays || 0), 0)
         : parsedManualPlays > 0
           ? parsedManualPlays
           : autoForecastPlays;
@@ -7663,11 +7724,11 @@ const SimManualTab = memo(({
       plays: resolvedPlays,
       albumTracksCount:
         manualItemType === 'album'
-          ? manualAlbumTracks.length > 0
-            ? manualAlbumTracks.length
+          ? tracksForItem.length > 0
+            ? tracksForItem.length
             : clamp(manualAlbumTracksCount || 10, 3, 30)
           : undefined,
-      albumTracks: manualItemType === 'album' && manualAlbumTracks.length > 0 ? manualAlbumTracks : undefined,
+      albumTracks: manualItemType === 'album' && tracksForItem.length > 0 ? tracksForItem : undefined,
       snippetTeaser: manualItemType === 'snippet' ? manualSnippetTeaser.trim() || undefined : undefined,
       promoStrategy: manualPromoStrategy,
       releaseHype: manualReleaseHype
@@ -7778,16 +7839,16 @@ const SimManualTab = memo(({
                 <span>Создать артиста</span>
               </button>
             )}
-            {(manualTitle || manualCoverUrl || manualFeat || manualAlbumTracks.length > 0 || editingItemId) && (
-              <button
-                type="button"
-                onClick={resetForm}
-                className="p-2 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-zinc-400 hover:text-white cursor-pointer"
-                title="Очистить поля"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => { resetForm(); setManualItemType('track'); setManualCustomArtistMode(false); setManualCustomArtist(''); setManualGenre(selectedArt?.genre || 'Hip-Hop / Rap'); }}
+              disabled={!(manualTitle || manualCoverUrl || manualFeat || manualCoArtist || manualPlays || manualSnippetTeaser || manualPromoStrategy || typeof manualReleaseHype === 'number' || manualAlbumTracks.length > 0 || editingItemId || manualItemType !== 'track' || manualDuration !== '2:34')}
+              className="px-3.5 py-1.5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-35 disabled:cursor-default"
+              title="Очистить все поля формы (артист остаётся)"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Очистить форму</span>
+            </button>
           </div>
         </div>
 
@@ -8123,6 +8184,11 @@ const SimManualTab = memo(({
                     <span>Сумма треков:</span>
                     <span>{formatNumber(albumTracksTotalPlays)}</span>
                   </div>
+                ) : manualItemType === 'album' ? (
+                  <div className="w-full bg-white/[0.04] border border-white/10 rounded-2xl px-4 py-2.5 text-[11.5px] font-semibold text-zinc-300 flex items-center justify-between gap-2">
+                    <span>Сумма треков · считается сама</span>
+                    <span className="text-zinc-500 tabular-nums">≈ {formatCompact(autoForecastPlays)} на {manualAlbumTracksCount} тр.</span>
+                  </div>
                 ) : (
                   <div className="flex gap-1.5">
                     <input
@@ -8218,6 +8284,17 @@ const SimManualTab = memo(({
                 {manualAlbumTracks.length > 0 && (
                   <button
                     type="button"
+                    onClick={() => { const used = new Set<string>(); setManualAlbumTracks(prev => prev.map(t => { let n = randomChildTitle(used); used.add(n.toLowerCase()); return { ...t, title: n }; })); }}
+                    className="px-3 py-1.5 rounded-2xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-semibold text-zinc-200 flex items-center gap-1.5 cursor-pointer"
+                    title="Случайные названия для всех треков"
+                  >
+                    <Dices className="w-3.5 h-3.5 theme-accent" />
+                    <span>Случайные названия</span>
+                  </button>
+                )}
+                {manualAlbumTracks.length > 0 && (
+                  <button
+                    type="button"
                     onClick={handleRandomFeatsOnTracklist}
                     className="px-3 py-1.5 rounded-2xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-semibold text-zinc-200 flex items-center gap-1.5 cursor-pointer"
                   >
@@ -8238,19 +8315,22 @@ const SimManualTab = memo(({
 
             {/* Add single child track row */}
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
-              <input
-                type="text"
-                placeholder="Название трека в альбоме..."
-                value={childTrTitle}
-                onChange={e => setChildTrTitle(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleAddChildTrack();
-                  }
-                }}
-                className="sm:col-span-4 bg-zinc-950/80 border border-white/12 rounded-2xl px-3.5 py-2 text-xs font-semibold text-white outline-none"
-              />
+              <div className="sm:col-span-4 flex gap-1">
+                <input
+                  type="text"
+                  placeholder="Название трека в альбоме..."
+                  value={childTrTitle}
+                  onChange={e => setChildTrTitle(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddChildTrack();
+                    }
+                  }}
+                  className="flex-1 min-w-0 bg-zinc-950/80 border border-white/12 rounded-2xl px-3.5 py-2 text-xs font-semibold text-white outline-none"
+                />
+                <button type="button" onClick={() => setChildTrTitle(randomChildTitle())} title="Случайное название" className="px-2.5 py-2 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-zinc-200 cursor-pointer shrink-0"><Dices className="w-3.5 h-3.5 theme-accent" /></button>
+              </div>
               <div className="sm:col-span-3 flex gap-1">
                 <input
                   type="text"
@@ -8704,7 +8784,8 @@ export const SimConsoleModal: React.FC<{
   const [radarLimit, setRadarLimit] = useState(25);
 
   // Manual queue & coordination signals (typing state stays isolated inside SimManualTab!)
-  const [manualQueue, setManualQueue] = useState<ManualSimItem[]>([]);
+  const [manualQueue, setManualQueue] = useState<ManualSimItem[]>(() => loadManualQueue(simState.startDate));
+  useEffect(() => { saveManualQueue(simState.startDate, manualQueue); }, [manualQueue, simState.startDate]);
   const [showQueueShowcase, setShowQueueShowcase] = useState(false);
   const [editingManualSignal, setEditingManualSignal] = useState<{ seq: number; item: ManualSimItem } | null>(null);
   const [ideaStudioState, setIdeaStudioState] = useState<{ open: boolean; artistId?: string }>({ open: false });
@@ -9021,6 +9102,22 @@ export const SimConsoleModal: React.FC<{
   useEffect(() => { if (isOpen) setConfirmedRumors(loadConfirmed()); }, [isOpen]);
   useEffect(() => { if (!rumorMsg) return; const t = setTimeout(() => setRumorMsg(null), 2600); return () => clearTimeout(t); }, [rumorMsg]);
   const toggleCalm = () => setCalmView(v => { const n = !v; try { localStorage.setItem('musaic.sim.calm', n ? '1' : '0'); } catch { /* */ } return n; });
+  // v2.5.8: radar → straight into the manual batch (title, streams, tracklist with split streams)
+  const quickAddManual = (art: Artist, kind: 'single' | 'ep' | 'album') => {
+    const m = metricsMap.get(art.id);
+    const existing = new Set<string>([...simState.tracks.map(t => t.title.toLowerCase()), ...simState.albums.map(a => a.title.toLowerCase()), ...manualQueue.map(q => q.title.toLowerCase())]);
+    const isBig = kind !== 'single';
+    const itemType: 'track' | 'album' = isBig ? 'album' : 'track';
+    const title = generateModernTitle(existing, isBig, m?.namingProfile || false, autopilot.languageMix);
+    const hype = m?.hype ?? art.hype ?? 55;
+    const count = kind === 'ep' ? randInt(4, 6) : randInt(10, 15);
+    const est = forecastReleasePlays({ artist: art, itemType, qualityScore: m?.avgQuality || 70, hype, hasWarmup: Boolean(m?.activeSnippet), hitsCount: m?.topHitsCount || 0, catalogAvgPlays: m?.catalogAvgPlays || 0, albumTracksCount: isBig ? count : undefined } as any);
+    let albumTracks: SimAlbumTrack[] | undefined;
+    if (isBig) { try { albumTracks = generateAlbumTracksWithFeats({ artist: art, allArtists: simState.artists, count, estimatedAlbumPlays: est, existingTitles: existing, namingProfile: m?.namingProfile || false, languageOverride: autopilot.languageMix }); } catch { albumTracks = undefined; } }
+    const plays = albumTracks?.length ? albumTracks.reduce((x, t) => x + (t.plays || 0), 0) : est;
+    setManualQueue(q => [...q, { id: makeId('manual'), itemType, artistId: art.id, artistName: art.name, title, genre: art.genre, plays, duration: isBig ? undefined : getRandomDuration(), albumTracksCount: albumTracks?.length || (isBig ? count : undefined), albumTracks } as ManualSimItem]);
+    setRumorMsg(`«${title}» (${kind === 'single' ? 'сингл' : kind === 'ep' ? 'EP' : 'альбом'}) — ${art.name} в ручном батче`);
+  };
   const handleRadarCreateManual = useCallback((art: Artist) => {
     setRadarAssignSignal({ seq: Date.now(), artistId: art.id, genre: art.genre || '' });
     setTab('manual');
@@ -10119,6 +10216,8 @@ export const SimConsoleModal: React.FC<{
                         onAdjustHype={onAdjustArtistHype}
                         onAddToSemi={handleRadarAddSemi}
                         onCreateManual={handleRadarCreateManual}
+                        onQuickManual={quickAddManual}
+                        queued={manualQueue.filter(q => q.artistId === m.artist.id).length}
                         onOpenArtist={onOpenArtist}
                       />
                     ))
@@ -10470,6 +10569,7 @@ export const SimConsoleModal: React.FC<{
                 <span className="text-xs font-medium text-zinc-300">Шаг времени:</span>
                 <div className="flex items-center gap-1 p-0.5 bg-black/50 border border-white/10 rounded-xl">
                   {[
+                    { days: 1, label: '1 день' },
                     { days: 7, label: '1 неделя' },
                     { days: 14, label: '2 недели' },
                     { days: 30, label: '1 месяц' }
@@ -10486,6 +10586,20 @@ export const SimConsoleModal: React.FC<{
                     </button>
                   ))}
                 </div>
+                {(() => {
+                  const toD = addDaysISO(simState.currentDate, advanceDays);
+                  const fri = getDropFriday(simState.currentDate, toD);
+                  const inStep = fri <= toD;
+                  const dm = (iso: string) => formatSimDate(iso).slice(0, 5);
+                  const dowTo = new Date(simState.currentDate + 'T12:00:00Z').getUTCDay();
+                  const toFri = (5 - dowTo + 7) % 7 || 7;
+                  return (
+                    <span className="hidden lg:inline-flex items-center gap-2 text-[11px] text-zinc-400">
+                      <span>релизы: <b className={inStep ? 'text-emerald-300' : 'text-amber-300'}>пт {dm(fri)}</b> · вы будете: <b className="text-white">{dm(toD)}</b></span>
+                      {!inStep && (tab === 'manual' ? manualQueue.length > 0 : true) && <button type="button" onClick={() => setAdvanceDays(toFri)} className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-200 font-bold hover:bg-amber-500/25">до пятницы · {toFri} дн.</button>}
+                    </span>
+                  );
+                })()}
               </>
             )}
           </div>
@@ -10555,7 +10669,7 @@ export const SimConsoleModal: React.FC<{
                 className="px-4 py-2 rounded-xl theme-bg-accent text-black text-xs font-bold flex items-center gap-1.5 hover:opacity-90 cursor-pointer"
               >
                 <FastForward className="w-3.5 h-3.5 fill-black" />
-                <span>Провести неделю ({manualQueue.length} в очереди)</span>
+                <span>Провести {advanceDays === 1 ? 'день' : advanceDays === 7 ? 'неделю' : advanceDays === 14 ? '2 недели' : advanceDays === 30 ? 'месяц' : `${advanceDays} дн.`} ({manualQueue.length} в очереди)</span>
               </button>
             )}
           </div>
@@ -11172,7 +11286,7 @@ export const SimConsoleModal: React.FC<{
                   className="px-5 py-2.5 rounded-xl theme-bg-accent text-black text-xs font-extrabold flex items-center gap-1.5 cursor-pointer hover:opacity-90"
                 >
                   <FastForward className="w-4 h-4 fill-black" />
-                  <span>Провести неделю ({manualQueue.length})</span>
+                  <span>Провести {advanceDays === 1 ? 'день' : advanceDays === 7 ? 'неделю' : advanceDays === 14 ? '2 недели' : advanceDays === 30 ? 'месяц' : `${advanceDays} дн.`} ({manualQueue.length})</span>
                 </button>
               )}
             </div>
