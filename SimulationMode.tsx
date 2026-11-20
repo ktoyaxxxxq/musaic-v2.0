@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useDeferredValue, memo, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useDeferredValue, memo, useRef } from 'react';
 import { generateModernTitle, analyzeArtistNamingStyle } from './titleGen';
 import type { TitleMood, ArtistNamingProfile } from './titleGen';
 import { TitleMoodPicker } from './TitleMoodPicker';
@@ -1671,7 +1671,8 @@ function createAlbumStreamRoll(count: number, estimatedAlbumPlays: number) {
   return (tracks: ReadonlyArray<{ featuredArtist?: string }>) => {
     const weights = tracks.map((track, i) => {
       const featMult = !track.featuredArtist ? 1 : Math.random() < 0.78 ? randRange(1.22, 1.65) : randRange(0.95, 1.12);
-      return Math.max(0.32, roleWeight(i) * featMult * randRange(0.84, 1.18));
+      // v2.6.2: tracks of one album are closer to each other (the lead is still clearly ahead)
+      return Math.max(0.45, 1 + (roleWeight(i) * featMult * randRange(0.9, 1.1) - 1) * 0.55);
     });
     const totalWeight = weights.reduce((sum, weight) => sum + weight, 0) || 1;
     return weights.map(weight => {
@@ -5266,7 +5267,7 @@ const SimIdeaStudioModal: React.FC<{
   onQueueManualItem,
   onAddToSemi
 }) => {
-  const [ideaWin, setIdeaWin, ideaWinRef] = useSimWindowSize('musaic.sim.ideasSize');
+  const [ideaWin, setIdeaWin, ideaWinRef, ideaWinStyle] = useSimWindowSettings('musaic.sim.ideasWin', { w: 92, h: 90, cols: 2 });
   // Selection filters (optional — works out-of-the-box with >0 listeners default)
   const [onlyNonZeroListeners, setOnlyNonZeroListeners] = useState(true);
   const [tierFilter, setTierFilter] = useState<'all' | 'superstar' | 'mega' | 'large' | 'mid' | 'rising' | 'rookie'>('all');
@@ -5757,13 +5758,8 @@ const SimIdeaStudioModal: React.FC<{
       <div
         ref={ideaWinRef}
         onClick={e => e.stopPropagation()}
-        style={SIM_RESIZE_STYLE}
-        className={`relative w-[calc(100vw-1.25rem)] ${
-          ideaWin === 'compact' ? 'sm:w-full max-w-4xl max-h-[85vh]'
-            : ideaWin === 'wide' ? 'sm:w-[calc(100vw-2.5rem)] max-w-[1600px] h-[94vh]'
-              : ideaWin === 'full' ? 'sm:w-[calc(100vw-0.5rem)] h-[calc(100vh-0.5rem)] max-w-none'
-                : 'sm:w-full max-w-6xl max-h-[92vh]'
-        } bg-zinc-950 border border-white/15 rounded-3xl shadow-2xl overflow-hidden flex flex-col z-10`}
+        style={ideaWinStyle}
+        className={`relative bg-zinc-950 border border-white/15 rounded-3xl shadow-2xl overflow-hidden flex flex-col z-10`}
       >
         {/* Top Header */}
         <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-zinc-900/60 flex flex-wrap items-center justify-between gap-3">
@@ -5789,7 +5785,7 @@ const SimIdeaStudioModal: React.FC<{
                 <ChevronLeft className="w-3.5 h-3.5" /> Ручной батч
               </button>
             )}
-            <SimWindowSizeControl value={ideaWin} onChange={setIdeaWin} />
+            <SimWindowSettingsButton value={ideaWin} onChange={setIdeaWin} showCols={false} />
             <button
               type="button"
               onClick={() => setShowFilters(v => !v)}
@@ -7427,32 +7423,7 @@ export const SimScenarioDeck: React.FC<{ autopilot: SimAutopilotConfig; setAutop
 
 
 
-// ---------------------------------------------------------------------------
-// v2.6.1 — resizable windows: size presets (small buttons) + drag the corner
-// ---------------------------------------------------------------------------
-type SimWinSize = 'compact' | 'normal' | 'wide' | 'full';
-function useSimWindowSize(key: string, fallback: SimWinSize = 'normal') {
-  const [size, setSizeState] = useState<SimWinSize>(() => {
-    try { const v = localStorage.getItem(key) as SimWinSize | null; return v === 'compact' || v === 'normal' || v === 'wide' || v === 'full' ? v : fallback; } catch { return fallback; }
-  });
-  const ref = useRef<HTMLDivElement>(null);
-  const setSize = (v: SimWinSize) => {
-    setSizeState(v);
-    try { localStorage.setItem(key, v); } catch { /* */ }
-    // forget a size that was dragged by hand, so the preset applies
-    if (ref.current) { ref.current.style.width = ''; ref.current.style.height = ''; }
-  };
-  return [size, setSize, ref] as const;
-}
-const SimWindowSizeControl: React.FC<{ value: SimWinSize; onChange: (v: SimWinSize) => void }> = ({ value, onChange }) => (
-  <div className="flex items-center gap-0.5 p-0.5 rounded-xl bg-black/40 border border-white/10" title="Размер окна. Угол справа внизу можно тянуть мышкой">
-    {([['compact', 'S'], ['normal', 'M'], ['wide', 'L'], ['full', '⛶']] as const).map(([v, l]) => (
-      <button key={v} type="button" onClick={() => onChange(v)}
-        className={`w-7 h-6 rounded-lg text-[11px] font-bold cursor-pointer ${value === v ? 'bg-white/15 text-white' : 'text-zinc-400 hover:text-white'}`}>{l}</button>
-    ))}
-  </div>
-);
-const SIM_RESIZE_STYLE: React.CSSProperties = { resize: 'both', minWidth: 560, minHeight: 420 };
+
 
 // ============================================================================
 // SIMULATION CONSOLE MODAL (ISOLATED TABS FOR INSTANT 60FPS INTERACTION)
@@ -7460,50 +7431,243 @@ const SIM_RESIZE_STYLE: React.CSSProperties = { resize: 'both', minWidth: 560, m
 
 // --- Isolated Manual Batch Tab Component (Prevents parent re-render lag on keystrokes) ---
 // ---------------------------------------------------------------------------
-// v2.6.1 — manual batch helpers: artist menu (same feel as the feat picker),
-// release presets and inline promo / hype
+// v2.6.2 — shared UI for the batch: floating panels (never clipped by windows),
+// the artist base (search + filters), guest picker, growth forecast, window settings
 // ---------------------------------------------------------------------------
-interface ManualPreset {
-  id: string;
-  name: string;
-  icon?: string;
-  itemType: 'track' | 'album' | 'snippet';
-  albumFormat?: 'album' | 'ep';
-  count?: number;
-  promo?: ReleasePromoStrategy;
-  hype?: number;
-  feats?: 'none' | 'one' | 'auto' | 'many';
-}
-const MANUAL_PRESETS: ManualPreset[] = [
-  { id: 'hit', icon: '🔥', name: 'Хит-сингл', itemType: 'track', promo: 'playlist_push', hype: 85 },
-  { id: 'quiet', icon: '🤫', name: 'Тихий дроп', itemType: 'track', promo: 'quiet', hype: 35, feats: 'none' },
-  { id: 'feat', icon: '🤝', name: 'Сингл с фитом', itemType: 'track', promo: 'feature_event', hype: 70, feats: 'one' },
-  { id: 'viral', icon: '📱', name: 'Вирусный', itemType: 'track', promo: 'tiktok_trend', hype: 75 },
-  { id: 'snip', icon: '🎧', name: 'Сниппет', itemType: 'snippet', promo: 'warmup', hype: 60 },
-  { id: 'ep', icon: '💿', name: 'EP · 5', itemType: 'album', albumFormat: 'ep', count: 5, promo: 'warmup', hype: 65 },
-  { id: 'lp', icon: '🎤', name: 'Альбом · 12', itemType: 'album', albumFormat: 'album', count: 12, promo: 'playlist_push', hype: 75 },
-  { id: 'mega', icon: '👑', name: 'Мега-альбом', itemType: 'album', albumFormat: 'album', count: 18, promo: 'mega_campaign', hype: 95, feats: 'many' }
-];
-const MANUAL_PRESETS_LS = 'musaic.sim.manualPresets';
-function loadUserPresets(): ManualPreset[] {
-  try { const v = JSON.parse(localStorage.getItem(MANUAL_PRESETS_LS) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
-}
-function saveUserPresets(list: ManualPreset[]) {
-  try { localStorage.setItem(MANUAL_PRESETS_LS, JSON.stringify(list)); } catch { /* quota */ }
-}
 
-/** single artist menu — looks and works like the feat picker */
-const ArtistSelect = memo(function ArtistSelect({
-  artists,
-  metricsMap,
-  selected,
-  customName,
-  customMode,
-  onPick,
-  onCustom,
-  onOpenFull,
-  onCreate
-}: {
+/** a panel attached to a button, rendered on top of everything (no clipping inside scroll areas) */
+const FloatingPanel: React.FC<{
+  anchor: React.RefObject<HTMLElement | null>;
+  open: boolean;
+  onClose: () => void;
+  width?: number;
+  align?: 'left' | 'right';
+  children: React.ReactNode;
+}> = ({ anchor, open, onClose, width = 360, align = 'left', children }) => {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; maxH: number; up: boolean } | null>(null);
+  useLayoutEffect(() => {
+    if (!open) return;
+    let raf = 0;
+    const place = () => {
+      const el = anchor.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const w = Math.min(width, vw - 16);
+      let left = align === 'right' ? r.right - w : r.left;
+      left = Math.max(8, Math.min(left, vw - w - 8));
+      const below = vh - r.bottom - 12, above = r.top - 12;
+      const up = below < 260 && above > below;
+      const maxH = Math.max(180, Math.min(520, up ? above : below));
+      setPos({ top: up ? r.top - 6 : r.bottom + 6, left, maxH, up });
+    };
+    const onMove = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(place); };
+    place();
+    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onMove, true);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', onMove); window.removeEventListener('scroll', onMove, true); };
+  }, [open, anchor, width, align]);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (panelRef.current?.contains(t) || anchor.current?.contains(t)) return;
+      onClose();
+    };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    document.addEventListener('mousedown', down, true);
+    window.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('mousedown', down, true); window.removeEventListener('keydown', key, true); };
+  }, [open, onClose, anchor]);
+  if (typeof document === 'undefined') return null;
+  return createPortal(
+    <AnimatePresence>
+      {open && pos && (
+        <motion.div
+          ref={panelRef}
+          initial={{ opacity: 0, y: pos.up ? 6 : -6, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: pos.up ? 6 : -6, scale: 0.98 }}
+          transition={{ duration: 0.14, ease: 'easeOut' }}
+          style={{ position: 'fixed', left: pos.left, width: Math.min(width, window.innerWidth - 16), maxHeight: pos.maxH, ...(pos.up ? { bottom: window.innerHeight - pos.top } : { top: pos.top }) }}
+          className="z-[400] flex flex-col rounded-2xl bg-[#14151a]/95 backdrop-blur-xl border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.6)] overflow-hidden"
+          onMouseDown={e => e.stopPropagation()}
+        >
+          {children}
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body
+  );
+};
+
+type BaseFilter = 'match' | 'top' | 'rising' | 'silent' | 'all';
+const BASE_FILTERS: Array<[BaseFilter, string]> = [['match', 'Подходят'], ['top', 'Топ'], ['rising', 'Растущие'], ['silent', 'Давно молчат'], ['all', 'Все А–Я']];
+
+/** the artist base: search, quick filters, avatars and stats — used for the main artist and every feat */
+const ArtistBasePanel: React.FC<{
+  artists: Artist[];
+  metricsMap: Map<string, ArtistSimMetrics>;
+  mainArtist?: Artist;
+  selectedNames: string[];
+  multi: boolean;
+  onPick: (a: Artist) => void;
+  onGuest?: (name: string) => void;
+  onCreate?: (name?: string) => void;
+  onDone: () => void;
+}> = ({ artists, metricsMap, mainArtist, selectedNames, multi, onPick, onGuest, onCreate, onDone }) => {
+  const [q, setQ] = useState('');
+  const dq = useDeferredValue(q);
+  const [filter, setFilter] = useState<BaseFilter>(multi ? 'match' : 'top');
+  const [limit, setLimit] = useState(60);
+  useEffect(() => setLimit(60), [dq, filter]);
+  const sel = useMemo(() => new Set(selectedNames.map(n => n.toLowerCase().trim())), [selectedNames]);
+  const list = useMemo(() => {
+    const n = dq.trim().toLowerCase();
+    let pool = artists.filter(a => !mainArtist || !multi || a.id !== mainArtist.id);
+    if (n) pool = pool.filter(a => a.name.toLowerCase().includes(n) || (a.genre || '').toLowerCase().includes(n));
+    const f = mainArtist?.followers || 0;
+    const g = (mainArtist?.genre || '').toLowerCase();
+    const met = (a: Artist) => metricsMap.get(a.id);
+    const sorted = [...pool];
+    if (n) {
+      sorted.sort((a, b) => Number(b.name.toLowerCase().startsWith(n)) - Number(a.name.toLowerCase().startsWith(n)) || (b.followers || 0) - (a.followers || 0));
+      return sorted;
+    }
+    if (filter === 'match') {
+      const score = (a: Artist) => {
+        const ratio = f ? Math.abs(Math.log10(Math.max(1, a.followers || 1) / Math.max(1, f))) : 0;
+        return (g && (a.genre || '').toLowerCase() === g ? 2 : 0) - ratio * 1.5 + (met(a)?.hype ?? 50) / 100;
+      };
+      sorted.sort((a, b) => score(b) - score(a));
+    } else if (filter === 'top') sorted.sort((a, b) => (b.followers || 0) - (a.followers || 0));
+    else if (filter === 'rising') return sorted.filter(a => a.isRisingStar || met(a)?.tier === 'rising').sort((a, b) => (met(b)?.hype ?? 0) - (met(a)?.hype ?? 0));
+    else if (filter === 'silent') sorted.sort((a, b) => (met(b)?.daysSilent ?? 0) - (met(a)?.daysSilent ?? 0));
+    else sorted.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    return sorted;
+  }, [artists, metricsMap, mainArtist, multi, dq, filter]);
+  const random = () => {
+    const pool = list.slice(0, 25);
+    if (pool.length) onPick(pool[Math.floor(Math.random() * pool.length)]);
+  };
+  const qt = q.trim();
+  return (
+    <>
+      <div className="p-2.5 border-b border-white/[0.07] space-y-2">
+        <div className="flex items-center gap-2 rounded-xl bg-black/40 border border-white/10 focus-within:border-white/25 px-2.5">
+          <Search className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (list[0] && qt) onPick(list[0]);
+                else if (qt && onGuest) onGuest(qt);
+              }
+            }}
+            placeholder={multi ? 'Найти гостя по имени или жанру…' : 'Найти артиста…'}
+            className="flex-1 min-w-0 bg-transparent py-2 text-[13px] text-white outline-none" />
+          <button type="button" onClick={random} title="Случайный из списка" className="text-[13px] px-1 text-zinc-400 hover:text-white cursor-pointer">🎲</button>
+        </div>
+        {!qt && (
+          <div className="flex flex-wrap gap-1">
+            {BASE_FILTERS.map(([v, l]) => (
+              <button key={v} type="button" onClick={() => setFilter(v)}
+                className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${filter === v ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>{l}</button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-1.5">
+        {list.slice(0, limit).map(a => {
+          const m = metricsMap.get(a.id);
+          const on = sel.has(a.name.toLowerCase().trim());
+          return (
+            <button key={a.id} type="button" onClick={() => onPick(a)}
+              className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-xl text-left cursor-pointer transition-colors ${on ? 'bg-white/[0.09]' : 'hover:bg-white/[0.05]'}`}>
+              <CoverArt url={a.imageUrl} title={a.name} isArtist className="w-8 h-8 rounded-full overflow-hidden shrink-0" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[12.5px] font-bold text-white truncate">{a.name}</span>
+                <span className="block text-[10.5px] text-zinc-500 truncate tabular-nums">{a.genre || '—'} · {formatCompact(a.followers || 0)}{m ? ` · хайп ${m.hype} · ${m.daysSilent} дн.` : ''}</span>
+              </span>
+              {on && <Check className="w-4 h-4 theme-accent shrink-0" />}
+            </button>
+          );
+        })}
+        {list.length > limit && (
+          <button type="button" onClick={() => setLimit(l => l + 80)} className="w-full py-2 text-[11.5px] font-semibold text-zinc-400 hover:text-white cursor-pointer">Показать ещё ({list.length - limit})</button>
+        )}
+        {list.length === 0 && <p className="px-2 py-4 text-center text-[12px] text-zinc-500">Никого не нашлось</p>}
+      </div>
+      <div className="p-2 border-t border-white/[0.07] flex flex-wrap items-center gap-1.5">
+        {qt && onGuest && !list.some(a => a.name.toLowerCase() === qt.toLowerCase()) && (
+          <button type="button" onClick={() => onGuest(qt)} className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-[11.5px] font-semibold text-zinc-200 cursor-pointer">+ «{qt}» (не из базы)</button>
+        )}
+        {onCreate && (
+          <button type="button" onClick={() => onCreate(qt || undefined)} className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-[11.5px] font-bold text-emerald-200 cursor-pointer">+ Новый артист</button>
+        )}
+        <span className="ml-auto text-[10.5px] text-zinc-500 tabular-nums">{list.length} в базе</span>
+        {multi && <button type="button" onClick={onDone} className="px-3 py-1 rounded-lg bg-white text-black text-[11.5px] font-bold cursor-pointer">Готово</button>}
+      </div>
+    </>
+  );
+};
+
+/** feat field: chips + the artist base opens on click */
+const GuestPicker = memo(function GuestPicker({ value, onChange, artists, metricsMap, mainArtist, placeholder = 'Добавить фит…', compact = false, onCreate }: {
+  value: string;
+  onChange: (v: string) => void;
+  artists: Artist[];
+  metricsMap: Map<string, ArtistSimMetrics>;
+  mainArtist?: Artist;
+  placeholder?: string;
+  compact?: boolean;
+  onCreate?: (name?: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const names = splitFeaturedList(value);
+  const byName = useMemo(() => new Map(artists.map(a => [a.name.toLowerCase().trim(), a])), [artists]);
+  const toggle = (nm: string) => {
+    const has = names.some(x => x.toLowerCase() === nm.toLowerCase());
+    onChange((has ? names.filter(x => x.toLowerCase() !== nm.toLowerCase()) : [...names, nm]).join(', '));
+  };
+  const randomOne = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!mainArtist) return;
+    const ex = new Set(artists.filter(a => names.some(n => n.toLowerCase() === a.name.toLowerCase())).map(a => a.id));
+    const g = pickFeaturedArtistSmart(mainArtist, artists, ex, true);
+    if (g) onChange([...names, g.artist.name].join(', '));
+  };
+  const close = useCallback(() => setOpen(false), []);
+  return (
+    <>
+      <div ref={ref} role="button" tabIndex={0} onClick={() => setOpen(v => !v)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); } }}
+        className={`w-full flex flex-wrap items-center gap-1.5 cursor-pointer border transition-colors ${open ? 'border-white/30 bg-black/50' : 'border-white/10 bg-black/30 hover:border-white/20'} ${compact ? 'min-h-[34px] rounded-xl px-1.5 py-1' : 'min-h-[42px] rounded-2xl px-2 py-1.5'}`}>
+        {names.map(nm => {
+          const a = byName.get(nm.toLowerCase().trim());
+          return (
+            <span key={nm} className={`inline-flex items-center gap-1.5 pl-0.5 pr-1.5 py-0.5 rounded-full bg-white/[0.08] font-semibold text-white ${compact ? 'text-[11px]' : 'text-[12px]'}`}>
+              <CoverArt url={a?.imageUrl} title={nm} isArtist className={`${compact ? 'w-4 h-4' : 'w-5 h-5'} rounded-full overflow-hidden`} />
+              {nm}
+              <button type="button" onClick={e => { e.stopPropagation(); toggle(nm); }} className="text-zinc-400 hover:text-rose-300 leading-none cursor-pointer">×</button>
+            </span>
+          );
+        })}
+        {!names.length && <span className={`flex-1 text-zinc-500 ${compact ? 'text-[11.5px] px-1' : 'text-[12.5px] px-1.5'}`}>{placeholder}</span>}
+        {names.length > 0 && <span className="flex-1" />}
+        <button type="button" onClick={randomOne} title="Подобрать похожего гостя" className="px-1 text-[12px] text-zinc-400 hover:text-white cursor-pointer">🎲</button>
+      </div>
+      <FloatingPanel anchor={ref} open={open} onClose={close} width={380}>
+        <ArtistBasePanel artists={artists} metricsMap={metricsMap} mainArtist={mainArtist} selectedNames={names} multi
+          onPick={a => toggle(a.name)} onGuest={nm => toggle(nm)} onCreate={onCreate ? nm => { setOpen(false); onCreate(nm); } : undefined} onDone={close} />
+      </FloatingPanel>
+    </>
+  );
+});
+
+/** main artist: one clean field, the base opens on click */
+const ArtistSelect = memo(function ArtistSelect({ artists, metricsMap, selected, customName, customMode, onPick, onCustom, onCreate, size = 'md' }: {
   artists: Artist[];
   metricsMap: Map<string, ArtistSimMetrics>;
   selected?: Artist;
@@ -7511,112 +7675,128 @@ const ArtistSelect = memo(function ArtistSelect({
   customMode: boolean;
   onPick: (a: Artist) => void;
   onCustom: (name: string) => void;
-  onOpenFull: () => void;
   onCreate?: (name?: string) => void;
+  size?: 'sm' | 'md';
 }) {
-  const [q, setQ] = useState('');
-  const [focus, setFocus] = useState(false);
-  const dq = useDeferredValue(q);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const sugg = useMemo(() => {
-    const n = dq.trim().toLowerCase();
-    if (!n) {
-      // empty: a varied mix — the most awaited first, then a few random names
-      const scored = artists
-        .map(a => ({ a, s: (metricsMap.get(a.id)?.readinessScore ?? 40) + Math.random() * 30 }))
-        .sort((x, y) => y.s - x.s)
-        .slice(0, 10)
-        .map(x => x.a);
-      return scored;
-    }
-    return artists
-      .filter(a => a.name.toLowerCase().includes(n))
-      .sort((a, b) => Number(b.name.toLowerCase().startsWith(n)) - Number(a.name.toLowerCase().startsWith(n)) || (b.followers || 0) - (a.followers || 0))
-      .slice(0, 10);
-  }, [artists, metricsMap, dq, focus]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
   const m = selected ? metricsMap.get(selected.id) : undefined;
-  const shownName = customMode ? customName || 'Гость' : selected?.name;
-  const pick = (a: Artist) => { onPick(a); setQ(''); inputRef.current?.blur(); };
-  const random = () => { if (artists.length) pick(artists[Math.floor(Math.random() * artists.length)]); };
-
+  const name = customMode ? customName || 'Гость' : selected?.name || 'Выбрать артиста';
   return (
-    <div className="relative">
-      <div className="min-h-[52px] w-full flex flex-wrap items-center gap-2 bg-black/40 border border-white/10 focus-within:border-white/25 rounded-2xl px-2.5 py-2">
-        {shownName && (
-          <span className="inline-flex items-center gap-2 pl-0.5 pr-2.5 py-0.5 rounded-full bg-white/[0.08] text-[13px] font-bold text-white max-w-full">
-            <CoverArt url={customMode ? undefined : selected?.imageUrl} title={shownName} isArtist className="w-8 h-8 rounded-full overflow-hidden shrink-0" />
-            <span className="min-w-0">
-              <span className="block truncate leading-tight">{shownName}</span>
-              <span className="block text-[10.5px] font-semibold text-zinc-400 truncate leading-tight tabular-nums">
-                {customMode ? 'гость, не из базы' : selected ? `${formatCompact(selected.followers || 0)} слуш.${m ? ` · хайп ${m.hype} · ${m.daysSilent} дн. тишины` : ''}` : ''}
-              </span>
-            </span>
+    <>
+      <button ref={ref} type="button" onClick={() => setOpen(v => !v)}
+        className={`w-full flex items-center gap-3 border text-left cursor-pointer transition-colors ${open ? 'border-white/30 bg-black/50' : 'border-white/10 bg-black/30 hover:border-white/20'} ${size === 'sm' ? 'rounded-xl px-2 py-1.5' : 'rounded-2xl px-2.5 py-2'}`}>
+        <CoverArt url={customMode ? undefined : selected?.imageUrl} title={name} isArtist className={`${size === 'sm' ? 'w-8 h-8' : 'w-10 h-10'} rounded-full overflow-hidden shrink-0 border border-white/10`} />
+        <span className="min-w-0 flex-1">
+          <span className={`block font-extrabold text-white truncate ${size === 'sm' ? 'text-[13px]' : 'text-sm'}`}>{name}</span>
+          <span className="block text-[11px] text-zinc-400 truncate tabular-nums">
+            {customMode ? 'гость, не из базы' : selected ? `${formatCompact(selected.followers || 0)} слуш./мес${m ? ` · хайп ${m.hype} · ${m.daysSilent} дн. без релиза` : ''}` : 'нажми, чтобы открыть базу'}
           </span>
-        )}
-        <input
-          ref={inputRef}
-          value={q}
-          onChange={e => setQ(e.target.value)}
-          onFocus={() => setFocus(true)}
-          onBlur={() => setTimeout(() => setFocus(false), 150)}
-          onKeyDown={e => {
-            if (e.key === 'Escape') { e.stopPropagation(); setQ(''); inputRef.current?.blur(); }
-            else if (e.key === 'Enter') {
-              e.preventDefault();
-              if (sugg[0] && q.trim()) pick(sugg[0]);
-              else if (q.trim()) { onCustom(q.trim()); setQ(''); }
-            }
-          }}
-          placeholder={shownName ? 'Сменить артиста…' : 'Выбрать артиста…'}
-          className="flex-1 min-w-[110px] bg-transparent text-sm text-white outline-none py-1"
-        />
-        <button type="button" onClick={random} title="Случайный артист" className="text-[12px] text-zinc-400 hover:text-white px-1 cursor-pointer">🎲</button>
-      </div>
-      <AnimatePresence>
-        {focus && (
-          <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-            className="absolute z-40 left-0 right-0 mt-1 rounded-2xl bg-[#14151a] border border-white/10 shadow-2xl p-1.5 max-h-80 overflow-y-auto custom-scrollbar">
-            {!q && <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Готовы к релизу и случайные</div>}
-            {sugg.map(a => {
-              const am = metricsMap.get(a.id);
-              return (
-                <button key={a.id} type="button" onMouseDown={e => e.preventDefault()} onClick={() => pick(a)}
-                  className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-xl text-left cursor-pointer ${selected?.id === a.id && !customMode ? 'bg-white/[0.07]' : 'hover:bg-white/[0.06]'}`}>
-                  <CoverArt url={a.imageUrl} title={a.name} isArtist className="w-8 h-8 rounded-full overflow-hidden shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[12.5px] font-bold text-white truncate">{a.name}</span>
-                    <span className="block text-[10.5px] text-zinc-500 truncate tabular-nums">{a.genre || '—'} · {formatCompact(a.followers || 0)}{am ? ` · хайп ${am.hype} · ${am.daysSilent} дн.` : ''}</span>
-                  </span>
-                </button>
-              );
-            })}
-            {q.trim() && sugg.length === 0 && <div className="px-2 py-1.5 text-[12px] text-zinc-500">В базе не нашлось</div>}
-            <div className="flex flex-wrap gap-1.5 px-1 pt-1.5 mt-1 border-t border-white/[0.06]">
-              {q.trim() && !sugg.some(a => a.name.toLowerCase() === q.trim().toLowerCase()) && (
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { onCustom(q.trim()); setQ(''); }}
-                  className="px-2.5 py-1 rounded-lg bg-white/[0.06] hover:bg-white/[0.1] text-[11.5px] font-semibold text-zinc-200 cursor-pointer">
-                  Гость «{q.trim()}»
-                </button>
-              )}
-              {onCreate && (
-                <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { const n = q.trim(); setQ(''); onCreate(n || undefined); }}
-                  className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-[11.5px] font-bold text-emerald-200 cursor-pointer">
-                  + Новый артист в базу
-                </button>
-              )}
-              <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { setQ(''); onOpenFull(); }}
-                className="ml-auto px-2.5 py-1 rounded-lg text-[11.5px] font-semibold text-zinc-400 hover:text-white cursor-pointer">
-                Все артисты с фильтрами →
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+        </span>
+        <ChevronDown className={`w-4 h-4 text-zinc-500 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      <FloatingPanel anchor={ref} open={open} onClose={close} width={400}>
+        <ArtistBasePanel artists={artists} metricsMap={metricsMap} mainArtist={selected} selectedNames={selected && !customMode ? [selected.name] : []} multi={false}
+          onPick={a => { onPick(a); setOpen(false); }} onGuest={nm => { onCustom(nm); setOpen(false); }}
+          onCreate={onCreate ? nm => { setOpen(false); onCreate(nm); } : undefined} onDone={close} />
+      </FloatingPanel>
+    </>
   );
 });
 
-/** promo strategy chips + release hype slider, all visible at once */
+// ---------------------------------------------------------------------------
+// growth forecast of a release (same formulas as the engine, without randomness)
+// ---------------------------------------------------------------------------
+export function projectReleaseCurve(debut: number, opt: { quality?: number; promo?: ReleasePromoStrategy; releaseHype?: number; snippet?: boolean; artist?: Artist | null }, days = 365): number[] {
+  const q = clamp(opt.quality ?? 70, 40, 95);
+  const spec = getPromoStrategyConfig(opt.promo);
+  const lon = spec ? clamp(spec.longevityMult, 0.8, 1.5) : 1;
+  const rh = typeof opt.releaseHype === 'number' ? clamp(opt.releaseHype, 10, 99) : 55;
+  const P = engineParamsFor(opt.artist || null);
+  let d: number, f: number, k: number;
+  if (opt.snippet) { d = (debut / 7) * 0.21; f = d * 0.04; k = Math.pow(0.55, 1 / 7); }
+  else {
+    const r2 = clamp(0.5 + (q - 70) * 0.006 + (lon - 1) * 0.35 - (rh - 55) / 900, 0.28, 0.82);
+    const w = clamp(0.8 + (q - 70) * 0.0035 + (lon - 1) * 0.22, 0.62, 0.94);
+    d = (Math.max(0, debut) / 7) * r2;
+    f = d * clamp(0.06 + (q - 65) * 0.003, 0.025, 0.16) * lon;
+    k = Math.pow(w, 1 / 7);
+  }
+  const out = [Math.round(debut)];
+  let total = debut;
+  for (let day = 1; day <= days; day++) {
+    const growth = P.growthMult * (day <= 14 ? P.growthEarly : day <= 60 ? P.growthMid : P.growthLate);
+    total += d * growth;
+    d = f + (d - f) * k;
+    out.push(Math.round(total));
+  }
+  return out;
+}
+
+const FORECAST_MARKS: Array<[number, string]> = [[0, 'Дебют'], [7, '1 нед.'], [14, '2 нед.'], [30, 'Месяц'], [90, '3 мес.'], [180, 'Полгода'], [365, 'Год']];
+
+const GrowthForecastButton: React.FC<{ debut: number; quality?: number; promo?: ReleasePromoStrategy; releaseHype?: number; snippet?: boolean; artist?: Artist | null; title?: string; small?: boolean }> = ({ debut, quality, promo, releaseHype, snippet, artist, title, small }) => {
+  const [open, setOpen] = useState(false);
+  const [day, setDay] = useState(30);
+  const ref = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  const curve = useMemo(() => (open ? projectReleaseCurve(debut, { quality, promo, releaseHype, snippet, artist }) : []), [open, debut, quality, promo, releaseHype, snippet, artist]);
+  const W = 300, H = 90;
+  const max = curve.length ? curve[curve.length - 1] : 1;
+  const yOf = (v: number) => H - (v / Math.max(1, max)) * (H - 6);
+  const sample: number[] = [];
+  for (let i = 0; i < curve.length; i += 3) sample.push(i);
+  if (curve.length && sample[sample.length - 1] !== curve.length - 1) sample.push(curve.length - 1);
+  const path = sample.map((idx, i) => `${i === 0 ? 'M' : 'L'}${(Math.sqrt(idx / 365) * W).toFixed(1)},${yOf(curve[idx]).toFixed(1)}`).join(' ');
+  const xOf = (dd: number) => Math.sqrt(dd / 365) * W;
+  const weekly = curve.length ? (curve[Math.min(365, day + 7)] ?? curve[365]) - curve[day] : 0;
+  return (
+    <>
+      <button ref={ref} type="button" onClick={e => { e.stopPropagation(); setOpen(v => !v); }} title="Прогноз роста прослушиваний"
+        className={`${small ? 'p-1.5 rounded-lg' : 'w-10 h-10 rounded-2xl border border-white/10 bg-white/[0.06]'} shrink-0 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer transition-colors`}>
+        <BarChart3 className={small ? 'w-3.5 h-3.5' : 'w-4 h-4 theme-accent'} />
+      </button>
+      <FloatingPanel anchor={ref} open={open} onClose={close} width={340} align="right">
+        <div className="p-3.5 space-y-3">
+          <div>
+            <p className="text-[12.5px] font-extrabold text-white truncate">{title || 'Прогноз роста'}</p>
+            <p className="text-[10.5px] text-zinc-500">По формулам движка, без случайностей. Реальный рост будет чуть гулять.</p>
+          </div>
+          {debut > 0 ? (
+            <>
+              <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[90px]">
+                <path d={`${path} L${W},${H} L0,${H} Z`} fill="var(--accent-color)" opacity="0.12" />
+                <path d={path} fill="none" stroke="var(--accent-color)" strokeWidth="2" />
+                <line x1={xOf(day)} x2={xOf(day)} y1="0" y2={H} stroke="white" strokeOpacity="0.35" strokeDasharray="3 3" />
+                <circle cx={xOf(day)} cy={yOf(curve[day] || 0)} r="3.5" fill="white" />
+              </svg>
+              <div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] text-zinc-400">Через {day} дн.</span>
+                  <span className="text-[15px] font-extrabold text-white tabular-nums">{formatNumber(curve[day] || 0)}</span>
+                </div>
+                <input type="range" min={0} max={365} value={day} onChange={e => setDay(parseInt(e.target.value, 10))} className="w-full accent-[var(--accent-color)] cursor-pointer" />
+                <p className="text-[10.5px] text-zinc-500 tabular-nums">В эту неделю ≈ {formatCompact(Math.max(0, weekly))} прослушиваний</p>
+              </div>
+              <div className="grid grid-cols-4 gap-1">
+                {FORECAST_MARKS.map(([dd, l]) => (
+                  <button key={dd} type="button" onClick={() => setDay(dd)}
+                    className={`rounded-lg px-1.5 py-1 text-left cursor-pointer ${day === dd ? 'bg-white/[0.12]' : 'bg-white/[0.04] hover:bg-white/[0.08]'}`}>
+                    <span className="block text-[9.5px] text-zinc-500">{l}</span>
+                    <span className="block text-[11px] font-bold text-white tabular-nums">{formatCompact(curve[dd] || 0)}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : <p className="text-[12px] text-zinc-500">Сначала задай стартовые прослушивания</p>}
+        </div>
+      </FloatingPanel>
+    </>
+  );
+};
+
+/** promo strategy chips + release hype slider */
 const PromoHypeInline: React.FC<{
   promo?: ReleasePromoStrategy;
   hype?: number;
@@ -7630,35 +7810,291 @@ const PromoHypeInline: React.FC<{
     <div className="space-y-3">
       <div className="flex flex-wrap gap-1.5">
         <button type="button" onClick={() => onChange(undefined, hype)}
-          className={`px-2.5 py-1.5 rounded-xl text-[11.5px] font-bold border cursor-pointer transition-colors ${!promo ? 'bg-white text-black border-white' : 'border-white/10 text-zinc-300 hover:text-white hover:border-white/25'}`}>
-          Без промо
-        </button>
-        {keys.map(k => {
-          const sp = RELEASE_PROMO_LABELS[k];
-          return (
-            <button key={k} type="button" title={sp.hint} onClick={() => onChange(k, hype)}
-              className={`px-2.5 py-1.5 rounded-xl text-[11.5px] font-bold border cursor-pointer transition-colors ${promo === k ? 'theme-bg-accent text-black border-transparent' : 'border-white/10 text-zinc-300 hover:text-white hover:border-white/25'}`}>
-              {sp.shortLabel}
-            </button>
-          );
-        })}
+          className={`px-2.5 py-1.5 rounded-xl text-[11.5px] font-bold border cursor-pointer transition-colors ${!promo ? 'bg-white text-black border-white' : 'border-white/10 text-zinc-300 hover:text-white hover:border-white/25'}`}>Без промо</button>
+        {keys.map(k => (
+          <button key={k} type="button" title={RELEASE_PROMO_LABELS[k].hint} onClick={() => onChange(k, hype)}
+            className={`px-2.5 py-1.5 rounded-xl text-[11.5px] font-bold border cursor-pointer transition-colors ${promo === k ? 'theme-bg-accent text-black border-transparent' : 'border-white/10 text-zinc-300 hover:text-white hover:border-white/25'}`}>
+            {RELEASE_PROMO_LABELS[k].shortLabel}
+          </button>
+        ))}
       </div>
       {spec && <p className="text-[11px] text-zinc-400 leading-snug">{spec.hint}</p>}
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-[11px] font-bold text-zinc-400 w-24 shrink-0">Хайп релиза</span>
-        <input type="range" min={10} max={99} value={value} onChange={e => onChange(promo, parseInt(e.target.value, 10))}
-          className="flex-1 min-w-[140px] accent-[var(--accent-color)] cursor-pointer" />
-        <span className={`w-10 text-right text-sm font-extrabold tabular-nums ${typeof hype === 'number' ? 'text-white' : 'text-zinc-500'}`}>{value}</span>
+        <input type="range" min={10} max={99} value={value} onChange={e => onChange(promo, parseInt(e.target.value, 10))} className="flex-1 min-w-[140px] accent-[var(--accent-color)] cursor-pointer" />
+        <span className={`w-9 text-right text-sm font-extrabold tabular-nums ${typeof hype === 'number' ? 'text-white' : 'text-zinc-500'}`}>{value}</span>
         <div className="flex gap-1">
           {[35, 55, 75, 95].map(v => (
-            <button key={v} type="button" onClick={() => onChange(promo, v)}
-              className={`w-9 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${hype === v ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>{v}</button>
+            <button key={v} type="button" onClick={() => onChange(promo, v)} className={`w-9 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${hype === v ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>{v}</button>
           ))}
           <button type="button" onClick={() => onChange(promo, undefined)} title="Хайп по метрикам артиста"
             className={`px-2 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${typeof hype !== 'number' ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>авто</button>
         </div>
       </div>
     </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// window settings: width, height, columns — one small button
+// ---------------------------------------------------------------------------
+interface SimWinSettings { w: number; h: number; cols: number }
+const SIM_WIN_DEFAULT: SimWinSettings = { w: 92, h: 88, cols: 2 };
+const SIM_WIN_PRESETS: Array<[string, SimWinSettings]> = [['Компакт', { w: 70, h: 80, cols: 1 }], ['Стандарт', { w: 92, h: 88, cols: 2 }], ['Широко', { w: 98, h: 94, cols: 3 }], ['Весь экран', { w: 100, h: 100, cols: 3 }]];
+function useSimWindowSettings(key: string, fallback: SimWinSettings = SIM_WIN_DEFAULT) {
+  const [s, setS] = useState<SimWinSettings>(() => {
+    try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v && typeof v.w === 'number' ? { ...fallback, ...v } : fallback; } catch { return fallback; }
+  });
+  const ref = useRef<HTMLDivElement>(null);
+  const set = (patch: Partial<SimWinSettings>) => {
+    setS(prev => { const n = { ...prev, ...patch }; try { localStorage.setItem(key, JSON.stringify(n)); } catch { /* */ } return n; });
+    if (ref.current && (patch.w !== undefined || patch.h !== undefined)) { ref.current.style.width = ''; ref.current.style.height = ''; }
+  };
+  const style: React.CSSProperties = {
+    width: `min(${s.w}vw, calc(100vw - 0.5rem))`,
+    height: `min(${s.h}vh, calc(100vh - 0.5rem))`,
+    maxWidth: 'none',
+    resize: 'both',
+    minWidth: 'min(520px, calc(100vw - 0.5rem))',
+    minHeight: 'min(420px, calc(100vh - 0.5rem))'
+  };
+  return [s, set, ref, style] as const;
+}
+const SimWindowSettingsButton: React.FC<{ value: SimWinSettings; onChange: (p: Partial<SimWinSettings>) => void; showCols?: boolean }> = ({ value, onChange, showCols = true }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  return (
+    <>
+      <button ref={ref} type="button" onClick={() => setOpen(v => !v)} title="Размер окна и колонки"
+        className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors ${open ? 'bg-white text-black border-transparent' : 'border-white/10 text-zinc-300 hover:text-white'}`}>
+        <Sliders className="w-3.5 h-3.5" /> Окно
+      </button>
+      <FloatingPanel anchor={ref} open={open} onClose={close} width={300} align="right">
+        <div className="p-3.5 space-y-3.5">
+          <div className="grid grid-cols-2 gap-1.5">
+            {SIM_WIN_PRESETS.map(([l, p]) => (
+              <button key={l} type="button" onClick={() => onChange(p)}
+                className={`py-1.5 rounded-xl text-[11.5px] font-bold cursor-pointer ${value.w === p.w && value.h === p.h ? 'bg-white text-black' : 'bg-white/[0.05] text-zinc-200 hover:bg-white/[0.1]'}`}>{l}</button>
+            ))}
+          </div>
+          {([['w', 'Ширина', 50, 100], ['h', 'Высота', 55, 100]] as const).map(([k, l, mn, mx]) => (
+            <div key={k}>
+              <div className="flex justify-between text-[11px]"><span className="text-zinc-400 font-semibold">{l}</span><span className="text-white font-bold tabular-nums">{value[k]}%</span></div>
+              <input type="range" min={mn} max={mx} value={value[k]} onChange={e => onChange({ [k]: parseInt(e.target.value, 10) } as Partial<SimWinSettings>)} className="w-full accent-[var(--accent-color)] cursor-pointer" />
+            </div>
+          ))}
+          {showCols && (
+            <div>
+              <span className="text-[11px] text-zinc-400 font-semibold">Колонки (треклист, очередь, плитка радара)</span>
+              <div className="mt-1 grid grid-cols-4 gap-1">
+                {[1, 2, 3, 4].map(c => (
+                  <button key={c} type="button" onClick={() => onChange({ cols: c })}
+                    className={`py-1.5 rounded-lg text-[12px] font-bold cursor-pointer ${value.cols === c ? 'theme-bg-accent text-black' : 'bg-white/[0.05] text-zinc-300 hover:bg-white/[0.1]'}`}>{c}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="text-[10.5px] text-zinc-500">Угол окна справа внизу тоже можно тянуть мышкой.</p>
+        </div>
+      </FloatingPanel>
+    </>
+  );
+};
+const gridCols = (n: number): React.CSSProperties => ({ gridTemplateColumns: `repeat(${Math.max(1, n)}, minmax(0, 1fr))` });
+
+// ---------------------------------------------------------------------------
+// releases & rumors of the step: ONLY the release calendar and rumors confirmed in the feed
+// ---------------------------------------------------------------------------
+const SimBuzzStrip: React.FC<{
+  simState: SimState;
+  from: string;
+  to: string;
+  friday: string;
+  rumors: ConfirmedRumor[];
+  anns: Announcement[];
+  target: 'manual' | 'semi';
+  onUseRumor: (id: string) => void;
+  onUseAnn: (id: string) => void;
+}> = ({ simState, from, to, friday, rumors, anns, target, onUseRumor, onUseAnn }) => {
+  const items = useMemo(() => {
+    const taken = new Set<string>([
+      ...simState.tracks.map(t => `${t.artistName.toLowerCase()}|${t.title.toLowerCase()}`),
+      ...simState.albums.map(a => `${a.artistName.toLowerCase()}|${a.title.toLowerCase()}`)
+    ]);
+    const fmt: Record<string, string> = { single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет', clip: 'клип' };
+    const out: Array<{ key: string; id: string; kind: 'rumor' | 'ann'; date: string; text: string; sub: string }> = [];
+    rumors.forEach(r => {
+      if (r.used || !isInSimReleaseWindow(r.date, from, to)) return;
+      out.push({ key: `r${r.id}`, id: r.id, kind: 'rumor', date: r.date.slice(0, 10), text: `${r.artistName} · ${r.title ? `«${r.title}»` : fmt[r.kind] || r.kind}${r.feat ? ` feat. ${r.feat}` : ''}`, sub: r.source || 'соцсети' });
+    });
+    anns.forEach(a => {
+      if (!a || a.released || a.simUsed || !isInSimReleaseWindow(a.date, from, to)) return;
+      if (taken.has(`${a.artistName.toLowerCase()}|${(a.title || '').toLowerCase()}`)) return;
+      out.push({ key: `a${a.id}`, id: a.id, kind: 'ann', date: a.date.slice(0, 10), text: `${a.artistName} · «${a.title}»${a.featuredArtist ? ` feat. ${a.featuredArtist}` : ''} · ${fmt[a.type] || a.type}`, sub: 'календарь' });
+    });
+    return out.sort((x, y) => x.date.localeCompare(y.date));
+  }, [simState.tracks, simState.albums, rumors, anns, from, to]);
+  const short = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)}`;
+  return (
+    <section className="mb-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] px-3 py-2.5">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <h3 className="text-xs font-bold text-white">Из календаря и подтверждённых слухов</h3>
+        <span className="text-[11px] tabular-nums text-zinc-500">{short(from)}–{short(to)}</span>
+        {!items.length && <span className="text-[11px] text-zinc-500">на этот шаг ничего нет</span>}
+      </div>
+      {items.length > 0 && (
+        <div className="mt-2 flex gap-1.5 overflow-x-auto custom-scrollbar pb-0.5">
+          {items.map(it => (
+            <button key={it.key} type="button" onClick={() => (it.kind === 'rumor' ? onUseRumor(it.id) : onUseAnn(it.id))}
+              title={target === 'manual' ? 'Открыть в форме ручного батча' : 'Добавить в полуавтомат'}
+              className={`shrink-0 inline-flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-[11.5px] cursor-pointer hover:brightness-125 transition ${it.kind === 'rumor' ? 'bg-violet-400/10 text-violet-100 border-violet-400/25' : 'bg-emerald-400/10 text-emerald-100 border-emerald-400/25'} ${it.date === friday ? 'ring-1 ring-inset ring-white/25' : ''}`}>
+              <span className="font-bold">{it.kind === 'rumor' ? 'Слух' : 'Календарь'}</span>
+              <span className="max-w-[240px] truncate">{it.text}</span>
+              <span className="tabular-nums opacity-70">{it.date === from ? 'сегодня' : short(it.date)}</span>
+              <span className="opacity-70">＋</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// queue showcase: calm list, albums unfold to their tracklist
+// ---------------------------------------------------------------------------
+const QueueShowcaseModal: React.FC<{
+  queue: ManualSimItem[];
+  artists: Artist[];
+  metricsMap: Map<string, ArtistSimMetrics>;
+  onClose: () => void;
+  onEdit: (item: ManualSimItem) => void;
+  onRemove: (id: string) => void;
+  onRun: () => void;
+  runLabel: string;
+}> = ({ queue, artists, metricsMap, onClose, onEdit, onRemove, onRun, runLabel }) => {
+  const [openId, setOpenId] = useState<string | null>(null);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    window.addEventListener('keydown', k, true);
+    return () => window.removeEventListener('keydown', k, true);
+  }, [onClose]);
+  const artistById = useMemo(() => new Map(artists.map(a => [a.id, a])), [artists]);
+  const total = queue.reduce((s, q) => s + (q.plays || 0), 0);
+  const tracks = queue.reduce((s, q) => s + (q.itemType === 'album' ? q.albumTracks?.length || q.albumTracksCount || 0 : 1), 0);
+  const label = (q: ManualSimItem) => (q.itemType === 'album' ? (q.releaseFormat === 'ep' ? 'EP' : 'Альбом') : q.itemType === 'snippet' ? 'Сниппет' : 'Сингл');
+  return createPortal(
+    <div className="fixed inset-0 z-[230] flex items-center justify-center p-3 sm:p-6">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={onClose} />
+      <motion.div initial={{ opacity: 0, y: 12, scale: 0.99 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.18 }}
+        className="relative w-full max-w-3xl max-h-[88vh] bg-zinc-950 border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col z-10" onClick={e => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-extrabold text-white">Очередь недели</h3>
+            <p className="text-[12px] text-zinc-400 tabular-nums mt-0.5">{queue.length} релиз(ов) · {tracks} тр. · ≈ {formatCompact(total)} на старте</p>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto custom-scrollbar px-4 sm:px-6 pb-4 space-y-2">
+          {queue.length === 0 && <p className="py-16 text-center text-sm text-zinc-500">Очередь пуста</p>}
+          {queue.map(item => {
+            const isOpen = openId === item.id;
+            const art = artistById.get(item.artistId);
+            const q = metricsMap.get(item.artistId)?.avgQuality;
+            const list = item.albumTracks || [];
+            const maxP = Math.max(1, ...list.map(t => t.plays || 0));
+            return (
+              <div key={item.id} className={`rounded-2xl border transition-colors ${isOpen ? 'border-white/15 bg-white/[0.03]' : 'border-white/[0.06] hover:border-white/12'}`}>
+                <div className="flex items-center gap-3.5 p-3">
+                  <CoverArt url={item.coverUrl} title={item.title} albumTitle={item.itemType === 'album' ? item.title : undefined} className="w-14 h-14 rounded-xl shrink-0" />
+                  <button type="button" onClick={() => item.itemType === 'album' && setOpenId(isOpen ? null : item.id)} className={`flex-1 min-w-0 text-left ${item.itemType === 'album' ? 'cursor-pointer' : 'cursor-default'}`}>
+                    <p className="text-[14px] font-extrabold text-white truncate">{item.title}</p>
+                    <p className="text-[12px] text-zinc-400 truncate">{item.artistName}{item.coArtist ? ` & ${item.coArtist}` : ''}{item.featuredArtist ? ` feat. ${item.featuredArtist}` : ''}</p>
+                    <p className="text-[11px] text-zinc-500 tabular-nums mt-0.5">
+                      <span className="text-zinc-300 font-semibold">{label(item)}</span>
+                      {item.itemType === 'album' ? ` · ${list.length || item.albumTracksCount || 0} тр.` : item.duration ? ` · ${item.duration}` : ''}
+                      {item.promoStrategy ? ` · ${RELEASE_PROMO_LABELS[item.promoStrategy]?.shortLabel || ''}` : ''}
+                      {typeof item.releaseHype === 'number' ? ` · хайп ${item.releaseHype}` : ''}
+                    </p>
+                  </button>
+                  <div className="text-right shrink-0">
+                    <p className="text-[14px] font-extrabold text-emerald-300 tabular-nums">{formatCompact(item.plays || 0)}</p>
+                    <p className="text-[10px] text-zinc-500">на старте</p>
+                  </div>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <GrowthForecastButton small debut={item.plays || 0} quality={q} promo={item.promoStrategy} releaseHype={item.releaseHype} snippet={item.itemType === 'snippet'} artist={art} title={`«${item.title}» — прогноз`} />
+                    {item.itemType === 'album' && (
+                      <button type="button" onClick={() => setOpenId(isOpen ? null : item.id)} className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer" title="Треклист">
+                        <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                    )}
+                    <button type="button" onClick={() => onEdit(item)} className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer" title="Изменить"><Pencil className="w-4 h-4" /></button>
+                    <button type="button" onClick={() => onRemove(item.id)} className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer" title="Убрать"><X className="w-4 h-4" /></button>
+                  </div>
+                </div>
+                <AnimatePresence initial={false}>
+                  {isOpen && list.length > 0 && (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }} className="overflow-hidden">
+                      <div className="px-3 pb-3">
+                        <div className="rounded-xl bg-black/30 divide-y divide-white/[0.04]">
+                          {list.map((t, i) => (
+                            <div key={t.id} className="flex items-center gap-3 px-3 py-2">
+                              <span className="w-5 text-[11px] text-zinc-500 tabular-nums">{i + 1}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[12.5px] font-semibold text-white truncate">{t.title}</p>
+                                {t.featuredArtist && <p className="text-[11px] text-zinc-400 truncate">feat. {t.featuredArtist}</p>}
+                              </div>
+                              <span className="w-20 hidden sm:block h-1 rounded-full bg-white/[0.06] overflow-hidden"><span className="block h-full theme-bg-accent opacity-70" style={{ width: `${Math.max(4, ((t.plays || 0) / maxP) * 100)}%` }} /></span>
+                              <span className="w-12 text-right text-[11px] font-mono text-zinc-400">{t.duration || ''}</span>
+                              <span className="w-20 text-right text-[12px] font-bold text-zinc-200 tabular-nums">{formatCompact(t.plays || 0)}</span>
+                              <GrowthForecastButton small debut={t.plays || 0} quality={q} promo={item.promoStrategy} releaseHype={item.releaseHype} artist={art} title={`«${t.title}» — прогноз`} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          })}
+        </div>
+        <div className="px-6 py-4 border-t border-white/[0.07] flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/[0.06] cursor-pointer">Закрыть</button>
+          {queue.length > 0 && (
+            <button type="button" onClick={onRun} className="px-4 py-2 rounded-xl theme-bg-accent text-black text-xs font-extrabold flex items-center gap-1.5 cursor-pointer hover:opacity-90">
+              <FastForward className="w-4 h-4 fill-black" /> {runLabel}
+            </button>
+          )}
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+};
+
+/** compact promo button: the full promo / hype settings open in a floating panel */
+const PromoChipButton: React.FC<{ promo?: ReleasePromoStrategy; hype?: number; defaultHype: number; onChange: (p: ReleasePromoStrategy | undefined, h: number | undefined) => void }> = ({ promo, hype, defaultHype, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  const spec = promo ? RELEASE_PROMO_LABELS[promo] : null;
+  return (
+    <>
+      <button ref={ref} type="button" onClick={() => setOpen(v => !v)}
+        className={`h-[42px] w-full px-3 rounded-2xl border text-left flex items-center gap-2 cursor-pointer transition-colors ${open ? 'border-white/30 bg-black/50' : 'border-white/10 bg-black/30 hover:border-white/20'}`}>
+        <Flame className="w-4 h-4 theme-accent shrink-0" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-[12px] font-bold text-white truncate">{spec ? spec.shortLabel : 'Без промо'}</span>
+          <span className="block text-[10.5px] text-zinc-400 tabular-nums">хайп {typeof hype === 'number' ? hype : `авто (${defaultHype})`}</span>
+        </span>
+        <ChevronDown className="w-4 h-4 text-zinc-500 shrink-0" />
+      </button>
+      <FloatingPanel anchor={ref} open={open} onClose={close} width={460} align="right">
+        <div className="p-3.5"><PromoHypeInline promo={promo} hype={hype} defaultHype={defaultHype} onChange={onChange} /></div>
+      </FloatingPanel>
+    </>
   );
 };
 
@@ -7690,7 +8126,8 @@ const SimManualTab = memo(({
   clearRadarAssignment,
   clearCreatedAssignment,
   clearManualFormRequest,
-  simple
+  simple,
+  cols = 2
 }: {
   simState: SimState;
   artistByIdMap: Map<string, Artist>;
@@ -7714,13 +8151,15 @@ const SimManualTab = memo(({
   clearCreatedAssignment: () => void;
   clearManualFormRequest: () => void;
   simple: boolean;
+  cols?: number;
 }) => {
   const [D] = useState(() => loadManualDraft(simState.startDate));
   const [manualItemType, setManualItemType] = useState<'track' | 'album' | 'snippet'>(D.itemType || 'track');
   const [albumFormat, setAlbumFormat] = useState<'album' | 'ep'>(D.albumFormat || 'album');
-  const [manualView, setManualView] = useState<'normal' | 'wide' | 'compact'>(() => { try { const v = localStorage.getItem('musaic.sim.manualView'); return v === 'wide' || v === 'compact' ? v : 'normal'; } catch { return 'normal'; } });
-  const changeManualView = (v: 'normal' | 'wide' | 'compact') => { setManualView(v); try { localStorage.setItem('musaic.sim.manualView', v); } catch { /* */ } };
-  const [userPresets, setUserPresets] = useState<ManualPreset[]>(() => loadUserPresets());
+  type BatchLayout = 'studio' | 'workshop' | 'conveyor' | 'steps';
+  const [layout, setLayoutState] = useState<BatchLayout>(() => { try { const v = localStorage.getItem('musaic.sim.batchLayout'); return v === 'workshop' || v === 'conveyor' || v === 'steps' ? v : 'studio'; } catch { return 'studio'; } });
+  const setLayout = (v: BatchLayout) => { setLayoutState(v); try { localStorage.setItem('musaic.sim.batchLayout', v); } catch { /* */ } };
+  const [step, setStep] = useState(0);
   const manualReleaseFormat = manualItemType === 'album' ? albumFormat : manualItemType === 'track' ? 'single' : 'snippet';
   const [manualTitle, setManualTitle] = useState<string>(D.title ?? '');
   const [manualArtistId, setManualArtistId] = useState<string>(() => artistByIdMap.has(D.artistId) ? D.artistId : simState.artists[0]?.id || '');
@@ -8180,64 +8619,9 @@ const SimManualTab = memo(({
   const labelCls = 'text-[11px] font-bold text-zinc-400 block mb-1.5';
   const iconBtn = 'shrink-0 w-10 h-10 rounded-2xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-zinc-200 hover:text-white flex items-center justify-center cursor-pointer transition-colors';
 
-  // ---- presets: one tap sets type, size, promo and hype (and fills what is missing) ----
-  const applyPreset = (p: ManualPreset) => {
-    const type = p.itemType;
-    switchType(type, type === 'album' ? p.albumFormat || 'album' : undefined);
-    setManualPromoStrategy(p.promo);
-    setManualReleaseHype(p.hype);
-    if (type === 'album') {
-      const count = clamp(p.count || (p.albumFormat === 'ep' ? 5 : 12), 3, 40);
-      setManualAlbumTracksCount(count);
-      if (selectedArt && !manualCustomArtistMode) {
-        const generated = generateAlbumTracksWithFeats({
-          artist: selectedArt,
-          allArtists: simState.artists,
-          count,
-          estimatedAlbumPlays: rollManualPlays(count),
-          existingTitles: new Set<string>([...existingTitleSet, ...manualQueue.map(q => q.title.toLowerCase())]),
-          namingProfile: selectedArtMetrics?.namingProfile ?? false,
-          languageOverride: autopilot.languageMix,
-          coArtist: manualCoArtist.trim() || undefined,
-          collabRate: p.feats === 'many' ? 'high' : p.feats === 'none' ? 'low' : autopilot.collabRate,
-          allowSurpriseCollabs: autopilot.allowSurpriseCollabs
-        });
-        setManualAlbumTracks(p.feats === 'none' ? generated.map(t => ({ ...t, featuredArtist: undefined })) : generated);
-      }
-    } else {
-      if (p.feats === 'one' && !manualFeat.trim()) { const g = randomGuestName(); if (g) setManualFeat(g); }
-      if (p.feats === 'none') setManualFeat('');
-      setManualPlays('');
-      if (type === 'snippet' && !manualSnippetTeaser) setManualSnippetTeaser(SNIPPET_TEASERS[randInt(0, SNIPPET_TEASERS.length - 1)]);
-    }
-    if (!manualTitle.trim()) {
-      const existing = new Set<string>([...existingTitleSet, ...manualQueue.map(q => q.title.toLowerCase())]);
-      setManualTitle(generateModernTitle(existing, type === 'album', selectedArtMetrics?.namingProfile ?? false, autopilot.languageMix, manualTitleMood));
-    }
-  };
-  const saveCurrentAsPreset = () => {
-    const name = (typeof window !== 'undefined' ? window.prompt('Название пресета', manualItemType === 'album' ? (albumFormat === 'ep' ? 'Мой EP' : 'Мой альбом') : 'Мой сингл') : '') || '';
-    if (!name.trim()) return;
-    const featNames = splitFeaturedList(manualFeat);
-    const preset: ManualPreset = {
-      id: makeId('mp'),
-      name: name.trim().slice(0, 28),
-      itemType: manualItemType,
-      albumFormat: manualItemType === 'album' ? albumFormat : undefined,
-      count: manualItemType === 'album' ? manualAlbumTracks.length || manualAlbumTracksCount : undefined,
-      promo: manualPromoStrategy,
-      hype: manualReleaseHype,
-      feats: manualItemType === 'album' ? (manualAlbumTracks.filter(t => t.featuredArtist).length >= 3 ? 'many' : manualAlbumTracks.some(t => t.featuredArtist) ? 'auto' : 'none') : featNames.length ? 'one' : 'none'
-    };
-    const next = [...userPresets, preset].slice(-16);
-    setUserPresets(next);
-    saveUserPresets(next);
-  };
-  const removeUserPreset = (id: string) => {
-    const next = userPresets.filter(p => p.id !== id);
-    setUserPresets(next);
-    saveUserPresets(next);
-  };
+  const estQuality = clamp((selectedArtMetrics?.avgQuality || 70) + 3, 50, 90);
+  const singleDebut = parseFormattedNumber(manualPlays) || autoForecastPlays;
+  const promoChipLabel = `${promoSpec ? promoSpec.shortLabel : 'Без промо'} · хайп ${typeof manualReleaseHype === 'number' ? manualReleaseHype : 'авто'}`;
 
   // streams for imported text tracklists: every track rolls its own number by the album formula
   const importParsedTracks = (parsed: Array<{ title: string; featuredArtist?: string; duration?: string; plays?: number }>) => {
@@ -8254,103 +8638,205 @@ const SimManualTab = memo(({
     setManualAlbumTracks(combined.map((t, i) => (i >= manualAlbumTracks.length && !t.plays ? { ...t, plays: streams[i] } : t)));
   };
 
-  const coverCol = manualView !== 'compact' && !simple;
-  const albumBuilder = isAlbum && (
-    <section className="rounded-3xl bg-zinc-900/45 border border-white/10 p-4 sm:p-6 space-y-4 min-w-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h4 className="text-base font-extrabold text-white flex items-center gap-2">
-            <Disc className="w-4 h-4 theme-accent" />
-            Конструктор {albumFormat === 'ep' ? 'EP' : 'альбома'}
-          </h4>
-          <div className="flex flex-wrap gap-1.5 mt-2 text-[11px] font-semibold tabular-nums">
-            <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200">{manualAlbumTracks.length} тр.</span>
-            <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200">{fmtTotalDur(albumTotalSec)}</span>
-            <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-200">{formatNumber(albumTracksTotalPlays)} прослушиваний</span>
-            <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300">{manualAlbumTracks.filter(t => t.featuredArtist).length} с фитами</span>
-          </div>
+  // ======================= building blocks =======================
+  const createFor = (ctx: 'manual_main' | 'manual_feat' | 'manual_co' | 'manual_child_feat') =>
+    hasCreateArtist ? (name?: string) => onRequestCreateArtist(ctx, name) : undefined;
+  const typeName = isAlbum ? (albumFormat === 'ep' ? 'EP' : 'альбома') : manualItemType === 'snippet' ? 'сниппета' : 'трека';
+
+  const typeSwitch = (
+    <div className="grid grid-cols-4 gap-1 p-1 bg-black/40 rounded-2xl border border-white/10">
+      {typeOptions.map(t => {
+        const active = manualItemType === t.id && (!('format' in t) || albumFormat === t.format);
+        return (
+          <button key={t.label} type="button" aria-pressed={active} onClick={() => switchType(t.id, 'format' in t ? t.format : undefined)}
+            className={`py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${active ? 'theme-bg-accent text-black shadow' : 'text-zinc-400 hover:text-white'}`}>
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const coverBlock = (variant: 'big' | 'small') => (
+    <div className={variant === 'big' ? 'space-y-2.5' : 'flex items-center gap-3'}>
+      <div className={`group relative overflow-hidden border border-white/12 bg-black/50 shrink-0 ${variant === 'big' ? 'aspect-square w-full max-w-[300px] mx-auto lg:max-w-none rounded-3xl shadow-2xl' : 'w-20 h-20 rounded-2xl'}`}>
+        <CoverArt url={manualCoverUrl} title={manualTitle || 'Новый релиз'} albumTitle={isAlbum ? manualTitle || 'Альбом' : undefined} className="w-full h-full" />
+        <div className="absolute inset-x-0 bottom-0 p-1.5 flex justify-center gap-1 bg-gradient-to-t from-black/85 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+          <label title="Загрузить обложку" className="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 text-white flex items-center justify-center cursor-pointer">
+            <FileUp className="w-4 h-4" /><input type="file" accept="image/*" onChange={handleUploadCoverFile} className="hidden" />
+          </label>
+          <button type="button" title="Редактор обложек" onClick={() => setIsCoverEditorOpen(true)} className="w-8 h-8 rounded-xl bg-white/15 hover:bg-white/25 text-white flex items-center justify-center cursor-pointer"><Pencil className="w-4 h-4" /></button>
+          {manualCoverUrl && <button type="button" title="Вернуть сгенерированную" onClick={() => setManualCoverUrl('')} className="w-8 h-8 rounded-xl bg-white/15 hover:bg-rose-500/60 text-white flex items-center justify-center cursor-pointer"><X className="w-4 h-4" /></button>}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center rounded-2xl border border-white/10 bg-black/40" title="Сколько треков сгенерировать">
-            <button type="button" onClick={() => setManualAlbumTracksCount(c => clamp(c - 1, 3, 40))} className="w-9 h-10 text-zinc-300 hover:text-white cursor-pointer">−</button>
-            <span className="w-9 text-center text-sm font-extrabold text-white tabular-nums">{manualAlbumTracksCount}</span>
-            <button type="button" onClick={() => setManualAlbumTracksCount(c => clamp(c + 1, 3, 40))} className="w-9 h-10 text-zinc-300 hover:text-white cursor-pointer">+</button>
+      </div>
+      <p className={`text-[11px] text-zinc-500 ${variant === 'big' ? 'text-center' : ''}`}>{manualCoverUrl ? 'Своя обложка' : 'Сгенерированная обложка'}{variant === 'big' ? ' · наведи, чтобы изменить' : ''}</p>
+    </div>
+  );
+
+  const artistField = (
+    <div>
+      <span className={labelCls}>Основной артист</span>
+      <ArtistSelect artists={simState.artists} metricsMap={metricsMap} selected={selectedArt} customMode={manualCustomArtistMode} customName={manualCustomArtist}
+        onPick={pickMainArtist} onCustom={name => { setManualCustomArtistMode(true); setManualCustomArtist(name); }} onCreate={createFor('manual_main')} />
+    </div>
+  );
+
+  const titleField = (
+    <div>
+      <span className={labelCls}>Название {typeName}</span>
+      <div className="flex gap-1.5">
+        <input type="text" value={manualTitle} onChange={e => setManualTitle(e.target.value)} placeholder="Впиши или нажми 🎲" className={`${fieldCls} flex-1 min-w-0 text-sm`} />
+        <TitleMoodPicker value={manualTitleMood} onChange={nextMood => { setManualTitleMood(nextMood); handleGenerateRandomTitle(nextMood); }} />
+        <button type="button" onClick={() => handleGenerateRandomTitle()} className={iconBtn} title="Случайное название"><Dices className="w-4 h-4 theme-accent" /></button>
+      </div>
+    </div>
+  );
+
+  const featField = (
+    <div className="min-w-0">
+      <span className={labelCls}>{isAlbum ? 'Фит на первом треке' : 'Фит'}</span>
+      <GuestPicker value={manualFeat} onChange={setManualFeat} artists={simState.artists} metricsMap={metricsMap} mainArtist={selectedArt} placeholder="Нажми, чтобы выбрать гостя из базы" onCreate={createFor('manual_feat')} />
+    </div>
+  );
+
+  const coField = isAlbum ? (
+    <div className="min-w-0">
+      <span className={labelCls}>Совместный {albumFormat === 'ep' ? 'EP' : 'альбом'} с…</span>
+      <GuestPicker value={manualCoArtist} onChange={setManualCoArtist} artists={simState.artists} metricsMap={metricsMap} mainArtist={selectedArt} placeholder="Соавтор (необязательно)" onCreate={createFor('manual_co')} />
+    </div>
+  ) : null;
+
+  const durationField = !isAlbum ? (
+    <div>
+      <span className={labelCls}>Длительность</span>
+      <div className="flex gap-1.5">
+        <input type="text" value={manualDuration} onChange={e => setManualDuration(e.target.value)} placeholder={manualItemType === 'snippet' ? '0:32' : 'авто'} className={`${fieldCls} flex-1 min-w-0 font-mono text-center px-2`} />
+        <button type="button" title="Случайная длительность (с учётом фитов)" onClick={() => setManualDuration(smartDuration(manualFeat, { snippet: manualItemType === 'snippet' }))} className={iconBtn}><Clock className="w-4 h-4 theme-accent" /></button>
+      </div>
+    </div>
+  ) : null;
+
+  const playsField = isAlbum ? (
+    <div className="rounded-2xl bg-emerald-500/[0.06] border border-emerald-400/15 p-3 flex flex-wrap items-center gap-3">
+      <div className="flex-1 min-w-[160px]">
+        <span className="text-[11px] font-bold text-zinc-400 block">Прослушивания = сумма треков</span>
+        <span className="text-lg font-extrabold text-emerald-200 tabular-nums">{formatNumber(albumTracksTotalPlays)}</span>
+      </div>
+      {manualAlbumTracks.length > 0 && (
+        <>
+          <button type="button" onClick={() => handleRerollTracklist()} className="px-3 py-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer"><Dices className="w-4 h-4 theme-accent" /> Перекинуть все</button>
+          <GrowthForecastButton debut={albumTracksTotalPlays} quality={estQuality} promo={manualPromoStrategy} releaseHype={manualReleaseHype} artist={selectedArt} title={`${albumFormat === 'ep' ? 'EP' : 'Альбом'} целиком — прогноз`} />
+        </>
+      )}
+    </div>
+  ) : (
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <span className="text-[11px] font-bold text-zinc-400">Стартовые прослушивания</span>
+        <span className="text-[11px] font-semibold text-emerald-400 tabular-nums">прогноз ≈ {formatCompact(autoForecastPlays)}</span>
+      </div>
+      <div className="flex gap-1.5">
+        <input type="text" inputMode="numeric" placeholder={`Авто (${formatNumber(autoForecastPlays)})`} value={manualPlays}
+          onChange={e => { const d = e.target.value.replace(/\D/g, ''); setManualPlays(d ? formatNumber(parseInt(d, 10)) : ''); }}
+          className={`${fieldCls} flex-1 min-w-0 font-mono text-[15px] tabular-nums`} />
+        <button type="button" onClick={() => setManualPlays(formatNumber(rollManualPlays()))} className={iconBtn} title="Случайные прослушивания по метрикам артиста"><Dices className="w-4 h-4 theme-accent" /></button>
+        <GrowthForecastButton debut={singleDebut} quality={estQuality} promo={manualPromoStrategy} releaseHype={manualReleaseHype} snippet={manualItemType === 'snippet'} artist={selectedArt} title={`«${manualTitle || 'Новый релиз'}» — прогноз`} />
+      </div>
+    </div>
+  );
+
+  const teaserField = manualItemType === 'snippet' ? (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11px] font-bold text-zinc-400">Описание / строка сниппета</span>
+        <button type="button" onClick={() => setManualSnippetTeaser(SNIPPET_TEASERS[randInt(0, SNIPPET_TEASERS.length - 1)])} className="text-[11px] font-semibold theme-accent hover:underline flex items-center gap-1 cursor-pointer"><Dices className="w-3 h-3" /> Случайный</button>
+      </div>
+      <textarea rows={2} value={manualSnippetTeaser} onChange={e => setManualSnippetTeaser(e.target.value)} placeholder="Тизер в соцсетях, отрывок припева…" className={`${fieldCls} font-normal`} />
+    </div>
+  ) : null;
+
+  const promoInline = (
+    <div className="rounded-2xl border border-white/[0.08] bg-white/[0.015] p-3.5 space-y-2.5">
+      <div className="flex items-center gap-2"><Flame className="w-3.5 h-3.5 theme-accent" /><span className="text-xs font-bold text-white">Промо и хайп</span></div>
+      <PromoHypeInline promo={manualPromoStrategy} hype={manualReleaseHype} defaultHype={selectedArtMetrics?.hype ?? 70} onChange={(p, h) => { setManualPromoStrategy(p); setManualReleaseHype(h); }} />
+    </div>
+  );
+  const promoChip = (
+    <div>
+      <span className={labelCls}>Промо и хайп</span>
+      <PromoChipButton promo={manualPromoStrategy} hype={manualReleaseHype} defaultHype={selectedArtMetrics?.hype ?? 70} onChange={(p, h) => { setManualPromoStrategy(p); setManualReleaseHype(h); }} />
+    </div>
+  );
+
+  const tracklist = (tall: boolean) => isAlbum ? (
+    <section className="rounded-3xl bg-zinc-900/45 border border-white/10 p-4 sm:p-5 space-y-3 min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h4 className="text-[15px] font-extrabold text-white flex items-center gap-2"><Disc className="w-4 h-4 theme-accent" /> Треклист {albumFormat === 'ep' ? 'EP' : 'альбома'}</h4>
+          <p className="text-[11px] text-zinc-400 tabular-nums mt-0.5">{manualAlbumTracks.length} тр. · {fmtTotalDur(albumTotalSec)} · {formatCompact(albumTracksTotalPlays)} · {manualAlbumTracks.filter(t => t.featuredArtist).length} с фитами</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex items-center rounded-xl border border-white/10 bg-black/40" title="Сколько треков сгенерировать">
+            <button type="button" onClick={() => setManualAlbumTracksCount(c => clamp(c - 1, 3, 40))} className="w-8 h-9 text-zinc-300 hover:text-white cursor-pointer">−</button>
+            <span className="w-7 text-center text-[13px] font-extrabold text-white tabular-nums">{manualAlbumTracksCount}</span>
+            <button type="button" onClick={() => setManualAlbumTracksCount(c => clamp(c + 1, 3, 40))} className="w-8 h-9 text-zinc-300 hover:text-white cursor-pointer">+</button>
           </div>
           <button type="button" onClick={handleGenerateFullTracklist} disabled={!selectedArt || manualCustomArtistMode}
-            className="h-10 px-4 rounded-2xl theme-bg-accent text-black text-xs font-extrabold flex items-center gap-1.5 cursor-pointer hover:opacity-90 disabled:opacity-40">
-            <Sparkles className="w-4 h-4" /> Сгенерировать треклист
-          </button>
-          <button type="button" onClick={() => setIsParserOpen(true)} title="Вставить треклист текстом"
-            className="h-10 px-3.5 rounded-2xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/25 text-xs font-bold text-amber-200 flex items-center gap-1.5 cursor-pointer">
-            <FileText className="w-4 h-4" /> Из текста
-          </button>
+            className="h-9 px-3.5 rounded-xl theme-bg-accent text-black text-xs font-extrabold flex items-center gap-1.5 cursor-pointer hover:opacity-90 disabled:opacity-40"><Sparkles className="w-3.5 h-3.5" /> Сгенерировать</button>
+          <button type="button" onClick={() => setIsParserOpen(true)} title="Вставить треклист текстом" className="h-9 px-3 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-semibold text-zinc-200 flex items-center gap-1.5 cursor-pointer"><FileText className="w-3.5 h-3.5" /> Текстом</button>
         </div>
       </div>
 
       {manualAlbumTracks.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-1">
           {[
-            { label: 'Названия', fn: handleRandomTitles, icon: <Dices className="w-3.5 h-3.5 theme-accent" /> },
-            { label: 'Фиты', fn: handleRandomFeatsOnTracklist, icon: <Users className="w-3.5 h-3.5 theme-accent" /> },
-            { label: 'Длительность', fn: handleRandomDurations, icon: <Clock className="w-3.5 h-3.5 theme-accent" /> },
-            { label: 'Прослушивания', fn: () => handleRerollTracklist(), icon: <BarChart3 className="w-3.5 h-3.5 theme-accent" /> }
+            { label: 'названия', fn: handleRandomTitles },
+            { label: 'фиты', fn: handleRandomFeatsOnTracklist },
+            { label: 'длительность', fn: handleRandomDurations },
+            { label: 'прослушивания', fn: () => handleRerollTracklist() }
           ].map(b => (
-            <button key={b.label} type="button" onClick={b.fn}
-              className="px-3 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.11] border border-white/10 text-[11.5px] font-semibold text-zinc-200 flex items-center gap-1.5 cursor-pointer">
-              {b.icon}Случайные {b.label.toLowerCase()}
-            </button>
+            <button key={b.label} type="button" onClick={b.fn} className="px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.1] text-[11px] font-semibold text-zinc-300 hover:text-white cursor-pointer">🎲 {b.label}</button>
           ))}
         </div>
       )}
 
       {manualAlbumTracks.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-white/12 px-4 py-8 text-center space-y-1">
+        <div className="rounded-2xl border border-dashed border-white/12 py-8 text-center">
           <p className="text-sm font-bold text-white">Треклист пуст</p>
-          <p className="text-[12px] text-zinc-400">Нажми «Сгенерировать треклист» или добавь треки по одному. Если оставить пустым, при добавлении в очередь он соберётся сам.</p>
+          <p className="text-[12px] text-zinc-400 mt-1">«Сгенерировать» соберёт {manualAlbumTracksCount} тр. с названиями, фитами и прослушиваниями</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className={`grid gap-2 overflow-y-auto custom-scrollbar pr-1 ${tall ? 'max-h-[640px]' : 'max-h-[460px]'}`} style={gridCols(cols)}>
           {manualAlbumTracks.map((tr, idx) => {
             const share = (tr.plays || 0) / albumMaxPlays;
             return (
-              <div key={tr.id} className="rounded-2xl bg-black/30 border border-white/[0.07] hover:border-white/15 p-2.5 sm:p-3 space-y-2 transition-colors">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="w-7 h-7 shrink-0 rounded-lg bg-white/[0.06] text-[12px] font-bold text-zinc-300 flex items-center justify-center tabular-nums">{idx + 1}</span>
-                  <div className="flex-1 min-w-[180px] flex items-center gap-1">
-                    <input type="text" value={tr.title} onChange={e => handleUpdateChildTrack(tr.id, { title: e.target.value })} placeholder="Название трека"
-                      className="flex-1 min-w-0 bg-black/30 border border-white/10 focus:border-white/25 rounded-xl px-3 py-2 text-[13px] font-semibold text-white outline-none" />
-                    <button type="button" title="Случайное название" onClick={() => handleUpdateChildTrack(tr.id, { title: randomChildTitle() })}
-                      className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer"><Dices className="w-4 h-4 theme-accent" /></button>
-                  </div>
-                  <div className="flex items-center gap-0.5">
-                    <input type="text" value={tr.duration || ''} placeholder="2:35" onChange={e => handleUpdateChildTrack(tr.id, { duration: e.target.value })}
-                      className="w-[60px] bg-black/30 border border-white/10 focus:border-white/25 rounded-xl px-2 py-2 text-[12.5px] font-mono text-zinc-100 text-center outline-none" />
-                    <button type="button" title="Случайная длительность (с учётом фитов)" onClick={() => handleUpdateChildTrack(tr.id, { duration: smartDuration(tr.featuredArtist) })}
-                      className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer"><Clock className="w-3.5 h-3.5" /></button>
-                  </div>
-                  <div className="flex items-center gap-0.5">
-                    <input type="text" inputMode="numeric" value={tr.plays ? formatNumber(tr.plays) : ''} placeholder="0" aria-label={`Прослушивания трека ${idx + 1}`}
-                      onChange={e => { const d = e.target.value.replace(/\D/g, ''); handleUpdateChildTrack(tr.id, { plays: d ? parseInt(d, 10) : 0 }); }}
-                      className="w-[118px] bg-black/30 border border-white/10 focus:border-white/25 rounded-xl px-2.5 py-2 text-[12.5px] font-mono text-white text-right tabular-nums outline-none" />
-                    <button type="button" onClick={() => handleRerollTracklist(tr.id)} title="Случайные прослушивания трека"
-                      className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer"><Dices className="w-4 h-4 theme-accent" /></button>
-                  </div>
-                  <div className="flex items-center gap-0.5 ml-auto">
-                    <button type="button" disabled={idx === 0} onClick={() => handleMoveChildTrack(idx, -1)} className="p-1.5 rounded-lg text-zinc-500 hover:text-white disabled:opacity-25 cursor-pointer" title="Выше"><ChevronUp className="w-4 h-4" /></button>
-                    <button type="button" disabled={idx === manualAlbumTracks.length - 1} onClick={() => handleMoveChildTrack(idx, 1)} className="p-1.5 rounded-lg text-zinc-500 hover:text-white disabled:opacity-25 cursor-pointer" title="Ниже"><ChevronDown className="w-4 h-4" /></button>
-                    <button type="button" onClick={() => setManualAlbumTracks(prev => prev.filter(x => x.id !== tr.id))} className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400 cursor-pointer" title="Удалить трек"><Trash2 className="w-4 h-4" /></button>
+              <div key={tr.id} className="group rounded-2xl bg-black/30 border border-white/[0.07] hover:border-white/15 p-2.5 space-y-2 transition-colors min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-6 h-6 shrink-0 rounded-lg bg-white/[0.06] text-[11px] font-bold text-zinc-300 flex items-center justify-center tabular-nums">{idx + 1}</span>
+                  <input type="text" value={tr.title} onChange={e => handleUpdateChildTrack(tr.id, { title: e.target.value })}
+                    className="flex-1 min-w-0 bg-transparent border border-transparent hover:border-white/10 focus:border-white/25 focus:bg-black/40 rounded-lg px-2 py-1 text-[13px] font-bold text-white outline-none" />
+                  <button type="button" title="Случайное название" onClick={() => handleUpdateChildTrack(tr.id, { title: randomChildTitle() })} className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/10 cursor-pointer"><Dices className="w-3.5 h-3.5" /></button>
+                  <GrowthForecastButton small debut={tr.plays || 0} quality={estQuality} promo={manualPromoStrategy} releaseHype={manualReleaseHype} artist={selectedArt} title={`«${tr.title}» — прогноз`} />
+                  <div className="flex items-center opacity-60 group-hover:opacity-100 transition-opacity">
+                    <button type="button" disabled={idx === 0} onClick={() => handleMoveChildTrack(idx, -1)} className="p-1 rounded-md text-zinc-400 hover:text-white disabled:opacity-25 cursor-pointer" title="Выше"><ChevronUp className="w-3.5 h-3.5" /></button>
+                    <button type="button" disabled={idx === manualAlbumTracks.length - 1} onClick={() => handleMoveChildTrack(idx, 1)} className="p-1 rounded-md text-zinc-400 hover:text-white disabled:opacity-25 cursor-pointer" title="Ниже"><ChevronDown className="w-3.5 h-3.5" /></button>
+                    <button type="button" onClick={() => setManualAlbumTracks(prev => prev.filter(x => x.id !== tr.id))} className="p-1 rounded-md text-zinc-400 hover:text-rose-400 cursor-pointer" title="Удалить"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 sm:pl-9">
-                  <div className="flex-1 min-w-[220px]">
-                    <FeatPicker value={tr.featuredArtist || ''} onChange={v => handleUpdateChildTrack(tr.id, { featuredArtist: v || undefined })}
-                      artists={simState.artists} mainArtistName={selectedArtName} placeholder="Фит на треке… (🎲 — подобрать)" />
-                  </div>
-                  <button type="button" title="Выбрать гостя из полного списка" onClick={() => { setFeatTargetTrackId(tr.id); setPickerTarget('child_feat'); }}
-                    className="px-2.5 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-[11px] font-semibold text-zinc-300 cursor-pointer flex items-center gap-1"><Users className="w-3.5 h-3.5" /> база</button>
-                  <div className="w-24 sm:w-32 h-1.5 rounded-full bg-white/[0.06] overflow-hidden" title={`${Math.round(share * 100)}% от главного трека`}>
-                    <div className="h-full rounded-full theme-bg-accent opacity-75" style={{ width: `${Math.max(4, Math.round(share * 100))}%` }} />
-                  </div>
+                <GuestPicker compact value={tr.featuredArtist || ''} onChange={v => handleUpdateChildTrack(tr.id, { featuredArtist: v || undefined })}
+                  artists={simState.artists} metricsMap={metricsMap} mainArtist={selectedArt} placeholder="+ фит"
+                  onCreate={hasCreateArtist ? name => { setFeatTargetTrackId(tr.id); onRequestCreateArtist('manual_child_feat', name); } : undefined} />
+                <div className="flex items-center gap-1.5">
+                  <input type="text" value={tr.duration || ''} placeholder="2:35" onChange={e => handleUpdateChildTrack(tr.id, { duration: e.target.value })}
+                    className="w-[52px] bg-black/30 border border-white/10 focus:border-white/25 rounded-lg px-1 py-1 text-[11.5px] font-mono text-zinc-200 text-center outline-none" />
+                  <button type="button" title="Случайная длительность" onClick={() => handleUpdateChildTrack(tr.id, { duration: smartDuration(tr.featuredArtist) })} className="p-1 rounded-md text-zinc-500 hover:text-white cursor-pointer"><Clock className="w-3 h-3" /></button>
+                  <span className="flex-1 h-1 rounded-full bg-white/[0.06] overflow-hidden" title={`${Math.round(share * 100)}% от главного трека`}>
+                    <span className="block h-full rounded-full theme-bg-accent opacity-75 transition-all duration-300" style={{ width: `${Math.max(4, Math.round(share * 100))}%` }} />
+                  </span>
+                  <input type="text" inputMode="numeric" value={tr.plays ? formatNumber(tr.plays) : ''} placeholder="0" aria-label={`Прослушивания трека ${idx + 1}`}
+                    onChange={e => { const d = e.target.value.replace(/\D/g, ''); handleUpdateChildTrack(tr.id, { plays: d ? parseInt(d, 10) : 0 }); }}
+                    className="w-[104px] bg-black/30 border border-white/10 focus:border-white/25 rounded-lg px-2 py-1 text-[11.5px] font-mono text-white text-right tabular-nums outline-none" />
+                  <button type="button" onClick={() => handleRerollTracklist(tr.id)} title="Случайные прослушивания" className="p-1 rounded-md text-zinc-500 hover:text-white cursor-pointer"><Dices className="w-3.5 h-3.5 theme-accent" /></button>
                 </div>
               </div>
             );
@@ -8358,293 +8844,241 @@ const SimManualTab = memo(({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={() => handleAddTracks(1)} className="px-4 py-2.5 rounded-2xl bg-white/[0.06] hover:bg-white/[0.12] border border-dashed border-white/20 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer">
-          <Plus className="w-4 h-4" /> Добавить трек
-        </button>
-        <button type="button" onClick={() => handleAddTracks(3)} className="px-3.5 py-2.5 rounded-2xl bg-white/[0.03] hover:bg-white/[0.08] border border-dashed border-white/12 text-xs font-semibold text-zinc-300 cursor-pointer">+3 трека</button>
-        {manualAlbumTracks.length > 0 && (
-          <button type="button" onClick={() => setManualAlbumTracks([])} className="ml-auto px-3 py-2 rounded-2xl text-xs font-semibold text-zinc-500 hover:text-rose-300 cursor-pointer">Очистить треклист</button>
-        )}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button type="button" onClick={() => handleAddTracks(1)} className="px-3.5 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-dashed border-white/20 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer"><Plus className="w-3.5 h-3.5" /> Трек</button>
+        <button type="button" onClick={() => handleAddTracks(3)} className="px-3 py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-dashed border-white/12 text-xs font-semibold text-zinc-300 cursor-pointer">+3</button>
+        {manualAlbumTracks.length > 0 && <button type="button" onClick={() => setManualAlbumTracks([])} className="ml-auto px-3 py-2 rounded-xl text-[11px] font-semibold text-zinc-500 hover:text-rose-300 cursor-pointer">Очистить треклист</button>}
       </div>
     </section>
+  ) : null;
+
+  const addButton = (
+    <div>
+      <button type="button" onClick={handleAddManualItem}
+        className="w-full py-3.5 theme-bg-accent text-black font-extrabold rounded-2xl text-[13px] hover:opacity-95 active:scale-[0.995] transition-all cursor-pointer shadow-lg flex items-center justify-center gap-2">
+        {editingItemId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+        <span>{editingItemId ? 'Сохранить изменения' : 'Добавить в очередь недели'}</span>
+        <span className="hidden sm:inline text-[10.5px] font-bold opacity-60">Ctrl + Enter</span>
+      </button>
+      <AnimatePresence>{savedFlash && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mt-2 text-center text-[12px] text-emerald-300">{savedFlash}</motion.p>}</AnimatePresence>
+    </div>
   );
 
-  return (
-    <div className="space-y-5" onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleAddManualItem(); } }}>
-      <div className={manualView === 'wide' && isAlbum ? 'grid grid-cols-1 2xl:grid-cols-2 gap-5 items-start' : 'space-y-5'}>
-        {/* ===== Main card ===== */}
-        <section className="rounded-3xl bg-zinc-900/45 border border-white/10 shadow-2xl p-4 sm:p-6 space-y-5 min-w-0">
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
-            <h3 className="text-base font-extrabold text-white flex items-center gap-2">
-              Ручной батч
-              {editingItemId && (
-                <span className="px-2.5 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[11px] font-bold">Редактирование</span>
-              )}
-            </h3>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => setShowQueueShowcase(true)}
-                className={`px-3.5 py-1.5 rounded-2xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${manualQueue.length > 0 ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-200 hover:bg-emerald-500/25' : 'bg-white/[0.06] border-white/10 text-white hover:bg-white/[0.12]'}`}>
-                <Eye className="w-3.5 h-3.5" /><span className="tabular-nums">Витрина очереди ({manualQueue.length})</span>
-              </button>
-              <button type="button" onClick={() => onOpenIdeaStudio(selectedArt?.id)} title="Случайный артист, досье и идеи релизов"
-                className="px-3.5 py-1.5 rounded-2xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer">
-                <Sparkles className="w-3.5 h-3.5 theme-accent" /><span>Идеи и рандом</span>
-              </button>
-              <button type="button" onClick={onNavigateToRadar} className="px-3.5 py-1.5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs font-semibold text-zinc-200 flex items-center gap-1.5 cursor-pointer">
-                <Radar className="w-3.5 h-3.5 theme-accent" /><span>Радар</span>
-              </button>
-              {hasCreateArtist && (
-                <button type="button" onClick={() => onRequestCreateArtist('manual_main')} className="px-3.5 py-1.5 rounded-2xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/25 text-xs font-bold flex items-center gap-1.5 cursor-pointer">
-                  <UserPlus className="w-3.5 h-3.5" /><span>Создать артиста</span>
-                </button>
-              )}
-              <button type="button" onClick={() => { resetForm(); switchType('track'); setManualCustomArtistMode(false); setManualCustomArtist(''); }} disabled={!formDirty && manualItemType === 'track'}
-                title="Очистить форму (артист остаётся)"
-                className="px-3.5 py-1.5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs font-semibold text-zinc-300 hover:text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-35 disabled:cursor-default">
-                <RotateCcw className="w-3.5 h-3.5" /><span>Очистить</span>
-              </button>
+  const queueStrip = manualQueue.length > 0 ? (
+    <div className="p-4 rounded-3xl bg-zinc-900/40 border border-white/[0.08] space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-xs font-extrabold text-white tabular-nums">В очереди: {manualQueue.length} · {queueTotalTracks} тр. · ~{formatCompact(queueTotalPlays)}</h4>
+        <div className="flex items-center gap-1.5">
+          <button type="button" onClick={() => setShowQueueShowcase(true)} className="px-3 py-1.5 rounded-xl bg-white/[0.07] hover:bg-white/[0.14] text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer"><Eye className="w-3.5 h-3.5 theme-accent" /> Витрина</button>
+          <button type="button" onClick={() => setManualQueue([])} className="px-3 py-1.5 rounded-xl text-xs font-semibold text-zinc-500 hover:text-rose-300 cursor-pointer">Очистить</button>
+        </div>
+      </div>
+      <div className="grid gap-2" style={gridCols(Math.max(1, cols + 1))}>
+        {manualQueue.map(item => (
+          <div key={item.id} className={`p-2.5 rounded-2xl border flex items-center gap-2.5 min-w-0 transition-colors ${editingItemId === item.id ? 'border-amber-400/40 bg-amber-500/[0.06]' : 'bg-black/35 border-white/[0.07] hover:border-white/20'}`}>
+            <CoverArt url={item.coverUrl} title={item.title} albumTitle={item.itemType === 'album' ? item.title : undefined} className="w-11 h-11 rounded-xl shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[12.5px] font-bold text-white truncate">{item.title}</p>
+              <p className="text-[11px] text-zinc-400 truncate">{item.artistName}{item.featuredArtist ? ` feat. ${item.featuredArtist}` : ''}</p>
+              <p className="text-[10.5px] text-emerald-400 tabular-nums truncate">{item.itemType === 'album' ? `${item.releaseFormat === 'ep' ? 'EP' : 'Альбом'} · ${item.albumTracks?.length || item.albumTracksCount || 10} тр.` : item.itemType === 'snippet' ? 'Сниппет' : 'Сингл'} · {formatCompact(item.plays || 0)}</p>
+            </div>
+            <div className="flex flex-col shrink-0">
+              <button type="button" onClick={() => handleLoadInlineItemForEdit(item)} className="p-1 rounded-md text-zinc-400 hover:text-white cursor-pointer" title="Изменить"><Pencil className="w-3.5 h-3.5" /></button>
+              <button type="button" onClick={() => setManualQueue(prev => prev.filter(x => x.id !== item.id))} className="p-1 rounded-md text-zinc-400 hover:text-rose-400 cursor-pointer" title="Убрать"><X className="w-3.5 h-3.5" /></button>
             </div>
           </div>
+        ))}
+      </div>
+    </div>
+  ) : null;
 
-          {/* presets + view */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[10.5px] font-black uppercase tracking-widest text-zinc-500 mr-1">Пресеты</span>
-            {MANUAL_PRESETS.map(p => (
-              <button key={p.id} type="button" onClick={() => applyPreset(p)} title="Задаст формат, промо и хайп, допишет недостающее"
-                className="px-2.5 py-1 rounded-full text-[11.5px] font-bold border border-white/10 bg-white/[0.03] text-zinc-200 hover:text-white hover:border-white/30 cursor-pointer">
-                {p.icon} {p.name}
-              </button>
-            ))}
-            {userPresets.map(p => (
-              <span key={p.id} className="inline-flex items-center rounded-full border border-sky-400/25 bg-sky-500/10">
-                <button type="button" onClick={() => applyPreset(p)} className="pl-2.5 pr-1 py-1 text-[11.5px] font-bold text-sky-100 cursor-pointer">⭐ {p.name}</button>
-                <button type="button" onClick={() => removeUserPreset(p.id)} title="Удалить пресет" className="pr-2 pl-0.5 text-[12px] text-sky-300/70 hover:text-rose-300 cursor-pointer">×</button>
-              </span>
-            ))}
-            <button type="button" onClick={saveCurrentAsPreset} title="Сохранить текущий формат, промо и хайп как свой пресет"
-              className="px-2.5 py-1 rounded-full text-[11.5px] font-semibold border border-dashed border-white/15 text-zinc-400 hover:text-white cursor-pointer">+ Свой</button>
-            <div className="ml-auto flex items-center gap-0.5 p-0.5 rounded-xl bg-black/40 border border-white/10">
-              {([['normal', 'Обычный'], ['wide', 'Широкий'], ['compact', 'Компактный']] as const).map(([v, l]) => (
-                <button key={v} type="button" onClick={() => changeManualView(v)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer ${manualView === v ? 'bg-white/15 text-white' : 'text-zinc-400 hover:text-white'}`}>{l}</button>
+  const LAYOUTS: Array<[BatchLayout, string, string]> = [
+    ['studio', 'Студия', 'Большая обложка и вся форма на одном экране'],
+    ['workshop', 'Мастерская', 'Слева паспорт релиза, справа большой треклист — для EP и альбомов'],
+    ['conveyor', 'Конвейер', 'Одна строка на релиз — быстро накидать много синглов подряд'],
+    ['steps', 'Пошагово', 'Шаг за шагом: артист → детали → прослушивания → промо → проверка']
+  ];
+
+  const header = (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-2 min-w-0">
+        <h3 className="text-base font-extrabold text-white">Ручной батч</h3>
+        {editingItemId && (
+          <span className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[11px] font-bold flex items-center gap-1.5">
+            Редактирование <button type="button" onClick={resetForm} className="underline-offset-2 hover:underline cursor-pointer">отменить</button>
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex items-center gap-0.5 p-0.5 rounded-xl bg-black/40 border border-white/10">
+          {LAYOUTS.map(([v, l, hint]) => (
+            <button key={v} type="button" title={hint} onClick={() => setLayout(v)}
+              className={`px-2.5 py-1 rounded-lg text-[11.5px] font-semibold cursor-pointer transition-colors ${layout === v ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}>{l}</button>
+          ))}
+        </div>
+        <button type="button" onClick={() => setShowQueueShowcase(true)}
+          className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${manualQueue.length > 0 ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-200 hover:bg-emerald-500/25' : 'bg-white/[0.06] border-white/10 text-white hover:bg-white/[0.12]'}`}>
+          <Eye className="w-3.5 h-3.5" /><span className="tabular-nums">Очередь ({manualQueue.length})</span>
+        </button>
+        <button type="button" onClick={() => onOpenIdeaStudio(selectedArt?.id)} title="Случайный артист, досье и идеи релизов" className="px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer"><Sparkles className="w-3.5 h-3.5 theme-accent" /> Идеи</button>
+        <button type="button" onClick={onNavigateToRadar} className="px-3 py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-xs font-semibold text-zinc-200 flex items-center gap-1.5 cursor-pointer"><Radar className="w-3.5 h-3.5 theme-accent" /> Радар</button>
+        {hasCreateArtist && <button type="button" onClick={() => onRequestCreateArtist('manual_main')} title="Создать артиста" className="p-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/25 cursor-pointer"><UserPlus className="w-3.5 h-3.5" /></button>}
+        <button type="button" onClick={() => { resetForm(); switchType('track'); setManualCustomArtistMode(false); setManualCustomArtist(''); setStep(0); }} disabled={!formDirty && manualItemType === 'track'} title="Очистить форму (артист остаётся)"
+          className="p-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 text-zinc-300 hover:text-white cursor-pointer disabled:opacity-35 disabled:cursor-default"><RotateCcw className="w-3.5 h-3.5" /></button>
+      </div>
+    </div>
+  );
+
+  // ======================= layouts =======================
+  const STEPS = ['Артист и формат', 'Название и фиты', isAlbum ? 'Треклист' : 'Прослушивания', 'Промо и хайп', 'Проверка'];
+  let body: React.ReactNode;
+  if (layout === 'workshop') {
+    body = (
+      <div className="grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)] gap-5 items-start">
+        <section className="rounded-3xl bg-zinc-900/45 border border-white/10 p-4 sm:p-5 space-y-4 xl:sticky xl:top-0">
+          {coverBlock('small')}
+          {typeSwitch}
+          {artistField}
+          {titleField}
+          {coField}
+          {featField}
+          {durationField}
+          {!isAlbum && playsField}
+          {teaserField}
+          {promoChip}
+          {addButton}
+        </section>
+        <div className="space-y-4 min-w-0">
+          {isAlbum ? <>{playsField}{tracklist(true)}</> : (
+            <section className="rounded-3xl bg-zinc-900/30 border border-dashed border-white/10 p-8 text-center">
+              <Disc className="w-8 h-8 mx-auto text-zinc-600" />
+              <p className="mt-2 text-sm font-bold text-white">Мастерская раскрывается для EP и альбомов</p>
+              <p className="text-[12px] text-zinc-400 mt-1">Выбери EP или Альбом слева — здесь появится большой треклист</p>
+            </section>
+          )}
+          {queueStrip}
+        </div>
+      </div>
+    );
+  } else if (layout === 'conveyor') {
+    body = (
+      <div className="space-y-4">
+        <section className="rounded-3xl bg-zinc-900/45 border border-white/10 p-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="w-full sm:w-[300px]">{typeSwitch}</div>
+            <div className="flex-1" />
+            {coverBlock('small')}
+          </div>
+          <div className="grid gap-3 items-end" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))' }}>
+            {artistField}
+            {titleField}
+            {featField}
+            {isAlbum ? coField : playsField}
+            {durationField}
+            {promoChip}
+          </div>
+          {teaserField}
+          {isAlbum && playsField}
+          {addButton}
+        </section>
+        {tracklist(false)}
+        {manualQueue.length > 0 && (
+          <section className="rounded-3xl bg-zinc-900/40 border border-white/[0.08] overflow-hidden">
+            <div className="px-4 py-3 flex items-center justify-between">
+              <h4 className="text-xs font-extrabold text-white tabular-nums">Очередь: {manualQueue.length} · ~{formatCompact(queueTotalPlays)}</h4>
+              <button type="button" onClick={() => setShowQueueShowcase(true)} className="text-[11px] font-bold text-zinc-300 hover:text-white cursor-pointer">Витрина →</button>
+            </div>
+            <div className="divide-y divide-white/[0.05]">
+              {manualQueue.map((item, i) => (
+                <div key={item.id} className="flex items-center gap-3 px-4 py-2 hover:bg-white/[0.02]">
+                  <span className="w-5 text-[11px] text-zinc-500 tabular-nums">{i + 1}</span>
+                  <CoverArt url={item.coverUrl} title={item.title} albumTitle={item.itemType === 'album' ? item.title : undefined} className="w-8 h-8 rounded-lg shrink-0" />
+                  <span className="flex-1 min-w-0 truncate text-[12.5px] text-white"><b>{item.title}</b> <span className="text-zinc-400">· {item.artistName}{item.featuredArtist ? ` feat. ${item.featuredArtist}` : ''}</span></span>
+                  <span className="hidden sm:block text-[11px] text-zinc-500">{item.itemType === 'album' ? (item.releaseFormat === 'ep' ? 'EP' : 'Альбом') : item.itemType === 'snippet' ? 'Сниппет' : 'Сингл'}</span>
+                  <span className="w-16 text-right text-[12px] font-bold text-emerald-300 tabular-nums">{formatCompact(item.plays || 0)}</span>
+                  <button type="button" onClick={() => handleLoadInlineItemForEdit(item)} className="p-1 rounded-md text-zinc-400 hover:text-white cursor-pointer"><Pencil className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => setManualQueue(prev => prev.filter(x => x.id !== item.id))} className="p-1 rounded-md text-zinc-400 hover:text-rose-400 cursor-pointer"><X className="w-3.5 h-3.5" /></button>
+                </div>
               ))}
             </div>
+          </section>
+        )}
+      </div>
+    );
+  } else if (layout === 'steps') {
+    const stepContent = [
+      <div key="s0" className="space-y-4">{typeSwitch}{artistField}</div>,
+      <div key="s1" className="space-y-4">{titleField}{coField}{featField}{durationField}{teaserField}</div>,
+      <div key="s2" className="space-y-4">{playsField}{tracklist(false)}</div>,
+      <div key="s3">{promoInline}</div>,
+      <div key="s4" className="space-y-4">
+        <div className="flex items-center gap-4">
+          {coverBlock('small')}
+          <div className="min-w-0">
+            <p className="text-lg font-extrabold text-white truncate">{manualTitle || 'Название будет придумано'}</p>
+            <p className="text-[12.5px] text-zinc-400 truncate">{selectedArtName}{manualCoArtist ? ` & ${manualCoArtist}` : ''}{manualFeat ? ` feat. ${manualFeat}` : ''}</p>
+            <p className="text-[12px] text-zinc-500 tabular-nums mt-0.5">
+              {isAlbum ? `${albumFormat === 'ep' ? 'EP' : 'Альбом'} · ${manualAlbumTracks.length || manualAlbumTracksCount} тр. · ${formatCompact(albumTracksTotalPlays || 0)}` : `${manualItemType === 'snippet' ? 'Сниппет' : 'Сингл'} · ${formatCompact(singleDebut)}`} · {promoChipLabel}
+            </p>
           </div>
-
-          <div className={coverCol ? 'grid grid-cols-1 lg:grid-cols-12 gap-6 items-start' : 'space-y-4'}>
-            {coverCol && (
-              <div className="lg:col-span-4 space-y-3">
-                <div className="relative aspect-square w-full max-w-[300px] mx-auto lg:max-w-none rounded-3xl overflow-hidden border border-white/15 bg-black/60 shadow-2xl">
-                  <CoverArt url={manualCoverUrl} title={manualTitle || 'Новый релиз'} albumTitle={isAlbum ? manualTitle || 'Альбом' : undefined} className="w-full h-full" />
-                </div>
-                <div className="flex items-center gap-2 max-w-[300px] mx-auto lg:max-w-none">
-                  <label className="flex-1 py-2.5 px-3.5 rounded-2xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-xs font-bold text-zinc-100 flex items-center justify-center gap-2 cursor-pointer transition-colors">
-                    <FileUp className="w-3.5 h-3.5 theme-accent shrink-0" /><span>Загрузить обложку</span>
-                    <input type="file" accept="image/*" onChange={handleUploadCoverFile} className="hidden" />
-                  </label>
-                  <button type="button" onClick={() => setIsCoverEditorOpen(true)} title="Редактор обложек" className={iconBtn}><Pencil className="w-4 h-4" /></button>
-                  {manualCoverUrl && (
-                    <button type="button" onClick={() => setManualCoverUrl('')} title="Удалить обложку (вернуть сгенерированную)" className={`${iconBtn} hover:text-rose-300`}><X className="w-4 h-4" /></button>
-                  )}
-                </div>
-                <p className="text-[11px] text-zinc-500 text-center">{manualCoverUrl ? 'Своя обложка' : 'Сейчас используется сгенерированная обложка'}</p>
-              </div>
-            )}
-
-            <div className={coverCol ? 'lg:col-span-8 space-y-4 min-w-0' : 'space-y-4 min-w-0'}>
+        </div>
+        {addButton}
+      </div>
+    ];
+    body = (
+      <section className="rounded-3xl bg-zinc-900/45 border border-white/10 p-4 sm:p-6 space-y-5 max-w-3xl mx-auto">
+        <div className="flex flex-wrap gap-1.5">
+          {STEPS.map((l, i) => (
+            <button key={l} type="button" onClick={() => setStep(i)}
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-[11.5px] font-bold cursor-pointer transition-colors ${step === i ? 'bg-white text-black' : i < step ? 'bg-white/[0.08] text-white' : 'bg-white/[0.03] text-zinc-500 hover:text-white'}`}>
+              <span className={`w-5 h-5 rounded-full text-[10px] flex items-center justify-center ${step === i ? 'bg-black text-white' : 'bg-white/10'}`}>{i < step ? '✓' : i + 1}</span>{l}
+            </button>
+          ))}
+        </div>
+        <AnimatePresence mode="wait">
+          <motion.div key={step} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.16 }}>
+            {stepContent[Math.min(step, stepContent.length - 1)]}
+          </motion.div>
+        </AnimatePresence>
+        {step < STEPS.length - 1 && (
+          <div className="flex justify-between">
+            <button type="button" disabled={step === 0} onClick={() => setStep(s0 => Math.max(0, s0 - 1))} className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-300 hover:text-white disabled:opacity-30 cursor-pointer">← Назад</button>
+            <button type="button" onClick={() => setStep(s0 => Math.min(STEPS.length - 1, s0 + 1))} className="px-5 py-2 rounded-xl theme-bg-accent text-black text-xs font-extrabold cursor-pointer hover:opacity-90">Дальше →</button>
+          </div>
+        )}
+      </section>
+    );
+  } else {
+    body = (
+      <div className="space-y-5">
+        <section className="rounded-3xl bg-zinc-900/45 border border-white/10 shadow-2xl p-4 sm:p-6">
+          <div className={simple ? 'space-y-4' : 'grid grid-cols-1 lg:grid-cols-12 gap-6 items-start'}>
+            {!simple && <div className="lg:col-span-4">{coverBlock('big')}</div>}
+            <div className={simple ? 'space-y-4' : 'lg:col-span-8 space-y-4 min-w-0'}>
               <div className="flex flex-wrap items-end gap-3">
-                {!coverCol && (
-                  <div className="relative w-16 h-16 rounded-2xl overflow-hidden border border-white/15 shrink-0">
-                    <CoverArt url={manualCoverUrl} title={manualTitle || 'Новый релиз'} albumTitle={isAlbum ? manualTitle || 'Альбом' : undefined} className="w-full h-full" />
-                    <label title="Загрузить обложку" className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/50 text-transparent hover:text-white cursor-pointer transition-colors">
-                      <FileUp className="w-4 h-4" />
-                      <input type="file" accept="image/*" onChange={handleUploadCoverFile} className="hidden" />
-                    </label>
-                  </div>
-                )}
-                <div className="flex-1 min-w-[240px]">
-                  <span className={labelCls}>Тип релиза</span>
-                  <div className="grid grid-cols-4 gap-1 p-1 bg-black/40 rounded-2xl border border-white/10">
-                    {typeOptions.map(t => {
-                      const active = manualItemType === t.id && (!('format' in t) || albumFormat === t.format);
-                      return (
-                        <button key={t.label} type="button" aria-pressed={active} onClick={() => switchType(t.id, 'format' in t ? t.format : undefined)}
-                          className={`py-2 rounded-xl text-xs font-bold transition-colors cursor-pointer ${active ? 'theme-bg-accent text-black shadow' : 'text-zinc-400 hover:text-white'}`}>
-                          {t.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                {!isAlbum && (
-                  <div className="w-[150px]">
-                    <span className={labelCls}>Длительность</span>
-                    <div className="flex gap-1.5">
-                      <input type="text" value={manualDuration} onChange={e => setManualDuration(e.target.value)} placeholder={manualItemType === 'snippet' ? '0:32' : 'авто'}
-                        className={`${fieldCls} flex-1 min-w-0 font-mono text-center px-2`} />
-                      <button type="button" title="Случайная длительность (с учётом фитов)" onClick={() => setManualDuration(smartDuration(manualFeat, { snippet: manualItemType === 'snippet' }))} className={iconBtn}>
-                        <Clock className="w-4 h-4 theme-accent" />
-                      </button>
-                    </div>
-                  </div>
-                )}
+                <div className="flex-1 min-w-[260px]"><span className={labelCls}>Тип релиза</span>{typeSwitch}</div>
+                {durationField && <div className="w-[160px]">{durationField}</div>}
               </div>
-
-              <div>
-                <span className={labelCls}>Основной артист</span>
-                <ArtistSelect
-                  artists={simState.artists}
-                  metricsMap={metricsMap}
-                  selected={selectedArt}
-                  customMode={manualCustomArtistMode}
-                  customName={manualCustomArtist}
-                  onPick={pickMainArtist}
-                  onCustom={name => { setManualCustomArtistMode(true); setManualCustomArtist(name); }}
-                  onOpenFull={() => setPickerTarget('main')}
-                  onCreate={hasCreateArtist ? name => onRequestCreateArtist('manual_main', name) : undefined}
-                />
-              </div>
-
-              <div>
-                <span className={labelCls}>Название {isAlbum ? (albumFormat === 'ep' ? 'EP' : 'альбома') : manualItemType === 'snippet' ? 'сниппета' : 'трека'}</span>
-                <div className="flex gap-1.5">
-                  <input type="text" value={manualTitle} onChange={e => setManualTitle(e.target.value)} placeholder="Впиши или нажми 🎲"
-                    className={`${fieldCls} flex-1 min-w-0 text-sm`} />
-                  <TitleMoodPicker value={manualTitleMood} onChange={nextMood => { setManualTitleMood(nextMood); handleGenerateRandomTitle(nextMood); }} />
-                  <button type="button" onClick={() => handleGenerateRandomTitle()} className={iconBtn} title="Случайное название">
-                    <Dices className="w-4 h-4 theme-accent" />
-                  </button>
-                </div>
-              </div>
-
-              <div className={`grid grid-cols-1 ${isAlbum ? 'md:grid-cols-2' : ''} gap-3`}>
-                <div className="min-w-0">
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-[11px] font-bold text-zinc-400">{isAlbum ? 'Фит на первом треке (необязательно)' : 'Приглашённый артист (фит)'}</span>
-                    <button type="button" onClick={() => setPickerTarget('feat')} className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"><Users className="w-3 h-3" /> вся база</button>
-                  </div>
-                  <FeatPicker value={manualFeat} onChange={setManualFeat} artists={simState.artists} mainArtistName={selectedArtName} placeholder="Добавить гостя… (🎲 — подобрать)" />
-                </div>
-                {isAlbum && (
-                  <div className="min-w-0">
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <span className="text-[11px] font-bold text-zinc-400">Совместный альбом (соавтор)</span>
-                      <button type="button" onClick={() => setPickerTarget('co')} className="text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"><Users className="w-3 h-3" /> вся база</button>
-                    </div>
-                    <FeatPicker value={manualCoArtist} onChange={setManualCoArtist} artists={simState.artists} mainArtistName={selectedArtName} placeholder="Второй автор…" />
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-2xl bg-black/25 border border-white/[0.08] p-3.5 space-y-2">
-                {isAlbum ? (
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="text-[11px] font-bold text-zinc-400 block">Прослушивания {albumFormat === 'ep' ? 'EP' : 'альбома'} = сумма треков</span>
-                      <span className="text-lg font-extrabold text-emerald-200 tabular-nums">{formatNumber(albumTracksTotalPlays)}</span>
-                      <span className="ml-2 text-[11px] text-zinc-500">{manualAlbumTracks.length ? `${manualAlbumTracks.length} тр.` : 'добавь треки ниже'}</span>
-                    </div>
-                    {manualAlbumTracks.length > 0 && (
-                      <button type="button" onClick={() => handleRerollTracklist()} className="px-3.5 py-2 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer">
-                        <Dices className="w-4 h-4 theme-accent" /> Перекинуть все
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-bold text-zinc-400">Стартовые прослушивания</span>
-                      <span className="text-[11px] font-semibold text-emerald-400 tabular-nums">Прогноз ≈ {formatCompact(autoForecastPlays)}</span>
-                    </div>
-                    <div className="flex gap-1.5">
-                      <input type="text" inputMode="numeric" placeholder={`Авто (${formatNumber(autoForecastPlays)})`} value={manualPlays}
-                        onChange={e => { const digits = e.target.value.replace(/\D/g, ''); setManualPlays(digits ? formatNumber(parseInt(digits, 10)) : ''); }}
-                        className={`${fieldCls} flex-1 min-w-0 font-mono text-[15px] tabular-nums`} />
-                      <button type="button" onClick={() => setManualPlays(formatNumber(rollManualPlays()))} className={iconBtn} title="Случайные прослушивания по метрикам артиста">
-                        <Dices className="w-4 h-4 theme-accent" />
-                      </button>
-                      {manualPlays && <button type="button" onClick={() => setManualPlays('')} className={iconBtn} title="Вернуть авто"><X className="w-4 h-4" /></button>}
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {manualItemType === 'snippet' && (
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[11px] font-bold text-zinc-400">Описание / строка сниппета</span>
-                    <button type="button" onClick={() => setManualSnippetTeaser(SNIPPET_TEASERS[randInt(0, SNIPPET_TEASERS.length - 1)])} className="text-[11px] font-semibold theme-accent hover:underline flex items-center gap-1 cursor-pointer">
-                      <Dices className="w-3 h-3" /> Случайный тизер
-                    </button>
-                  </div>
-                  <textarea rows={2} value={manualSnippetTeaser} onChange={e => setManualSnippetTeaser(e.target.value)} placeholder="Тизер в соцсетях, отрывок припева…" className={`${fieldCls} font-normal`} />
-                </div>
-              )}
-
-              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.015] p-3.5 space-y-2.5">
-                <div className="flex items-center gap-2">
-                  <Flame className="w-3.5 h-3.5 theme-accent" />
-                  <span className="text-xs font-bold text-white">Промо и хайп</span>
-                  <span className="text-[11px] text-zinc-500">влияют на старт и на то, как долго релиз держится</span>
-                </div>
-                <PromoHypeInline
-                  promo={manualPromoStrategy}
-                  hype={manualReleaseHype}
-                  defaultHype={selectedArtMetrics?.hype ?? 70}
-                  onChange={(p, h) => { setManualPromoStrategy(p); setManualReleaseHype(h); }}
-                />
-              </div>
+              {artistField}
+              {titleField}
+              <div className={`grid grid-cols-1 ${isAlbum ? 'md:grid-cols-2' : ''} gap-3`}>{featField}{coField}</div>
+              {playsField}
+              {teaserField}
+              {promoInline}
             </div>
           </div>
         </section>
-
-        {albumBuilder}
+        {tracklist(false)}
+        {addButton}
+        {queueStrip}
       </div>
+    );
+  }
 
-      <button type="button" onClick={handleAddManualItem}
-        className="w-full py-4 theme-bg-accent text-black font-extrabold rounded-2xl text-[13px] hover:opacity-95 transition-opacity cursor-pointer shadow-lg flex items-center justify-center gap-2">
-        {editingItemId ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-        <span>{editingItemId ? 'Сохранить обновлённый релиз в очередь' : 'Добавить релиз в очередь недели'}</span>
-        <span className="hidden sm:inline text-[10.5px] font-bold opacity-60">Ctrl + Enter</span>
-      </button>
-      {savedFlash && <p className="-mt-2 text-center text-[12px] text-emerald-300">{savedFlash}</p>}
-
-      {/* Inline queue strip (as before) — the full showcase opens with the button */}
-      {manualQueue.length > 0 && (
-        <div className="p-4 sm:p-5 rounded-3xl bg-zinc-900/40 border border-white/[0.08] space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h4 className="text-xs font-extrabold text-white tabular-nums">В очереди на эту неделю ({manualQueue.length}) · {queueTotalTracks} тр. · ~{formatCompact(queueTotalPlays)}</h4>
-              <p className="text-[11px] text-zinc-400">Нажми «Провести неделю» внизу пульта — всё выйдет разом в пятницу</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => setShowQueueShowcase(true)} className="px-3 py-1.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer">
-                <Eye className="w-3.5 h-3.5 theme-accent" /><span>Витрина</span>
-              </button>
-              <button type="button" onClick={() => setManualQueue([])} className="px-3 py-1.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-xs font-semibold text-rose-300 cursor-pointer">Очистить очередь</button>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-            {manualQueue.map(item => (
-              <div key={item.id} className={`p-3 rounded-2xl border flex items-center gap-3 min-w-0 transition-colors ${editingItemId === item.id ? 'border-amber-400/40 bg-amber-500/[0.06]' : 'bg-black/40 border-white/10 hover:border-white/20'}`}>
-                <CoverArt url={item.coverUrl} title={item.title} albumTitle={item.itemType === 'album' ? item.title : undefined} className="w-12 h-12 rounded-xl shrink-0 border border-white/10" />
-                <div className="flex-1 min-w-0">
-                  <span className="text-xs font-bold text-white truncate block">{item.title}</span>
-                  <p className="text-[11px] text-zinc-400 truncate">{item.artistName}{item.coArtist ? ` & ${item.coArtist}` : ''}{item.featuredArtist ? ` feat. ${item.featuredArtist}` : ''}</p>
-                  <p className="text-[11px] font-mono text-emerald-400 tabular-nums truncate">
-                    {item.itemType === 'album' ? `${item.releaseFormat === 'ep' ? 'EP' : 'Альбом'} (${item.albumTracks?.length || item.albumTracksCount || 10} тр.)` : item.itemType === 'snippet' ? 'Сниппет' : 'Сингл'} · {formatCompact(item.plays || 0)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button type="button" onClick={() => handleLoadInlineItemForEdit(item)} className="p-1.5 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer" title="Изменить"><Pencil className="w-3.5 h-3.5" /></button>
-                  <button type="button" onClick={() => setManualQueue(prev => prev.filter(x => x.id !== item.id))} className="p-1.5 rounded-xl text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer" title="Удалить"><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+  return (
+    <div className="space-y-4" onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleAddManualItem(); } }}>
+      {header}
+      {body}
 
       <SimArtistPickerModal
         isOpen={Boolean(pickerTarget)}
@@ -8819,7 +9253,7 @@ export const SimConsoleModal: React.FC<{
 }) => {
   const [tab, setTab] = useState<SimModeType | 'radar' | 'digest'>(initialTab);
   const [digestFull, setDigestFull] = useState(false);
-  const [winSize, setWinSize, winRef] = useSimWindowSize('musaic.sim.consoleSize');
+  const [winCfg, setWinCfg, winRef, winStyle] = useSimWindowSettings('musaic.sim.consoleWin');
   const [radarLayout, setRadarLayout] = useState<'list' | 'tiles'>(() => { try { return localStorage.getItem('musaic.sim.radarLayout') === 'tiles' ? 'tiles' : 'list'; } catch { return 'list'; } });
   const changeRadarLayout = (v: 'list' | 'tiles') => { setRadarLayout(v); try { localStorage.setItem('musaic.sim.radarLayout', v); } catch { /* */ } };
   const [autopilot, setAutopilot] = useState<SimAutopilotConfig>(() => loadSimAutopilot());
@@ -9310,12 +9744,7 @@ export const SimConsoleModal: React.FC<{
   return createPortal(
     <div className="fixed inset-0 z-[210] flex items-center justify-center p-2.5 sm:p-5">
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
-      <div ref={winRef} style={SIM_RESIZE_STYLE} className={`relative ${
-        winSize === 'compact' ? 'w-[calc(100vw-1.25rem)] sm:w-[calc(100vw-2.5rem)] max-w-4xl h-[calc(100vh-1.25rem)] sm:h-[80vh]'
-          : winSize === 'wide' ? 'w-[calc(100vw-1.25rem)] sm:w-[calc(100vw-2.5rem)] max-w-[1600px] h-[calc(100vh-1.25rem)] sm:h-[94vh]'
-            : winSize === 'full' ? 'w-[calc(100vw-0.5rem)] h-[calc(100vh-0.5rem)] max-w-none'
-              : 'w-[calc(100vw-1.25rem)] sm:w-[calc(100vw-2.5rem)] max-w-6xl h-[calc(100vh-1.25rem)] sm:h-[88vh]'
-      } bg-zinc-950 border border-white/12 rounded-3xl shadow-2xl overflow-hidden z-10 flex flex-col min-w-0 ${calmView ? 'sim-calm' : ''}`}>
+      <div ref={winRef} style={winStyle} className={`relative bg-zinc-950 border border-white/12 rounded-3xl shadow-2xl overflow-hidden z-10 flex flex-col min-w-0 ${calmView ? 'sim-calm' : ''}`}>
         <style>{SIM_CALM_CSS}</style>
         {/* Subtle static top glow */}
         <div
@@ -9370,7 +9799,7 @@ export const SimConsoleModal: React.FC<{
                 </button>
               ))}
             </div>
-            <SimWindowSizeControl value={winSize} onChange={setWinSize} />
+            <SimWindowSettingsButton value={winCfg} onChange={setWinCfg} />
             <ListenEngineButton artists={simState.artists} tracks={simState.tracks} albums={simState.albums} refIso={simState.currentDate} onApplyListeners={onSetArtistFollowers} label="Движок" />
             <button
               type="button"
@@ -9449,10 +9878,10 @@ export const SimConsoleModal: React.FC<{
             </div>
           )}
           {(tab === 'semi' || tab === 'manual') && (
-            <WeekBuzzStrip simState={simState} endDate={toDate} friday={releaseFriday} rumors={confirmedRumors} anns={anns}
+            <SimBuzzStrip simState={simState} from={fromDate} to={toDate} friday={releaseFriday} rumors={confirmedRumors} anns={anns}
               target={tab}
               onUseAnn={id => sendAnn(id, tab)}
-              onUse={id => { const rm = confirmedRumors.find(r => r.id === id); if (rm) sendRumor(rm, tab); }} />
+              onUseRumor={id => { const rm = confirmedRumors.find(r => r.id === id); if (rm) sendRumor(rm, tab); }} />
           )}
           {lightMode && tab === 'semi' && (
             <SimLightPanel proposals={proposals} setProposals={setProposals} regenerate={regenerateProposals} autopilot={autopilot} setAuto={updateAutopilot} simState={simState} advanceDays={advanceDays} />
@@ -10184,6 +10613,7 @@ export const SimConsoleModal: React.FC<{
               clearCreatedAssignment={clearCreatedAssignment}
               clearManualFormRequest={clearManualFormRequest}
               simple={lightMode}
+              cols={winCfg.cols}
             />
           )}
 
@@ -10369,7 +10799,7 @@ export const SimConsoleModal: React.FC<{
                 </div>
               )}
               {radarViewMode === 'radar' ? (
-                <div className={radarLayout === 'tiles' ? 'grid grid-cols-1 lg:grid-cols-2 gap-2.5 [&>*]:rounded-2xl [&>*]:border [&>*]:border-white/10 [&>*]:bg-zinc-900/45' : 'divide-y divide-white/[0.08] border border-white/10 rounded-2xl bg-zinc-900/45 overflow-hidden'}>
+                <div style={radarLayout === 'tiles' ? gridCols(winCfg.cols) : undefined} className={radarLayout === 'tiles' ? 'grid gap-2.5 [&>*]:rounded-2xl [&>*]:border [&>*]:border-white/10 [&>*]:bg-zinc-900/45' : 'divide-y divide-white/[0.08] border border-white/10 rounded-2xl bg-zinc-900/45 overflow-hidden'}>
                   {radarVisibleSlice.length === 0 ? (
                     <p className="py-12 text-center text-sm text-zinc-400">Нет артистов по выбранным фильтрам</p>
                   ) : (
@@ -11280,166 +11710,18 @@ export const SimConsoleModal: React.FC<{
         );
       })()}
 
-      {/* Visual Showcase Modal for Manual Weekly Queue */}
+      {/* Queue showcase (v2.6.2): calm list, albums unfold to their tracklist */}
       {showQueueShowcase && (
-        <div className="fixed inset-0 z-[230] flex items-center justify-center p-3 sm:p-6">
-          <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={() => setShowQueueShowcase(false)} />
-          <div
-            className="relative w-full max-w-5xl max-h-[88vh] bg-zinc-950 border border-white/15 rounded-3xl shadow-2xl overflow-hidden flex flex-col z-10"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="px-6 py-4 border-b border-white/10 bg-zinc-900/60 flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base sm:text-lg font-extrabold text-white">
-                  Витрина очереди недели ({manualQueue.length})
-                </h3>
-                <p className="text-xs text-zinc-300 mt-0.5 tabular-nums">
-                  Пятница дропов · Треков: {manualQueue.reduce((acc, q) => acc + (q.itemType === 'album' ? q.albumTracks?.length || q.albumTracksCount || 10 : 1), 0)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowQueueShowcase(false)}
-                className="p-2 rounded-xl bg-white/[0.07] hover:bg-white/[0.15] text-zinc-300 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-5 sm:p-6 custom-scrollbar">
-              {manualQueue.length === 0 ? (
-                <div className="py-16 text-center text-sm text-zinc-400">Очередь пока пуста</div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {manualQueue.map(item => {
-                    const stratSpec = getPromoStrategyConfig(item.promoStrategy);
-                    const estMetrics = metricsMap.get(item.artistId);
-                    const estArt = simState.artists.find(a => a.id === item.artistId);
-                    const forecast =
-                      item.plays && item.plays > 0
-                        ? item.plays
-                        : estArt
-                          ? forecastReleasePlays({
-                              artist: estArt,
-                              featuredNames: item.featuredArtist,
-                              allArtists: simState.artists,
-                              itemType: item.itemType,
-                              qualityScore: estMetrics?.avgQuality || 72,
-                              hype: estMetrics?.hype || 60,
-                              hasWarmup: Boolean(estMetrics?.activeSnippet),
-                              promoStrategy: item.promoStrategy,
-                              releaseHype: item.releaseHype,
-                              albumTracksCount: item.albumTracks?.length || item.albumTracksCount || 10,
-                              hitsCount: estMetrics?.topHitsCount || 0,
-                              catalogAvgPlays: estMetrics?.catalogAvgPlays || 0,
-                              deterministic: true
-                            })
-                          : 350_000;
-
-                    return (
-                      <div
-                        key={item.id}
-                        className="p-3.5 rounded-2xl bg-zinc-900/75 border border-white/10 hover:border-white/25 transition-all flex flex-col gap-3"
-                      >
-                        <div className="relative aspect-square w-full rounded-xl overflow-hidden bg-black border border-white/10 shadow-lg">
-                          <CoverArt
-                            url={item.coverUrl}
-                            title={item.title}
-                            albumTitle={item.itemType === 'album' ? item.title : undefined}
-                            className="w-full h-full"
-                          />
-                          <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/80 via-black/30 to-transparent pointer-events-none" />
-                          <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between text-xs font-bold text-white tabular-nums">
-                            <span>
-                              {item.itemType === 'album'
-                                ? `Альбом · ${item.albumTracks?.length || item.albumTracksCount || 10} тр.`
-                                : item.itemType === 'snippet'
-                                  ? 'Сниппет'
-                                  : 'Сингл'}
-                            </span>
-                            <span>{formatCompact(forecast)}</span>
-                          </div>
-                        </div>
-
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <h4 className="text-sm font-extrabold text-white truncate">{item.title}</h4>
-                            {item.isExplicit && (
-                              <span className="px-1.5 py-0.5 rounded bg-zinc-700 text-[10px] font-bold text-white shrink-0">
-                                E
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-zinc-300 truncate">
-                            {item.artistName}
-                            {item.coArtist ? ` & ${item.coArtist}` : ''}
-                            {item.featuredArtist ? ` feat. ${item.featuredArtist}` : ''}
-                          </p>
-                          {(stratSpec || typeof item.releaseHype === 'number' || item.genre) && (
-                            <p className="text-xs text-zinc-400 truncate tabular-nums">
-                              {[
-                                item.genre,
-                                stratSpec?.shortLabel,
-                                typeof item.releaseHype === 'number' ? `Хайп ${item.releaseHype}` : null
-                              ]
-                                .filter(Boolean)
-                                .join(' · ')}
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/[0.08]">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              handleEditQueuedManualItem(item);
-                              setShowQueueShowcase(false);
-                            }}
-                            className="px-3 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.15] text-xs font-semibold text-white flex items-center gap-1 cursor-pointer"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>Изменить</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setManualQueue(prev => prev.filter(x => x.id !== item.id))}
-                            className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer"
-                            title="Убрать из очереди"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="px-6 py-4 border-t border-white/10 bg-zinc-900/50 flex flex-wrap items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => setShowQueueShowcase(false)}
-                className="px-4 py-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-xs font-semibold text-zinc-200 cursor-pointer"
-              >
-                Вернуться к редактору
-              </button>
-              {manualQueue.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowQueueShowcase(false);
-                    runManualBatch();
-                  }}
-                  className="px-5 py-2.5 rounded-xl theme-bg-accent text-black text-xs font-extrabold flex items-center gap-1.5 cursor-pointer hover:opacity-90"
-                >
-                  <FastForward className="w-4 h-4 fill-black" />
-                  <span>Провести {advanceDays === 1 ? 'день' : advanceDays === 7 ? 'неделю' : advanceDays === 14 ? '2 недели' : advanceDays === 30 ? 'месяц' : `${advanceDays} дн.`} ({manualQueue.length})</span>
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <QueueShowcaseModal
+          queue={manualQueue}
+          artists={simState.artists}
+          metricsMap={metricsMap}
+          onClose={() => setShowQueueShowcase(false)}
+          onEdit={item => { setShowQueueShowcase(false); handleEditQueuedManualItem(item); }}
+          onRemove={id => setManualQueue(prev => prev.filter(x => x.id !== id))}
+          onRun={() => { setShowQueueShowcase(false); runManualBatch(); }}
+          runLabel={`Провести ${advanceDays === 1 ? 'день' : advanceDays === 7 ? 'неделю' : advanceDays === 14 ? '2 недели' : advanceDays === 30 ? 'месяц' : `${advanceDays} дн.`}`}
+        />
       )}
     </div>,
     document.body
