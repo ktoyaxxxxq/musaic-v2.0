@@ -10,6 +10,12 @@ export interface Artist {
   country?: string;
   isRisingStar?: boolean;
   hype?: number;
+  /** simulation v2.6: streams of the artist per day, last 28 days */
+  simStreams?: number[];
+  /** simulation v2.6: usual monthly listeners (moves slowly) */
+  simLisAnchor?: number;
+  /** simulation v2.6: usual 28-day streams for that level of listeners */
+  simLisBase?: number;
 }
 
 export interface RatingData {
@@ -78,6 +84,8 @@ export interface Album {
   simGenerated?: boolean;
   promoStrategy?: ReleasePromoStrategy;
   releaseHype?: number;
+  /** simulation v2.6: streams of the album over the last 7 days */
+  weekPlays?: number;
 }
 
 export type ReleasePromoStrategy =
@@ -91,6 +99,20 @@ export type ReleasePromoStrategy =
   | 'radio_tour'
   | 'deluxe_wave'
   | 'mega_campaign';
+
+/** simulation v2.6: streaming speed of a track */
+export interface SimStreamState {
+  /** streams per day right now (releases of the simulation) */
+  d: number;
+  /** long tail: streams per day the track keeps months later */
+  f: number;
+  /** daily decay factor */
+  k: number;
+  /** track from the original database (grows calmer) */
+  cat?: boolean;
+  /** temporary boost of a database track (comeback, viral moment) */
+  b?: number;
+}
 
 export interface Track {
   id: string;
@@ -120,6 +142,10 @@ export interface Track {
   simGenerated?: boolean;
   promoStrategy?: ReleasePromoStrategy;
   releaseHype?: number;
+  /** simulation v2.6: streaming state */
+  simStream?: SimStreamState;
+  /** simulation v2.6: streams over the last 7 days */
+  weekPlays?: number;
 }
 
 export type ViewType = 'home' | 'charts' | 'search' | 'library' | 'artist' | 'album' | 'creator' | 'track' | 'artist_tracks' | 'likes' | 'rating' | 'album_value' | 'compare' | 'news' | 'social';
@@ -343,4 +369,3 @@ export interface SimSaveSlot {
   tracksCount: number;
   state: Omit<SimState, 'isActive'>;
 }
-

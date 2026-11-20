@@ -102,6 +102,7 @@ import {
   SimStartModal,
   SimConsoleModal,
   computeInitialSimSnapshot,
+  loadSimAutopilot,
   generateWeekProposals,
   advanceSimulationStep,
   formatSimDate,
@@ -5578,12 +5579,14 @@ export default function App() {
 
   const handleQuickSimStep = (days: number) => {
     if (!simState) return;
+    // v2.6: «+1 неделя» uses the same engine settings as the console (virality, formats, collabs…)
+    const savedCfg = loadSimAutopilot();
     const autoProps = days >= 5
-      ? generateWeekProposals(simState.artists, simState.albums, simState.tracks, simState.currentDate, 'balanced')
+      ? generateWeekProposals(simState.artists, simState.albums, simState.tracks, simState.currentDate, savedCfg)
       : [];
     // v2.5.8: the manual batch queue is released by quick steps too (on the Friday inside the step)
     const queued = loadManualQueue(simState.startDate);
-    const next = advanceSimulationStep({ simState, proposals: autoProps, manualItems: queued, advanceDays: days });
+    const next = advanceSimulationStep({ simState, proposals: autoProps, manualItems: queued, advanceDays: days, virality: savedCfg.virality });
     if (queued.length) saveManualQueue(simState.startDate, []);
     setSimState(next);
     showToast(`+${days} дн. → ${formatSimDate(next.currentDate)}${queued.length ? ` · ручной батч: ${queued.length}` : ''}`);
