@@ -5693,6 +5693,7 @@ export default function App() {
   };
 
   const handleExitSimulation = () => {
+    if (!window.confirm('Выйти в обычную базу? Активная симуляция закроется. Продолжить можно будет из слота, если он сохранён.')) return;
     setSimState(null);
     setIsSimConsoleOpen(false);
     setSimInitWeekly({ open: false, weekNumber: null });
@@ -16640,7 +16641,8 @@ function AlbumView({
     return () => { cancelled = true; };
   }, [album.id, albumCoverResolved]);
   const pageAccent = readableAccent(albumPalette[0]);
-  const releaseKind = rawAlbumTracks.length <= 1 ? 'Сингл' : rawAlbumTracks.length <= 6 ? 'EP' : 'Альбом';
+  const releaseKind = album.releaseFormat === 'ep' ? 'EP' : album.releaseFormat === 'album' ? 'Альбом' :
+    rawAlbumTracks.length <= 1 ? 'Сингл' : rawAlbumTracks.length <= 6 ? 'EP' : 'Альбом';
 
   const albumPeak = displayPeak(album, 'album', tracks, albums);
   const albumMetaNode = (

@@ -16,7 +16,8 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Artist, Album, Track, AwardItem, SimState, SimWeekDigest } from './types';
 import { CoverArt, resolveMedia, dbGet, dbSet, dbGetAllMedia, dbPutMediaBatch, loadMediaCache, formatNumber, mediaCache, notifyMediaUpdated } from './App';
-import { RELEASE_PROMO_LABELS } from './SimulationMode';
+import { isInSimReleaseWindow, RELEASE_PROMO_LABELS } from './SimulationMode';
+import type { Announcement } from './MusaicPlus';
 import { loadConfirmed } from './SocialFeed';
 import type { MediaItem } from './App';
 
@@ -1853,46 +1854,126 @@ export const SimDigestFullscreen: React.FC<React.ComponentProps<typeof SimDigest
   );
 };
 
-/** compact strip for manual batch / semi-auto: rumors, teasers and drops of this week */
-export const WeekBuzzStrip: React.FC<{ simState: SimState; rumors: Array<{ id: string; artistName: string; kind: string; date: string; title?: string; feat?: string; source?: string; used?: string }>; onUse?: (id: string) => void; target?: 'manual' | 'semi'; anns?: any[]; onUseAnn?: (id: string) => void }> = memo(({ simState, rumors, onUse, target = 'semi', anns = [], onUseAnn }) => {
-  const { items, fri } = useMemo(() => {
-    const now = msOf(simState.currentDate);
-    const dow = new Date(now).getUTCDay();
-    const friMs = now + ((5 - dow + 7) % 7) * DAY; // today if it is Friday
-    const fri = isoDay(friMs);
-    const end = isoDay(now + 7 * DAY), from = isoDay(now - 3 * DAY), recent = isoDay(now - 14 * DAY);
-    const out: Array<{ k: string; tag: string; cls: string; text: string; date?: string; rid?: string; aid?: string; cover?: string; prio: number }> = [];
-    const prio = (d?: string) => (d === fri ? 0 : d && d > simState.currentDate ? 1 : 2);
-    rumors.filter(r => !r.used && r.date >= from && r.date <= end).forEach(r => out.push({ k: `r${r.id}`, tag: 'Слух', cls: 'bg-violet-400/15 text-violet-200 border-violet-400/25', text: `${r.artistName} · ${r.title ? `«${r.title}»` : ({ single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет' } as any)[r.kind] || r.kind}${r.feat ? ` ft. ${r.feat}` : ''}`, date: r.date, rid: r.id, prio: prio(r.date) }));
-    const kindL: Record<string, string> = { single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет', clip: 'клип' };
-    const taken = new Set(simState.tracks.map(t => `${norm(t.artistName)}|${norm(t.title)}`).concat(simState.albums.map(a => `${norm(a.artistName)}|${norm(a.title)}`)));
-    anns.filter(a => a && !a.released && !a.simUsed && a.date >= from && a.date <= end && !taken.has(`${norm(a.artistName)}|${norm(a.title)}`))
-      .forEach(a => out.push({ k: `n${a.id}`, tag: 'Календарь', cls: 'bg-emerald-400/15 text-emerald-200 border-emerald-400/25', text: `${a.artistName} · «${a.title}»${a.featuredArtist ? ` ft. ${a.featuredArtist}` : ''} · ${kindL[a.type] || a.type}`, date: a.date, aid: a.id, cover: a.coverUrl, prio: prio(a.date) }));
-    simState.tracks.filter(t => (t.releaseDate || '') > simState.currentDate && (t.releaseDate || '') <= end).slice(0, 6).forEach(t => out.push({ k: `s${t.id}`, tag: t.isSnippet ? 'Тизер' : 'Анонс', cls: 'bg-amber-400/15 text-amber-200 border-amber-400/25', text: `${t.artistName} · «${t.title}»`, date: t.releaseDate, prio: prio(t.releaseDate) }));
-    simState.albums.filter(a => (a.releaseDate || '') > simState.currentDate && (a.releaseDate || '') <= end).slice(0, 4).forEach(a => out.push({ k: `a${a.id}`, tag: 'Альбом', cls: 'bg-amber-400/15 text-amber-200 border-amber-400/25', text: `${a.artistName} · «${a.title}»`, date: a.releaseDate, prio: prio(a.releaseDate) }));
-    simState.tracks.filter(t => t.isSnippet && (t.releaseDate || '') >= recent && (t.releaseDate || '') <= simState.currentDate).slice(-6).forEach(t => out.push({ k: `t${t.id}`, tag: 'Сниппет', cls: 'bg-sky-400/15 text-sky-200 border-sky-400/25', text: `${t.artistName} · «${t.title}»${t.snippetTeaser ? ` — ${t.snippetTeaser.slice(0, 40)}` : ''}`, date: t.releaseDate, prio: 3 }));
-    out.sort((x, y) => x.prio - y.prio || (x.date || '').localeCompare(y.date || ''));
-    return { items: out, fri };
-  }, [simState.currentDate, simState.tracks, simState.albums, rumors, anns]);
-  if (!items.length) return null;
-  const friCount = items.filter(i => i.prio === 0).length;
-  const isToday = fri === simState.currentDate;
+type BuzzRumor = {
+  id: string;
+  artistName: string;
+  kind: string;
+  date: string;
+  title?: string;
+  feat?: string;
+  used?: string;
+};
+
+type BuzzItem = {
+  key: string;
+  date: string;
+  tag: string;
+  text: string;
+  kind: 'rumor' | 'announcement' | 'release';
+  sourceId?: string;
+};
+
+const BUZZ_RELEASE_FORMAT: Record<string, string> = {
+  single: 'сингл', ep: 'EP', album: 'альбом', snippet: 'сниппет', clip: 'клип'
+};
+
+function collectStepBuzz(
+  tracks: Track[], albums: Album[], rumors: BuzzRumor[], announcements: Announcement[], from: string, end: string
+): BuzzItem[] {
+  const items: BuzzItem[] = [];
+  const scheduledAlbums = new Map<string, string>();
+  const catalogKeys = new Set<string>();
+  const collectCatalog = announcements.some(a => a && !a.released && !a.simUsed && isInSimReleaseWindow(a.date, from, end));
+  const catalogKey = (artist: string, title: string, date: string) => `${norm(artist)}|${norm(title)}|${date.slice(0, 10)}`;
+  for (const album of albums) {
+    if (collectCatalog) catalogKeys.add(catalogKey(album.artistName, album.title, album.releaseDate || ''));
+    if (!isInSimReleaseWindow(album.releaseDate, from, end)) continue;
+    const date = album.releaseDate.slice(0, 10);
+    scheduledAlbums.set(album.id, date);
+    items.push({ key: `a-${album.id}`, date, kind: 'release', tag: album.releaseFormat === 'ep' ? 'EP' : 'Альбом', text: `${album.artistName} · «${album.title}»` });
+  }
+  for (const track of tracks) {
+    const date = (track.releaseDate || '').slice(0, 10);
+    if (collectCatalog) catalogKeys.add(catalogKey(track.artistName, track.title, date));
+    if (!isInSimReleaseWindow(date, from, end)) continue;
+    if (!track.isSnippet && track.albumId !== 'single' && scheduledAlbums.get(track.albumId) === date) continue;
+    items.push({ key: `t-${track.id}`, date, kind: 'release', tag: track.isSnippet ? 'Сниппет' : 'Релиз', text: `${track.artistName} · «${track.title}»` });
+  }
+  for (const rumor of rumors) {
+    if (rumor.used || !isInSimReleaseWindow(rumor.date, from, end)) continue;
+    const title = rumor.title ? `«${rumor.title}»` : BUZZ_RELEASE_FORMAT[rumor.kind] || rumor.kind;
+    const feat = rumor.feat ? ` feat. ${rumor.feat}` : '';
+    items.push({ key: `r-${rumor.id}`, date: rumor.date.slice(0, 10), kind: 'rumor', tag: 'Слух', text: `${rumor.artistName} · ${title}${feat}`, sourceId: rumor.id });
+  }
+  for (const ann of announcements) {
+    if (!ann || ann.released || ann.simUsed || !isInSimReleaseWindow(ann.date, from, end)) continue;
+    if (ann.type !== 'clip' && catalogKeys.has(catalogKey(ann.artistName, ann.title, ann.date))) continue;
+    const feat = ann.featuredArtist ? ` feat. ${ann.featuredArtist}` : '';
+    items.push({ key: `n-${ann.id}`, date: ann.date.slice(0, 10), kind: 'announcement', tag: 'Анонс', text: `${ann.artistName} · «${ann.title}»${feat} · ${BUZZ_RELEASE_FORMAT[ann.type] || ann.type}`, sourceId: ann.id });
+  }
+  return items.sort((a, b) => a.date.localeCompare(b.date) || Number(b.kind === 'release') - Number(a.kind === 'release'));
+}
+
+const BUZZ_ITEM_STYLE = {
+  rumor: 'bg-violet-400/15 text-violet-200 border-violet-400/25',
+  announcement: 'bg-emerald-400/15 text-emerald-200 border-emerald-400/25',
+  release: 'bg-white/[0.06] text-zinc-200 border-white/10'
+};
+
+export const WeekBuzzStrip = memo(function WeekBuzzStrip({
+  simState, endDate, friday, rumors, anns, target, onUse, onUseAnn
+}: {
+  simState: SimState;
+  endDate: string;
+  friday: string;
+  rumors: BuzzRumor[];
+  anns: Announcement[];
+  target: 'manual' | 'semi';
+  onUse: (id: string) => void;
+  onUseAnn: (id: string) => void;
+}) {
+  const { currentDate, tracks, albums } = simState;
+  const items = useMemo(
+    () => collectStepBuzz(tracks, albums, rumors, anns, currentDate, endDate),
+    [tracks, albums, rumors, anns, currentDate, endDate]
+  );
+  const shortDate = (date: string) => fmtDate(date).slice(0, 5);
   return (
-    <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="mb-3 rounded-2xl border border-violet-400/20 bg-gradient-to-r from-violet-500/[0.09] via-white/[0.02] to-transparent px-3 py-2.5">
-      <div className="flex items-center gap-2">
-        <span className="relative flex w-2 h-2 shrink-0"><span className="absolute inset-0 rounded-full bg-violet-400 animate-ping opacity-60" /><span className="relative w-2 h-2 rounded-full bg-violet-400" /></span>
-        <span className="text-[12.5px] font-black text-white whitespace-nowrap">{isToday ? 'Сегодня пятница' : `Пятница ${fmtDate(fri).slice(0, 5)}`}</span>
-        <span className="text-[11.5px] text-zinc-400 whitespace-nowrap">{friCount ? `${friCount} на пятницу` : 'на пятницу пусто'} · всего {items.length}</span>
-        <div className="flex gap-1.5 overflow-x-auto custom-scrollbar py-0.5 min-w-0">
-          {items.map(it => { const can = (it.rid && onUse) || (it.aid && onUseAnn); return (
-            <button key={it.k} type="button" disabled={!can} onClick={() => { if (it.rid && onUse) onUse(it.rid); else if (it.aid && onUseAnn) onUseAnn(it.aid); }} title={can ? (target === 'manual' ? 'Открыть в форме ручного батча' : 'Добавить в полуавтомат') : undefined}
-              className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11.5px] ${it.cls} ${it.prio === 0 ? 'ring-1 ring-white/25' : 'opacity-85'} ${can ? 'hover:brightness-125 cursor-pointer' : 'cursor-default'}`}>
-              {it.cover && <CoverArt url={it.cover} title={it.text} className="w-5 h-5 rounded overflow-hidden shrink-0" innerClassName="w-full h-full object-cover" />}
-              <b className="uppercase tracking-wide text-[9.5px]">{it.prio === 0 ? `★ ${it.tag}` : it.tag}</b><span className="max-w-[240px] truncate">{it.text}</span>{it.date && <span className="opacity-60 tabular-nums">{it.date === simState.currentDate ? 'сегодня' : fmtDate(it.date).slice(0, 5)}</span>}{can && <span className="opacity-80 font-bold">＋ {target === 'manual' ? 'в форму' : 'в релизы'}</span>}
-            </button>); })}
-        </div>
+    <section className="mb-4 min-w-0 space-y-2 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2.5" aria-label="Релизы и слухи на выбранный шаг">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <h3 className="text-xs font-bold text-white">Релизы и слухи</h3>
+        <span className="text-[11px] tabular-nums text-zinc-400">{shortDate(currentDate)}–{shortDate(endDate)}</span>
+        {!items.length && <span className="text-[11px] text-zinc-400">На этот период ничего нет</span>}
       </div>
-    </motion.div>
+      {items.length > 0 && (
+        <ul className="flex gap-1.5 overflow-x-auto custom-scrollbar py-0.5" tabIndex={0}>
+          {items.map(item => {
+            const action = item.kind === 'rumor' ? onUse : item.kind === 'announcement' ? onUseAnn : undefined;
+            const className = `inline-flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] ${BUZZ_ITEM_STYLE[item.kind]} ${item.date === friday ? 'ring-1 ring-inset ring-white/20' : ''}`;
+            const label = (
+              <>
+                <span className="font-semibold">{item.tag}</span>
+                <span className="max-w-[195px] truncate sm:max-w-[260px]">{item.text}</span>
+                <span className="tabular-nums text-zinc-300">{item.date === currentDate ? 'сегодня' : shortDate(item.date)}</span>
+              </>
+            );
+            const id = item.sourceId;
+            return (
+              <li key={item.key} className="shrink-0">
+                {action && id ? (
+                  <button type="button" className={`${className} cursor-pointer hover:brightness-125`}
+                    title={`${item.text} · ${target === 'manual' ? 'Открыть в ручном батче' : 'Добавить в полуавтомат'}`}
+                    onClick={() => action(id)}>
+                    {label}
+                    <span aria-hidden="true">＋</span>
+                  </button>
+                ) : <span className={className} title={item.text}>{label}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 });
 

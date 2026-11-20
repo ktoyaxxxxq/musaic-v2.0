@@ -1496,6 +1496,7 @@ export const BatchSmartTools: React.FC<{
 export interface Announcement {
   id: string; title: string; artistName: string; artistId?: string;
   type: 'single' | 'ep' | 'album' | 'snippet' | 'clip'; date: string; time?: string;
+  simUsed?: 'semi' | 'manual';
   coverUrl?: string; note?: string; presaves: number; released?: boolean; createdAt: number; featuredArtist?: string; fromRumor?: boolean;
 }
 interface Rumor { id: string; artistId: string; artistName: string; text: string; type: Announcement['type']; conf: number; from: string; to: string; feat?: string; title?: string }
@@ -1599,7 +1600,10 @@ const CalendarModal: React.FC<React.ComponentProps<typeof ReleaseCalendarPro> & 
   useEsc(true, onClose);
   const today = todayIso && /^\d{4}-\d{2}-\d{2}/.test(todayIso) ? todayIso.slice(0, 10) : getLabRefIso() || toISO(Date.now());
   const [ann, setAnn] = useState<Announcement[]>(() => lsGet<Announcement[]>(ANN_LS, []));
-  useEffect(() => lsSet(ANN_LS, ann), [ann]);
+  useEffect(() => {
+    lsSet(ANN_LS, ann);
+    window.dispatchEvent(new Event('musaic-announcements'));
+  }, [ann]);
   const [rs, setRs] = useState(() => lsGet<{ seed: number; skip: string[] }>(RUMOR_LS, { seed: 1, skip: [] }));
   useEffect(() => lsSet(RUMOR_LS, rs), [rs]);
   const [month, setMonth] = useState(today.slice(0, 7));

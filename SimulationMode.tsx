@@ -84,6 +84,7 @@ import {
 } from './App';
 import { CoverEditorModal } from './CoverEditorModal';
 import { loadConfirmed, saveConfirmed, type ConfirmedRumor } from './SocialFeed';
+import type { Announcement } from './MusaicPlus';
 
 // ============================================================================
 // DEFAULT AUTOPILOT CONFIG
@@ -153,6 +154,11 @@ export function diffDaysISO(fromISO: string, toISO: string): number {
   const t = new Date(toISO || '2026-01-01').getTime();
   if (isNaN(f) || isNaN(t)) return 0;
   return Math.round((t - f) / 86400000);
+}
+
+export function isInSimReleaseWindow(date: string | undefined, start: string, end: string): boolean {
+  const day = date?.slice(0, 10);
+  return Boolean(day && /^\d{4}-\d{2}-\d{2}$/.test(day) && day >= start && day <= end);
 }
 
 // Global music industry release day: Friday (пятница) for synchronized drops
@@ -1631,6 +1637,50 @@ function pickFeaturedArtistSmart(
   return { artist: pool[randInt(0, pool.length - 1)], isSurprise: true };
 }
 
+function createAlbumStreamRoll(count: number, estimatedAlbumPlays: number) {
+  const targetAlbumTotal = Math.max(count * 480_000, Math.round(estimatedAlbumPlays * randRange(0.95, 1.05)));
+  const styles = ['front_heavy', 'hit_driven', 'consistent', 'sleeper_late'] as const;
+  const style = styles[randInt(0, styles.length - 1)];
+  const leadRoll = Math.random();
+  const lead = style === 'sleeper_late'
+    ? randInt(Math.floor(count / 2), count - 1)
+    : leadRoll < 0.45 ? 0 : leadRoll < 0.70 && count > 1 ? 1 : leadRoll < 0.90 && count > 2 ? 2 : randInt(0, count - 1);
+
+  let second = randInt(0, Math.min(count - 1, Math.max(2, Math.floor(count * 0.65))));
+  if (second === lead && count > 1) second = (lead + 1) % count;
+
+  const sleepers = new Set<number>();
+  const sleeperCount = Math.random() < 0.65 ? randInt(1, 2) : 0;
+  for (let s = 0; s < sleeperCount * 3 && sleepers.size < sleeperCount; s++) {
+    const i = randInt(0, count - 1);
+    if (i !== lead && i !== second) sleepers.add(i);
+  }
+
+  const roleWeight = (i: number) => {
+    const position = count > 1 ? i / (count - 1) : 0;
+    if (i === lead) return style === 'hit_driven' ? randRange(2.6, 3.8) : style === 'consistent' ? randRange(1.5, 2.1) : randRange(2.0, 3.1);
+    if (i === second) return style === 'consistent' ? randRange(1.25, 1.75) : randRange(1.5, 2.35);
+    if (sleepers.has(i)) return randRange(1.45, 2.45);
+    if (style === 'front_heavy') return randRange(0.95 - position * 0.35, 1.25 - position * 0.30);
+    if (style === 'hit_driven') return randRange(0.45, 0.88);
+    if (style === 'sleeper_late') return randRange(0.65 + position * 0.22, 1.05 + position * 0.25);
+    return randRange(0.75, 1.30);
+  };
+
+  return (tracks: ReadonlyArray<{ featuredArtist?: string }>) => {
+    const weights = tracks.map((track, i) => {
+      const featMult = !track.featuredArtist ? 1 : Math.random() < 0.78 ? randRange(1.22, 1.65) : randRange(0.95, 1.12);
+      return Math.max(0.32, roleWeight(i) * featMult * randRange(0.84, 1.18));
+    });
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0) || 1;
+    return weights.map(weight => {
+      const share = targetAlbumTotal * weight / totalWeight;
+      const trackFloor = Math.round(randRange(380_000, 680_000) + randInt(117, 6893));
+      return Math.max(trackFloor, Math.round(share + randInt(-4500, 4500)));
+    });
+  };
+}
+
 export function generateAlbumTracksWithFeats(params: {
   artist: Artist;
   allArtists: Artist[];
@@ -1658,7 +1708,7 @@ export function generateAlbumTracksWithFeats(params: {
     audienceMap
   } = params;
   const safeCount = Math.max(3, count);
-  const targetAlbumTotal = Math.max(safeCount * 480_000, Math.round(estimatedAlbumPlays * randRange(0.95, 1.05)));
+  const rollStreams = createAlbumStreamRoll(safeCount, estimatedAlbumPlays);
 
   let maxFeats = safeCount >= 14 ? randInt(3, 6) : safeCount >= 9 ? randInt(2, 4) : randInt(1, 2);
   if (collabRate === 'low') maxFeats = Math.min(maxFeats, 1);
@@ -1673,39 +1723,10 @@ export function generateAlbumTracksWithFeats(params: {
     }
   }
 
-  // Varied album internal dynamics so every album has a distinct streaming curve
-  const curveStyles = ['front_heavy', 'hit_driven', 'consistent', 'sleeper_late'] as const;
-  const curveStyle = curveStyles[randInt(0, curveStyles.length - 1)];
-
-  const leadRoll = Math.random();
-  const leadIdx =
-    curveStyle === 'sleeper_late'
-      ? randInt(Math.floor(safeCount / 2), safeCount - 1)
-      : leadRoll < 0.45
-        ? 0
-        : leadRoll < 0.70 && safeCount > 1
-          ? 1
-          : leadRoll < 0.90 && safeCount > 2
-            ? 2
-            : randInt(0, safeCount - 1);
-
-  let secondIdx = randInt(0, Math.min(safeCount - 1, Math.max(2, Math.floor(safeCount * 0.65))));
-  if (secondIdx === leadIdx && safeCount > 1) {
-    secondIdx = (leadIdx + 1) % safeCount;
-  }
-
-  const sleeperIndices = new Set<number>();
-  const sleeperTargetCount = Math.random() < 0.65 ? randInt(1, 2) : 0;
-  for (let s = 0; s < sleeperTargetCount * 3 && sleeperIndices.size < sleeperTargetCount; s++) {
-    const idx = randInt(0, safeCount - 1);
-    if (idx !== leadIdx && idx !== secondIdx) sleeperIndices.add(idx);
-  }
-
   const usedFeatIds = new Set<string>();
   const drafts: Array<{
     title: string;
     duration: string;
-    rawWeight: number;
     featuredArtist?: string;
     isExplicit: boolean;
     isSurpriseFeat: boolean;
@@ -1713,25 +1734,6 @@ export function generateAlbumTracksWithFeats(params: {
 
   for (let i = 0; i < safeCount; i++) {
     const title = generateModernTitle(existingTitles, false, namingProfile, languageOverride);
-
-    let trackRoleMult = 1.0;
-    const posRatio = safeCount > 1 ? i / (safeCount - 1) : 0;
-
-    if (i === leadIdx) {
-      trackRoleMult = curveStyle === 'hit_driven' ? randRange(2.6, 3.8) : curveStyle === 'consistent' ? randRange(1.5, 2.1) : randRange(2.0, 3.1);
-    } else if (i === secondIdx) {
-      trackRoleMult = curveStyle === 'consistent' ? randRange(1.25, 1.75) : randRange(1.5, 2.35);
-    } else if (sleeperIndices.has(i)) {
-      trackRoleMult = randRange(1.45, 2.45);
-    } else if (curveStyle === 'front_heavy') {
-      trackRoleMult = randRange(0.95 - posRatio * 0.35, 1.25 - posRatio * 0.30);
-    } else if (curveStyle === 'hit_driven') {
-      trackRoleMult = randRange(0.45, 0.88);
-    } else if (curveStyle === 'sleeper_late') {
-      trackRoleMult = randRange(0.65 + posRatio * 0.22, 1.05 + posRatio * 0.25);
-    } else {
-      trackRoleMult = randRange(0.75, 1.30);
-    }
 
     let featuredArtist: string | undefined;
     let isSurpriseFeat = false;
@@ -1747,32 +1749,22 @@ export function generateAlbumTracksWithFeats(params: {
       featuredArtist = coArtist;
     }
 
-    let featMult = 1.0;
-    if (featuredArtist) {
-      featMult = Math.random() < 0.78 ? randRange(1.22, 1.65) : randRange(0.95, 1.12);
-    }
-
-    const rawWeight = Math.max(0.32, trackRoleMult * featMult * randRange(0.84, 1.18));
     drafts.push({
       title,
       duration: smartDuration(featuredArtist),
-      rawWeight,
       featuredArtist,
       isExplicit: Math.random() < 0.45,
       isSurpriseFeat
     });
   }
 
-  const totalWeight = drafts.reduce((sum, d) => sum + d.rawWeight, 0) || 1;
-  return drafts.map(d => {
-    const share = (targetAlbumTotal * d.rawWeight) / totalWeight;
-    const trackFloor = Math.round(randRange(380_000, 680_000) + randInt(117, 6893));
-    const plays = Math.max(trackFloor, Math.round(share + randInt(-4500, 4500)));
+  const streams = rollStreams(drafts);
+  return drafts.map((d, i) => {
     return {
       id: makeId('albtrk'),
       title: d.title,
       duration: d.duration,
-      plays,
+      plays: streams[i],
       featuredArtist: d.featuredArtist,
       isExplicit: d.isExplicit,
       isSurpriseFeat: d.isSurpriseFeat
@@ -2107,6 +2099,7 @@ export function generateWeekProposals(
 export interface ManualSimItem {
   id: string;
   itemType: 'track' | 'album' | 'snippet';
+  releaseFormat?: SimProposal['releaseFormat'];
   artistId: string;
   artistName: string;
   featuredArtist?: string;
@@ -2331,6 +2324,7 @@ export function advanceSimulationStep(params: {
         id: m.id,
         selected: true,
         itemType: m.itemType,
+        releaseFormat: m.releaseFormat,
         artistId: art?.id || m.artistId,
         artistName: art?.name || m.artistName,
         featuredArtist: m.featuredArtist,
@@ -2494,6 +2488,7 @@ export function advanceSimulationStep(params: {
         coArtist: item.coArtist,
         isLiked: false,
         totalPlays: albTotal,
+        releaseFormat: item.releaseFormat === 'ep' || item.releaseFormat === 'album' ? item.releaseFormat : undefined,
         intrinsicQuality: item.qualityScore,
         simGenerated: true,
         promoStrategy: item.promoStrategy,
@@ -5539,6 +5534,7 @@ const SimIdeaStudioModal: React.FC<{
     return {
       id: makeId('idea'),
       itemType,
+      releaseFormat,
       artistId: selectedArtist.id,
       artistName: selectedArtist.name,
       featuredArtist: draftFeat.trim() || undefined,
@@ -6607,7 +6603,7 @@ const SimIdeaStudioModal: React.FC<{
               }}
               className="px-4 py-2 rounded-xl theme-bg-accent text-black text-xs font-extrabold flex items-center gap-1.5 hover:opacity-90 disabled:opacity-40 cursor-pointer"
             >
-              <span>Перенести в батчер</span>
+              <span>Перенести в ручной батч</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -6974,6 +6970,12 @@ const SemiProposalRow = memo<{
 });
 
 // --- Radar v2: simpler card, expectation meter, drop / hide / regenerate ---
+function radarHash(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
+  return hash >>> 0;
+}
+
 const RADAR_HIDDEN_LS = 'musaic.radar.hidden';
 let radarHidden: Set<string> = (() => { try { return new Set<string>(JSON.parse(localStorage.getItem(RADAR_HIDDEN_LS) || '[]')); } catch { return new Set<string>(); } })();
 let radarShowHidden = false;
@@ -7045,10 +7047,12 @@ const RadarArtistRow = memo<{
     if (m.daysSinceAlbum === null || m.daysSinceAlbum >= 220) base.push('Концепт-EP (4–6 тр.)', 'Альбом с громким синглом-прогревом');
     if (suggestedPartner) base.push(`Коллаб-сингл с ${suggestedPartner.name}`);
     if (m.activeSnippet) base.push(`Выпустить «${m.activeSnippet.title}» целиком`);
-    base.push(m.hype >= 72 ? 'Громкий хит-сингл' : 'Сниппет + быстрый клип', 'Сюрприз-дроп без анонса', 'Ремикс на старый хит');
+    if (m.topHitsCount > 0) base.push('Ремикс на старый хит', 'Новая версия хита с гостем');
+    if (m.daysSilent >= 60) base.push('Сингл-возвращение', 'Двойной сингл после паузы');
+    base.push(m.hype >= 72 ? 'Громкий хит-сингл' : 'Сниппет + быстрый клип', 'Сюрприз-дроп без анонса', 'Сингл с клипом', 'Смена звучания в новом треке');
     return base.filter(Boolean);
-  }, [m.recommendedFormat, m.daysSinceAlbum, m.hype, m.activeSnippet, suggestedPartner]);
-  const idea = ideas[(radarSeed + localSeed) % ideas.length];
+  }, [m.recommendedFormat, m.daysSinceAlbum, m.daysSilent, m.topHitsCount, m.hype, m.activeSnippet, suggestedPartner]);
+  const idea = ideas[(radarHash(m.artist.id) + radarSeed + localSeed) % ideas.length];
   if (hidden && !radarShowHidden) return null;
   const lastDrop = m.lastDropDate ? `${m.daysSilent} дн. назад` : 'ещё не было';
   return (
@@ -7269,8 +7273,11 @@ const SimManualTab = memo(({
   onOpenIdeaStudio,
   radarAssignSignal,
   createdAssignSignal,
-  editingManualSignal,
-  ideaAssignSignal
+  manualFormRequest,
+  clearRadarAssignment,
+  clearCreatedAssignment,
+  clearManualFormRequest,
+  simple
 }: {
   simState: SimState;
   artistByIdMap: Map<string, Artist>;
@@ -7287,15 +7294,22 @@ const SimManualTab = memo(({
     prefillName?: string
   ) => void;
   onOpenIdeaStudio: (currentArtistId?: string) => void;
-  radarAssignSignal: { seq: number; artistId: string; genre: string } | null;
+  radarAssignSignal: { artistId: string; genre: string } | null;
   createdAssignSignal: { seq: number; ctx: string; artist: Artist } | null;
-  editingManualSignal: { seq: number; item: ManualSimItem } | null;
-  ideaAssignSignal: { seq: number; draft: ManualSimItem } | null;
+  manualFormRequest: { item: ManualSimItem; edit: boolean } | null;
+  clearRadarAssignment: () => void;
+  clearCreatedAssignment: () => void;
+  clearManualFormRequest: () => void;
+  simple: boolean;
 }) => {
-  const D = loadManualDraft(simState.startDate);
+  const [D] = useState(() => loadManualDraft(simState.startDate));
   const [manualItemType, setManualItemType] = useState<'track' | 'album' | 'snippet'>(D.itemType || 'track');
+  const [albumFormat, setAlbumFormat] = useState<'album' | 'ep'>(D.albumFormat || 'album');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const showDetails = !simple || advancedOpen;
+  const manualReleaseFormat = manualItemType === 'album' ? albumFormat : manualItemType === 'track' ? 'single' : 'snippet';
   const [manualTitle, setManualTitle] = useState<string>(D.title ?? '');
-  const [manualArtistId, setManualArtistId] = useState<string>(D.artistId && simState.artists.some(a => a.id === D.artistId) ? D.artistId : simState.artists[0]?.id || '');
+  const [manualArtistId, setManualArtistId] = useState<string>(() => artistByIdMap.has(D.artistId) ? D.artistId : simState.artists[0]?.id || '');
   const [manualCustomArtistMode, setManualCustomArtistMode] = useState<boolean>(D.customMode ?? false);
   const [manualCustomArtist, setManualCustomArtist] = useState<string>(D.customArtist ?? '');
   const [manualGenre, setManualGenre] = useState<string>(D.genre ?? (simState.artists[0]?.genre || 'Hip-Hop / Rap'));
@@ -7319,11 +7333,18 @@ const SimManualTab = memo(({
 
   // Editing an existing queued item
   const [editingItemId, setEditingItemId] = useState<string | null>(D.editingId ?? null);
-  // v2.5.8: the form survives closing the console (and a page reload)
+  // Debounce typing, but keep the latest draft when switching tabs or closing the console.
+  const pendingDraft = useRef<(() => void) | null>(null);
+  useEffect(() => () => pendingDraft.current?.(), []);
   useEffect(() => {
-    const t = setTimeout(() => saveManualDraft(simState.startDate, { itemType: manualItemType, title: manualTitle, artistId: manualArtistId, customMode: manualCustomArtistMode, customArtist: manualCustomArtist, genre: manualGenre, cover: manualCoverUrl, plays: manualPlays, duration: manualDuration, feat: manualFeat, co: manualCoArtist, teaser: manualSnippetTeaser, promo: manualPromoStrategy, hype: manualReleaseHype, count: manualAlbumTracksCount, tracks: manualAlbumTracks, editingId: editingItemId }), 250);
+    const save = () => {
+      saveManualDraft(simState.startDate, { itemType: manualItemType, albumFormat, title: manualTitle, artistId: manualArtistId, customMode: manualCustomArtistMode, customArtist: manualCustomArtist, genre: manualGenre, cover: manualCoverUrl, plays: manualPlays, duration: manualDuration, feat: manualFeat, co: manualCoArtist, teaser: manualSnippetTeaser, promo: manualPromoStrategy, hype: manualReleaseHype, count: manualAlbumTracksCount, tracks: manualAlbumTracks, editingId: editingItemId });
+      pendingDraft.current = null;
+    };
+    pendingDraft.current = save;
+    const t = setTimeout(save, 250);
     return () => clearTimeout(t);
-  }, [simState.startDate, manualItemType, manualTitle, manualArtistId, manualCustomArtistMode, manualCustomArtist, manualGenre, manualCoverUrl, manualPlays, manualDuration, manualFeat, manualCoArtist, manualSnippetTeaser, manualPromoStrategy, manualReleaseHype, manualAlbumTracksCount, manualAlbumTracks, editingItemId]);
+  }, [simState.startDate, manualItemType, albumFormat, manualTitle, manualArtistId, manualCustomArtistMode, manualCustomArtist, manualGenre, manualCoverUrl, manualPlays, manualDuration, manualFeat, manualCoArtist, manualSnippetTeaser, manualPromoStrategy, manualReleaseHype, manualAlbumTracksCount, manualAlbumTracks, editingItemId]);
 
   // Sub-modals inside Manual Tab
   const [pickerTarget, setPickerTarget] = useState<'main' | 'feat' | 'co' | 'child_feat' | null>(null);
@@ -7343,7 +7364,8 @@ const SimManualTab = memo(({
       setManualCustomArtist('');
       setManualGenre(radarAssignSignal.genre || found.genre || 'Hip-Hop / Rap');
     }
-  }, [radarAssignSignal, artistByIdMap]);
+    clearRadarAssignment();
+  }, [radarAssignSignal, artistByIdMap, clearRadarAssignment]);
 
   // Sync newly created artist signal into the exact field requested
   useEffect(() => {
@@ -7361,48 +7383,19 @@ const SimManualTab = memo(({
     } else if (createdAssignSignal.ctx === 'manual_child_feat') {
       setChildTrFeat(prev => appendFeaturedName(prev, art.name));
     }
-  }, [createdAssignSignal]);
+    clearCreatedAssignment();
+  }, [createdAssignSignal, clearCreatedAssignment]);
 
-  // Reload queued item when user clicks "Изменить" in showcase or inline queue
-  useEffect(() => {
-    if (!editingManualSignal) return;
-    const item = editingManualSignal.item;
-    setEditingItemId(item.id);
+  const fillManualForm = (item: ManualSimItem, edit: boolean) => {
+    setEditingItemId(edit ? item.id : null);
     setManualItemType(item.itemType);
+    setAlbumFormat(item.releaseFormat === 'ep' ? 'ep' : 'album');
     setManualTitle(item.title || '');
-    const isGuest = !artistByIdMap.has(item.artistId) && Boolean(item.artistName);
-    if (isGuest) {
-      setManualCustomArtistMode(true);
-      setManualCustomArtist(item.artistName);
-    } else {
-      setManualCustomArtistMode(false);
-      setManualCustomArtist('');
-      setManualArtistId(item.artistId);
-    }
-    setManualGenre(item.genre || artistByIdMap.get(item.artistId)?.genre || 'Hip-Hop / Rap');
-    setManualCoverUrl(item.coverUrl || '');
-    setManualPlays(item.plays && item.plays > 0 ? formatNumber(item.plays) : '');
-    setManualDuration(item.duration || (item.itemType === 'snippet' ? '0:32' : '2:34'));
-    setManualFeat(item.featuredArtist || '');
-    setManualCoArtist(item.coArtist || '');
-    setManualSnippetTeaser(item.snippetTeaser || '');
-    setManualPromoStrategy(item.promoStrategy);
-    setManualReleaseHype(item.releaseHype);
-    setManualAlbumTracksCount(item.albumTracksCount || item.albumTracks?.length || 10);
-    setManualAlbumTracks(item.albumTracks || []);
-  }, [editingManualSignal, artistByIdMap]);
-
-  // Apply preset transferred from Idea & Random Studio
-  useEffect(() => {
-    if (!ideaAssignSignal) return;
-    const item = ideaAssignSignal.draft;
-    setEditingItemId(null);
-    setManualItemType(item.itemType);
-    setManualTitle(item.title || '');
-    setManualCustomArtistMode(false);
-    setManualCustomArtist('');
+    const art = artistByIdMap.get(item.artistId);
+    setManualCustomArtistMode(!art && Boolean(item.artistName));
+    setManualCustomArtist(art ? '' : item.artistName);
     setManualArtistId(item.artistId);
-    setManualGenre(item.genre || artistByIdMap.get(item.artistId)?.genre || 'Hip-Hop / Rap');
+    setManualGenre(item.genre || art?.genre || 'Hip-Hop / Rap');
     setManualCoverUrl(item.coverUrl || '');
     setManualPlays(item.plays && item.plays > 0 ? formatNumber(item.plays) : '');
     setManualDuration(item.duration || (item.itemType === 'snippet' ? '0:32' : '2:34'));
@@ -7411,19 +7404,36 @@ const SimManualTab = memo(({
     setManualSnippetTeaser(item.snippetTeaser || '');
     setManualPromoStrategy(item.promoStrategy);
     setManualReleaseHype(item.releaseHype);
-    setManualAlbumTracksCount(item.albumTracksCount || item.albumTracks?.length || 10);
-    let tl = item.albumTracks || [];
-    if (item.itemType === 'album' && !tl.length) {
-      const art = artistByIdMap.get(item.artistId);
-      if (art) {
-        const ex = new Set<string>([...simState.tracks.map(t => t.title.toLowerCase()), ...simState.albums.map(a => a.title.toLowerCase())]);
-        const m = metricsMap.get(art.id);
-        try { tl = generateAlbumTracksWithFeats({ artist: art, allArtists: simState.artists, count: clamp(item.albumTracksCount || 10, 3, 30), estimatedAlbumPlays: item.plays && item.plays > 0 ? item.plays : 3_000_000, existingTitles: ex, namingProfile: m?.namingProfile || false, languageOverride: autopilot.languageMix }); } catch { tl = []; }
-      }
+    const count = item.albumTracks?.length || item.albumTracksCount || (item.releaseFormat === 'ep' ? 5 : 10);
+    setManualAlbumTracksCount(count);
+    let tracks = item.albumTracks || [];
+    if (!edit && item.itemType === 'album' && !tracks.length && art) {
+      const existingTitles = new Set([...simState.tracks.map(t => t.title.toLowerCase()), ...simState.albums.map(a => a.title.toLowerCase())]);
+      tracks = generateAlbumTracksWithFeats({
+        artist: art,
+        allArtists: simState.artists,
+        count: clamp(count, 3, 40),
+        estimatedAlbumPlays: item.plays || 3_000_000,
+        existingTitles,
+        namingProfile: metricsMap.get(art.id)?.namingProfile ?? false,
+        languageOverride: autopilot.languageMix,
+        coArtist: item.coArtist,
+        collabRate: autopilot.collabRate,
+        allowSurpriseCollabs: autopilot.allowSurpriseCollabs
+      });
     }
-    setManualAlbumTracks(tl);
-    if (item.itemType === 'album' && tl.length) setManualPlays('');
-  }, [ideaAssignSignal, artistByIdMap]);
+    setManualAlbumTracks(tracks);
+    setChildTrTitle('');
+    setChildTrFeat('');
+    setChildTrPlays('');
+    setChildTrDur('2:36');
+  };
+
+  useEffect(() => {
+    if (!manualFormRequest) return;
+    fillManualForm(manualFormRequest.item, manualFormRequest.edit);
+    clearManualFormRequest();
+  }, [manualFormRequest, clearManualFormRequest]);
 
   const selectedArt = artistByIdMap.get(manualArtistId) || simState.artists[0];
   const selectedArtName =
@@ -7500,7 +7510,7 @@ const SimManualTab = memo(({
     setEditingItemId(null);
     setManualTitle('');
     setManualDuration('2:34');
-    setManualAlbumTracksCount(10);
+    setManualAlbumTracksCount(albumFormat === 'ep' ? 5 : 10);
     setManualCoverUrl('');
     setManualPlays('');
     setManualFeat('');
@@ -7544,7 +7554,7 @@ const SimManualTab = memo(({
     setManualTitle(generated);
   };
 
-  const handleRollPlays = () => {
+  const rollManualPlays = (trackCount?: number) => {
     const baseArt: Artist =
       !manualCustomArtistMode && selectedArt
         ? selectedArt
@@ -7559,7 +7569,7 @@ const SimManualTab = memo(({
             hype: 55
           };
     const m = !manualCustomArtistMode ? selectedArtMetrics : null;
-    const rolled = forecastReleasePlays({
+    return forecastReleasePlays({
       artist: baseArt,
       featuredNames: manualFeat || manualCoArtist,
       allArtists: simState.artists,
@@ -7571,29 +7581,39 @@ const SimManualTab = memo(({
       releaseHype: manualReleaseHype,
       albumTracksCount:
         manualItemType === 'album'
-          ? manualAlbumTracks.length || Math.max(3, manualAlbumTracksCount)
+          ? trackCount ?? (manualAlbumTracks.length || Math.max(3, manualAlbumTracksCount))
           : 1,
       virality: autopilot.virality,
       hitsCount: m?.topHitsCount || 0,
       catalogAvgPlays: m?.catalogAvgPlays || 0,
       deterministic: false
     });
-    setManualPlays(formatNumber(rolled));
+  };
+
+  const rollChildPlays = (newTrack?: { featuredArtist?: string }) => {
+    const tracks = newTrack ? [...manualAlbumTracks, newTrack] : manualAlbumTracks;
+    const count = Math.max(3, tracks.length, newTrack ? manualAlbumTracksCount : 0);
+    const paddedTracks = Array.from({ length: count }, (_, i) => tracks[i] || {});
+    return createAlbumStreamRoll(count, rollManualPlays(count))(paddedTracks);
+  };
+
+  const handleRerollTracklist = (trackId?: string) => {
+    const streams = rollChildPlays();
+    setManualAlbumTracks(manualAlbumTracks.map((track, i) =>
+      !trackId || track.id === trackId ? { ...track, plays: streams[i] } : track
+    ));
   };
 
   const handleAddChildTrack = () => {
     if (!childTrTitle.trim()) return;
     const parsedPlays = parseFormattedNumber(childTrPlays);
-    const defaultPerTrack = Math.max(
-      28_000,
-      Math.round(autoForecastPlays / Math.max(4, manualAlbumTracks.length || manualAlbumTracksCount || 10))
-    );
+    const featuredArtist = childTrFeat.trim() || undefined;
     const nextTrack: SimAlbumTrack = {
       id: makeId('mtrk'),
       title: childTrTitle.trim(),
       duration: childTrDur.trim() || smartDuration(childTrFeat),
-      plays: parsedPlays > 0 ? parsedPlays : Math.round(defaultPerTrack * randRange(0.75, 1.35)),
-      featuredArtist: childTrFeat.trim() || undefined,
+      plays: parsedPlays > 0 ? parsedPlays : rollChildPlays({ featuredArtist })[manualAlbumTracks.length],
+      featuredArtist,
       isExplicit: false
     };
     setManualAlbumTracks(prev => [...prev, nextTrack]);
@@ -7622,7 +7642,7 @@ const SimManualTab = memo(({
     const count =
       manualAlbumTracks.length > 0
         ? manualAlbumTracks.length
-        : clamp(manualAlbumTracksCount || getRandomAlbumTrackCount(), 3, 28);
+        : clamp(manualAlbumTracksCount || getRandomAlbumTrackCount(), 3, 40);
     const estTotal = parseFormattedNumber(manualPlays) || autoForecastPlays;
     const existingSet = new Set<string>([
       ...simState.tracks.map(t => t.title.toLowerCase()),
@@ -7689,7 +7709,7 @@ const SimManualTab = memo(({
     const parsedManualPlays = parseFormattedNumber(manualPlays);
     let autoTracks: SimAlbumTrack[] = [];
     if (manualItemType === 'album' && manualAlbumTracks.length === 0 && selectedArt && !manualCustomArtistMode) {
-      try { autoTracks = generateAlbumTracksWithFeats({ artist: selectedArt, allArtists: simState.artists, count: clamp(manualAlbumTracksCount || 10, 3, 30), estimatedAlbumPlays: parsedManualPlays > 0 ? parsedManualPlays : autoForecastPlays, existingTitles: existing, namingProfile: selectedArtMetrics?.namingProfile ?? false, languageOverride: autopilot.languageMix, coArtist: manualCoArtist.trim() || undefined }); } catch { autoTracks = []; }
+      try { autoTracks = generateAlbumTracksWithFeats({ artist: selectedArt, allArtists: simState.artists, count: clamp(manualAlbumTracksCount || 10, 3, 40), estimatedAlbumPlays: parsedManualPlays > 0 ? parsedManualPlays : autoForecastPlays, existingTitles: existing, namingProfile: selectedArtMetrics?.namingProfile ?? false, languageOverride: autopilot.languageMix, coArtist: manualCoArtist.trim() || undefined }); } catch { autoTracks = []; }
     }
     const tracksForItem = manualAlbumTracks.length > 0 ? manualAlbumTracks : autoTracks;
     const resolvedPlays =
@@ -7702,6 +7722,7 @@ const SimManualTab = memo(({
     const newItem: ManualSimItem = {
       id: editingItemId || makeId('man'),
       itemType: manualItemType,
+      releaseFormat: manualReleaseFormat,
       artistId:
         manualCustomArtistMode && manualCustomArtist.trim()
           ? `guest_${manualCustomArtist.trim().toLowerCase().replace(/\s+/g, '_')}`
@@ -7726,7 +7747,7 @@ const SimManualTab = memo(({
         manualItemType === 'album'
           ? tracksForItem.length > 0
             ? tracksForItem.length
-            : clamp(manualAlbumTracksCount || 10, 3, 30)
+            : clamp(manualAlbumTracksCount || 10, 3, 40)
           : undefined,
       albumTracks: manualItemType === 'album' && tracksForItem.length > 0 ? tracksForItem : undefined,
       snippetTeaser: manualItemType === 'snippet' ? manualSnippetTeaser.trim() || undefined : undefined,
@@ -7734,36 +7755,13 @@ const SimManualTab = memo(({
       releaseHype: manualReleaseHype
     };
 
-    setManualQueue(prev => [...prev, newItem]);
+    setManualQueue(prev => prev.some(item => item.id === newItem.id)
+      ? prev.map(item => item.id === newItem.id ? newItem : item)
+      : [...prev, newItem]);
     resetForm();
   };
 
-  const handleLoadInlineItemForEdit = (item: ManualSimItem) => {
-    setManualQueue(prev => prev.filter(q => q.id !== item.id));
-    setEditingItemId(item.id);
-    setManualItemType(item.itemType);
-    setManualTitle(item.title || '');
-    const isGuest = !artistByIdMap.has(item.artistId) && Boolean(item.artistName);
-    if (isGuest) {
-      setManualCustomArtistMode(true);
-      setManualCustomArtist(item.artistName);
-    } else {
-      setManualCustomArtistMode(false);
-      setManualCustomArtist('');
-      setManualArtistId(item.artistId);
-    }
-    setManualGenre(item.genre || artistByIdMap.get(item.artistId)?.genre || 'Hip-Hop / Rap');
-    setManualCoverUrl(item.coverUrl || '');
-    setManualPlays(item.plays && item.plays > 0 ? formatNumber(item.plays) : '');
-    setManualDuration(item.duration || (item.itemType === 'snippet' ? '0:32' : '2:34'));
-    setManualFeat(item.featuredArtist || '');
-    setManualCoArtist(item.coArtist || '');
-    setManualSnippetTeaser(item.snippetTeaser || '');
-    setManualPromoStrategy(item.promoStrategy);
-    setManualReleaseHype(item.releaseHype);
-    setManualAlbumTracksCount(item.albumTracksCount || item.albumTracks?.length || 10);
-    setManualAlbumTracks(item.albumTracks || []);
-  };
+  const handleLoadInlineItemForEdit = (item: ManualSimItem) => fillManualForm(item, true);
 
   const queueTotalPlays = useMemo(
     () => manualQueue.reduce((sum, item) => sum + (item.plays || 0), 0),
@@ -7787,16 +7785,14 @@ const SimManualTab = memo(({
         <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
           <div>
             <h3 className="text-base font-extrabold text-white flex items-center gap-2">
-              <span>Ручной конструктор релиза для недели</span>
+              <span>Ручной батч</span>
               {editingItemId && (
                 <span className="px-2.5 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[11px] font-bold">
                   Редактирование
                 </span>
               )}
             </h3>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Собирайте синглы, альбомы и сниппеты с обложкой, фитами, стратегией и треклистом
-            </p>
+
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -7852,10 +7848,8 @@ const SimManualTab = memo(({
           </div>
         </div>
 
-        {/* Cover + Form Split */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Left Cover Studio Column (Bigger Cover + Upload + Pencil + Delete/Restore Generated) */}
-          <div className="lg:col-span-4 space-y-3">
+        <div className={showDetails ? 'grid grid-cols-1 lg:grid-cols-12 gap-6 items-start' : 'grid gap-4'}>
+          {showDetails && <div className="lg:col-span-4 space-y-3">
             <div className="relative aspect-square w-full max-w-[280px] mx-auto lg:max-w-none rounded-3xl overflow-hidden border border-white/15 bg-black/60 shadow-2xl shrink-0" style={{ contain: 'layout size style' }}>
               <CoverArt
                 url={manualCoverUrl}
@@ -7892,10 +7886,9 @@ const SimManualTab = memo(({
             ) : (
               <p className="text-[11px] text-zinc-500 text-center">Сейчас используется сгенерированная обложка</p>
             )}
-          </div>
+          </div>}
 
-          {/* Right Form Controls Column */}
-          <div className="lg:col-span-8 space-y-4">
+          <div className={showDetails ? 'lg:col-span-8 space-y-4' : 'space-y-4'}>
             {/* Row 1: Release Type + Duration/Tracks (NO Explicit 'E') */}
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
               <div className="sm:col-span-8">
@@ -7903,14 +7896,20 @@ const SimManualTab = memo(({
                 <div className="flex gap-1 p-1 bg-black/40 rounded-2xl border border-white/10">
                   {([
                     { id: 'track', label: 'Трек' },
-                    { id: 'album', label: 'Альбом' },
+                    { id: 'album', label: 'EP', format: 'ep' },
+                    { id: 'album', label: 'Альбом', format: 'album' },
                     { id: 'snippet', label: 'Сниппет' }
                   ] as const).map(t => (
                     <button
-                      key={t.id}
+                      key={t.label}
                       type="button"
+                      aria-pressed={manualItemType === t.id && (!('format' in t) || albumFormat === t.format)}
                       onClick={() => {
                         setManualItemType(t.id);
+                        if ('format' in t && t.format && (manualItemType !== 'album' || albumFormat !== t.format)) {
+                          setAlbumFormat(t.format);
+                          if (!manualAlbumTracks.length) setManualAlbumTracksCount(t.format === 'ep' ? 5 : 10);
+                        }
                         if (t.id === 'snippet' && (!manualDuration || manualDuration === '2:34')) {
                           setManualDuration('0:32');
                         } else if (t.id === 'track' && manualDuration === '0:32') {
@@ -7918,7 +7917,7 @@ const SimManualTab = memo(({
                         }
                       }}
                       className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        manualItemType === t.id ? 'theme-bg-accent text-black shadow' : 'text-zinc-400 hover:text-white'
+                        manualItemType === t.id && (!('format' in t) || albumFormat === t.format) ? 'theme-bg-accent text-black shadow' : 'text-zinc-400 hover:text-white'
                       }`}
                     >
                       {t.label}
@@ -7927,7 +7926,7 @@ const SimManualTab = memo(({
                 </div>
               </div>
 
-              <div className="sm:col-span-4">
+              <div className={showDetails || manualItemType === 'album' ? 'sm:col-span-4' : 'hidden'}>
                 <label className="text-[11px] font-bold text-zinc-400 block mb-1.5 uppercase tracking-wider">
                   {manualItemType === 'album' ? 'Треков (авто)' : 'Длительность'}
                 </label>
@@ -8203,7 +8202,7 @@ const SimManualTab = memo(({
                     />
                     <button
                       type="button"
-                      onClick={handleRollPlays}
+                      onClick={() => setManualPlays(formatNumber(rollManualPlays()))}
                       className="px-3.5 py-2.5 rounded-2xl bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 text-zinc-200 cursor-pointer shrink-0"
                       title="Рассчитать случайный старт по метрикам артиста"
                     >
@@ -8213,7 +8212,7 @@ const SimManualTab = memo(({
                 )}
               </div>
 
-              <div className="md:col-span-7">
+              <div className={showDetails ? 'md:col-span-7' : 'hidden'}>
                 <ReleaseHypeControl
                   promoStrategy={manualPromoStrategy}
                   releaseHype={manualReleaseHype}
@@ -8254,14 +8253,22 @@ const SimManualTab = memo(({
           </div>
         </div>
 
-        {/* Full Album Tracklist Builder (No 'E' button clutter) */}
+        {simple && (
+          <button type="button" onClick={() => setAdvancedOpen(open => !open)} aria-expanded={advancedOpen}
+            className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs font-semibold text-zinc-200 hover:bg-white/[0.07] cursor-pointer">
+            <Sliders className="w-3.5 h-3.5" />
+            {advancedOpen ? 'Скрыть детали релиза' : 'Обложка, промо и детали релиза'}
+          </button>
+        )}
+
+        {/* Album / EP tracklist */}
         {manualItemType === 'album' && (
           <div className="p-4 sm:p-5 rounded-3xl bg-black/30 border border-white/10 space-y-3.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h4 className="text-xs font-extrabold text-white flex items-center gap-2">
                   <Disc className="w-4 h-4 theme-accent" />
-                  <span className="tabular-nums">Треклист альбома ({manualAlbumTracks.length})</span>
+                  <span className="tabular-nums">Треклист {albumFormat === 'ep' ? 'EP' : 'альбома'} ({manualAlbumTracks.length})</span>
                   {manualAlbumTracks.length > 0 && (
                     <span className="text-[11px] font-semibold text-emerald-400 tabular-nums">
                       · {formatCompact(albumTracksTotalPlays)} стримов
@@ -8269,7 +8276,7 @@ const SimManualTab = memo(({
                   )}
                 </h4>
                 <p className="text-[11px] text-zinc-400 mt-0.5">
-                  Оставьте пустым для автогенерации ({manualAlbumTracksCount} треков) или соберите вручную / парсером
+                  {manualAlbumTracks.length === 0 && `Если оставить пустым, при добавлении в очередь создастся треклист из ${manualAlbumTracksCount} тр.`}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -8282,6 +8289,13 @@ const SimManualTab = memo(({
                   <span>Сгенерировать треклист</span>
                 </button>
                 {manualAlbumTracks.length > 0 && (
+                  <button type="button" onClick={() => handleRerollTracklist()}
+                    className="px-3 py-1.5 rounded-2xl bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer">
+                    <Dices className="w-3.5 h-3.5 theme-accent" />
+                    Пересчитать все стримы
+                  </button>
+                )}
+                {showDetails && manualAlbumTracks.length > 0 && (
                   <button
                     type="button"
                     onClick={() => { const used = new Set<string>(); setManualAlbumTracks(prev => prev.map(t => { let n = randomChildTitle(used); used.add(n.toLowerCase()); return { ...t, title: n }; })); }}
@@ -8292,7 +8306,7 @@ const SimManualTab = memo(({
                     <span>Случайные названия</span>
                   </button>
                 )}
-                {manualAlbumTracks.length > 0 && (
+                {showDetails && manualAlbumTracks.length > 0 && (
                   <button
                     type="button"
                     onClick={handleRandomFeatsOnTracklist}
@@ -8355,16 +8369,24 @@ const SimManualTab = memo(({
                 onChange={e => setChildTrDur(e.target.value)}
                 className="sm:col-span-2 bg-zinc-950/80 border border-white/12 rounded-2xl px-3 py-2 text-xs font-mono text-white text-center outline-none"
               />
-              <input
+              <div className="sm:col-span-2 flex items-center gap-1">
+                <input
                 type="text"
+                aria-label="Стартовые стримы нового трека"
                 placeholder="Стримы (авто)"
                 value={childTrPlays}
                 onChange={e => {
                   const d = e.target.value.replace(/\D/g, '');
                   setChildTrPlays(d ? formatNumber(parseInt(d, 10)) : '');
                 }}
-                className="sm:col-span-2 bg-zinc-950/80 border border-white/12 rounded-2xl px-3 py-2 text-xs font-mono text-white outline-none tabular-nums"
-              />
+                className="min-w-0 flex-1 bg-zinc-950/80 border border-white/12 rounded-2xl px-2 py-2 text-xs font-mono text-white outline-none tabular-nums"
+                />
+                <button type="button" title="Случайные стримы нового трека" aria-label="Случайные стримы нового трека"
+                  onClick={() => setChildTrPlays(formatNumber(rollChildPlays({ featuredArtist: childTrFeat.trim() })[manualAlbumTracks.length]))}
+                  className="shrink-0 rounded-xl p-1.5 text-zinc-300 hover:bg-white/10 cursor-pointer">
+                  <Dices className="w-3.5 h-3.5 theme-accent" />
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={handleAddChildTrack}
@@ -8402,10 +8424,16 @@ const SimManualTab = memo(({
                     <input
                       type="number"
                       value={tr.plays || 0}
+                      aria-label={`Стартовые стримы трека ${idx + 1}`}
                       onChange={e => handleUpdateChildTrack(tr.id, { plays: Math.max(0, parseInt(e.target.value, 10) || 0) })}
                       className="w-24 bg-zinc-900/70 border border-white/10 rounded-xl px-2.5 py-1 text-[11px] font-mono text-white text-right tabular-nums outline-none"
                     />
                     <div className="flex items-center gap-0.5 shrink-0">
+                      <button type="button" onClick={() => handleRerollTracklist(tr.id)}
+                        title={`Случайные стримы трека ${idx + 1}`} aria-label={`Случайные стримы трека ${idx + 1}`}
+                        className="rounded-lg p-1.5 text-zinc-300 hover:bg-white/10 cursor-pointer">
+                        <Dices className="w-3.5 h-3.5 theme-accent" />
+                      </button>
                       <button
                         type="button"
                         disabled={idx === 0}
@@ -8623,8 +8651,8 @@ const FMT_RU: Record<string, string> = { single: 'Сингл', ep: 'EP', album: 
 const SimLightPanel: React.FC<{
   proposals: SimProposal[]; setProposals: React.Dispatch<React.SetStateAction<SimProposal[]>>;
   regenerate: (o?: Partial<SimAutopilotConfig>) => void; autopilot: SimAutopilotConfig; setAuto: <K extends keyof SimAutopilotConfig>(k: K, v: SimAutopilotConfig[K]) => void;
-  simState: SimState; advanceDays: number; setAdvanceDays: (n: number) => void;
-}> = ({ proposals, setProposals, regenerate, autopilot, setAuto, simState, advanceDays, setAdvanceDays }) => {
+  simState: SimState; advanceDays: number;
+}> = ({ proposals, setProposals, regenerate, autopilot, setAuto, simState, advanceDays }) => {
   const sel = proposals.filter(p => p.selected);
   const total = sel.reduce((s, p) => s + (p.estimatedPlays || 0), 0);
   const best = (n: number) => { const ids = new Set([...proposals].sort((a, b) => (b.estimatedPlays || 0) - (a.estimatedPlays || 0)).slice(0, n).map(p => p.id)); setProposals(ps => ps.map(p => ({ ...p, selected: ids.has(p.id) }))); };
@@ -8633,7 +8661,7 @@ const SimLightPanel: React.FC<{
   return (
     <div className="space-y-5 max-w-4xl mx-auto">
       <div className="grid grid-cols-3 gap-2">
-        {[[`${sel.length}`, 'релизов на неделю'], [`≈ ${formatCompact(total)}`, 'прогноз прослушиваний'], [formatSimDate(addDaysISO(simState.currentDate, advanceDays)), 'следующая дата']].map(([v, l]) => (
+        {[[`${sel.length}`, 'отмечено релизов'], [`≈ ${formatCompact(total)}`, 'прогноз прослушиваний'], [formatSimDate(addDaysISO(simState.currentDate, advanceDays)), 'следующая дата']].map(([v, l]) => (
           <div key={l} className="rounded-2xl bg-white/[0.03] border border-white/[0.05] px-4 py-3"><div className="text-xl font-black text-white tabular-nums truncate">{v}</div><div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold mt-0.5">{l}</div></div>
         ))}
       </div>
@@ -8651,9 +8679,7 @@ const SimLightPanel: React.FC<{
         <button type="button" className={chip(false)} onClick={() => best(5)}>Лучшие 5</button>
         <button type="button" className={chip(false)} onClick={() => best(8)}>Лучшие 8</button>
         <button type="button" className={chip(false)} onClick={() => setProposals(ps => ps.map(p => ({ ...p, selected: false })))}>Снять всё</button>
-        <span className="ml-auto flex items-center gap-1 text-[11px] text-zinc-500">шаг
-          {[7, 14, 30].map(d => <button key={d} type="button" onClick={() => setAdvanceDays(d)} className={`px-2 py-1 rounded-lg font-semibold ${advanceDays === d ? 'bg-white/15 text-white' : 'hover:text-white'}`}>{d} дн.</button>)}
-        </span>
+
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {proposals.length === 0 && <div className="text-sm text-zinc-500 py-8">Нажми «Новые кандидаты».</div>}
@@ -8780,6 +8806,7 @@ export const SimConsoleModal: React.FC<{
   const [radarAlbumDueOnly, setRadarAlbumDueOnly] = useState<boolean>(false);
   const [radarQuery, setRadarQuery] = useState('');
   const [radarSeed, setRadarSeed] = useState(0);
+  const hiddenVersion = useRadarVersion();
   const deferredRadarQuery = useDeferredValue(radarQuery);
   const [radarLimit, setRadarLimit] = useState(25);
 
@@ -8787,17 +8814,20 @@ export const SimConsoleModal: React.FC<{
   const [manualQueue, setManualQueue] = useState<ManualSimItem[]>(() => loadManualQueue(simState.startDate));
   useEffect(() => { saveManualQueue(simState.startDate, manualQueue); }, [manualQueue, simState.startDate]);
   const [showQueueShowcase, setShowQueueShowcase] = useState(false);
-  const [editingManualSignal, setEditingManualSignal] = useState<{ seq: number; item: ManualSimItem } | null>(null);
   const [ideaStudioState, setIdeaStudioState] = useState<{ open: boolean; artistId?: string }>({ open: false });
-  const [ideaAssignSignal, setIdeaAssignSignal] = useState<{ seq: number; draft: ManualSimItem } | null>(null);
-
-  const handleEditQueuedManualItem = (item: ManualSimItem) => {
-    setManualQueue(prev => prev.filter(x => x.id !== item.id));
-    setEditingManualSignal({ seq: Date.now(), item });
+  const consoleBodyRef = useRef<HTMLDivElement>(null);
+  const [manualFormRequest, setManualFormRequest] = useState<{ item: ManualSimItem; edit: boolean } | null>(null);
+  const openManualForm = (item: ManualSimItem, edit = false) => {
+    setManualFormRequest({ item, edit });
     setTab('manual');
+    consoleBodyRef.current?.scrollTo({ top: 0 });
   };
-  const [radarAssignSignal, setRadarAssignSignal] = useState<{ seq: number; artistId: string; genre: string } | null>(null);
+  const handleEditQueuedManualItem = (item: ManualSimItem) => openManualForm(item, true);
+  const [radarAssignSignal, setRadarAssignSignal] = useState<{ artistId: string; genre: string } | null>(null);
   const [createdAssignSignal, setCreatedAssignSignal] = useState<{ seq: number; ctx: string; artist: Artist } | null>(null);
+  const clearRadarAssignment = useCallback(() => setRadarAssignSignal(null), []);
+  const clearCreatedAssignment = useCallback(() => setCreatedAssignSignal(null), []);
+  const clearManualFormRequest = useCallback(() => setManualFormRequest(null), []);
   const [showWeeklyDropsModal, setShowWeeklyDropsModal] = useState(initialShowWeeklyDrops);
   const [selectedDigestWeekNumber, setSelectedDigestWeekNumber] = useState<number | null>(initialDigestWeekNumber);
   const [weeklyDropsFilter, setWeeklyDropsFilter] = useState<'all' | 'album' | 'track' | 'snippet'>('all');
@@ -8910,66 +8940,19 @@ export const SimConsoleModal: React.FC<{
       .map(x => x[0]);
   }, [tab, artistAnalytics]);
 
-  const partnerByArtistId = useMemo(() => {
-    const map = new Map<string, { id: string; name: string }>();
-    if (tab !== 'radar' || artistAnalytics.length < 2) return map;
-
-    const tierRank: Record<ArtistSimMetrics['tier'], number> = {
-      rising: 0,
-      mid: 1,
-      large: 2,
-      mega: 3
-    };
-    const strHash = (str: string) => {
-      let h = 2166136261;
-      for (let i = 0; i < str.length; i++) {
-        h ^= str.charCodeAt(i);
-        h = Math.imul(h, 16777619);
-      }
-      return Math.abs(h);
-    };
-
-    artistAnalytics.forEach(m => {
-      const mGenre = (m.artist.genre || '').toLowerCase();
-      const mTokens = mGenre.split(/[\s/,&-]+/).filter(Boolean);
-      const recentSet = new Set(m.recentCollabPartners);
-
-      const scoredCandidates = artistAnalytics
-        .filter(other => other.artist.id !== m.artist.id)
-        .map(other => {
-          const oGenre = (other.artist.genre || '').toLowerCase();
-          let score = 0;
-          if (mGenre && oGenre && mGenre === oGenre) score += 45;
-          else if (mTokens.some(tok => tok.length >= 3 && oGenre.includes(tok))) score += 24;
-
-          const tierDiff = Math.abs(tierRank[m.tier] - tierRank[other.tier]);
-          if (tierDiff === 0) score += 32;
-          else if (tierDiff === 1) score += 16;
-          else if (tierDiff >= 2) score -= 36;
-
-          const hypeDiff = Math.abs(m.hype - other.hype);
-          score += Math.max(0, 20 - hypeDiff * 0.35);
-
-          if (!recentSet.has(other.artist.name.toLowerCase().trim())) score += 16;
-
-          const pairNoise = (strHash(`${m.artist.id}:${other.artist.id}:${radarSeed}`) % 19) - 9;
-          return { other, score: score + pairNoise };
-        })
-        .sort((a, b) => b.score - a.score);
-
-      const topPool = scoredCandidates.slice(0, Math.min(6, scoredCandidates.length));
-      if (topPool.length > 0) {
-        const pickIdx = (strHash(m.artist.id) + radarSeed) % topPool.length;
-        const chosen = topPool[pickIdx].other;
-        map.set(m.artist.id, { id: chosen.artist.id, name: chosen.artist.name });
-      }
-    });
-    return map;
-  }, [tab, artistAnalytics, radarSeed]);
-
   const radarFilteredArtists = useMemo(() => {
     if (tab !== 'radar') return [];
     const q = deferredRadarQuery.trim().toLowerCase();
+    const seed = simState.currentDate + ':' + radarSeed;
+    const variedScores = new Map<string, number>();
+    const variedReadiness = (m: ArtistSimMetrics) => {
+      const id = m.artist.id;
+      const cached = variedScores.get(id);
+      if (cached !== undefined) return cached;
+      const score = m.readinessScore + (radarHash(seed + ':' + id) % 25) - 12;
+      variedScores.set(id, score);
+      return score;
+    };
     return artistAnalytics
       .filter(m => {
         if (q && !m.artist.name.toLowerCase().includes(q) && !(m.artist.genre || '').toLowerCase().includes(q)) {
@@ -8980,6 +8963,7 @@ export const SimConsoleModal: React.FC<{
         if (radarTier === 'rising' && m.tier !== 'rising' && !m.artist.isRisingStar) return false;
         if (radarGenre !== 'all' && (m.artist.genre || '').trim() !== radarGenre) return false;
         if (radarViewMode === 'radar') {
+          if (!radarShowHidden && radarHidden.has(m.artist.id)) return false;
           if (radarAlbumDueOnly && (m.daysSinceAlbum === null || m.daysSinceAlbum < 260)) return false;
           if (radarSort === 'warmup' && !m.activeSnippet) return false;
           if (radarSort === 'rising' && !m.artist.isRisingStar && m.tier !== 'rising') return false;
@@ -9000,12 +8984,7 @@ export const SimConsoleModal: React.FC<{
         if (radarSort === 'hype') return b.hype - a.hype;
         if (radarSort === 'avgTrack') return b.catalogAvgPlays - a.catalogAvgPlays;
         if (radarSort === 'warmup') return (b.activeSnippet ? 1 : 0) - (a.activeSnippet ? 1 : 0) || b.hype - a.hype;
-        if (radarSeed > 0) {
-          const jitterA = ((a.artist.name.charCodeAt(0) + radarSeed * 13) % 11) - 5;
-          const jitterB = ((b.artist.name.charCodeAt(0) + radarSeed * 13) % 11) - 5;
-          return b.readinessScore + jitterB - (a.readinessScore + jitterA);
-        }
-        return b.readinessScore - a.readinessScore;
+        return variedReadiness(b) - variedReadiness(a);
       });
   }, [
     tab,
@@ -9017,13 +8996,61 @@ export const SimConsoleModal: React.FC<{
     radarViewMode,
     radarSort,
     topArtistsSort,
-    radarSeed
+    radarSeed,
+    hiddenVersion,
+    simState.currentDate
   ]);
 
   const radarVisibleSlice = useMemo(
     () => radarFilteredArtists.slice(0, radarLimit),
     [radarFilteredArtists, radarLimit]
   );
+
+  const partnerByArtistId = useMemo(() => {
+    const partners = new Map<string, { id: string; name: string }>();
+    if (tab !== 'radar' || radarViewMode !== 'radar' || artistAnalytics.length < 2) return partners;
+
+    const tiers = { rising: 0, mid: 1, large: 2, mega: 3 };
+    const candidates = artistAnalytics.map(other => ({
+      other,
+      genre: (other.artist.genre || '').toLowerCase(),
+      name: other.artist.name.toLowerCase().trim()
+    }));
+    const assigned = new Map<string, number>();
+    const seed = simState.currentDate + ':' + radarSeed;
+    for (const m of radarVisibleSlice) {
+      const genre = (m.artist.genre || '').toLowerCase();
+      const tokens = genre.split(/[\s/,&-]+/).filter(token => token.length >= 3);
+      const recent = new Set(m.recentCollabPartners);
+      let best: Artist | undefined;
+      let bestScore = -Infinity;
+      for (const { other, genre: otherGenre, name } of candidates) {
+        if (other.artist.id === m.artist.id) continue;
+        const tierDiff = Math.abs(tiers[m.tier] - tiers[other.tier]);
+        const genreScore = genre && genre === otherGenre ? 45 : tokens.some(token => otherGenre.includes(token)) ? 24 : 0;
+        const audienceScore = tierDiff === 0 ? 32 : tierDiff === 1 ? 16 : -36;
+        const familiarityScore = recent.has(name) ? 0 : 16;
+        const hypeScore = Math.max(0, 20 - Math.abs(m.hype - other.hype) * 0.35);
+        const variety = radarHash(seed + ':' + m.artist.id + ':' + other.artist.id) % 40;
+        const score = genreScore + audienceScore + familiarityScore + hypeScore + variety - (assigned.get(other.artist.id) || 0) * 22;
+        if (score > bestScore) {
+          bestScore = score;
+          best = other.artist;
+        }
+      }
+      if (best) {
+        assigned.set(best.id, (assigned.get(best.id) || 0) + 1);
+        partners.set(m.artist.id, { id: best.id, name: best.name });
+      }
+    }
+    return partners;
+  }, [tab, radarViewMode, artistAnalytics, radarVisibleSlice, simState.currentDate, radarSeed]);
+
+  const queuedByArtist = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of manualQueue) counts.set(item.artistId, (counts.get(item.artistId) || 0) + 1);
+    return counts;
+  }, [manualQueue]);
 
   // Stable memoized callbacks so SemiProposalRow & RadarArtistRow never re-render needlessly!
   const handleToggleProposal = useCallback((id: string) => {
@@ -9093,8 +9120,12 @@ export const SimConsoleModal: React.FC<{
 
   const [calmView, setCalmView] = useState<boolean>(() => { try { return localStorage.getItem('musaic.sim.calm') !== '0'; } catch { return true; } });
   const [lightMode, setLightMode] = useState<boolean>(() => { try { return localStorage.getItem('musaic.sim.light') === '1'; } catch { return false; } });
-  const toggleLight = () => setLightMode(v => { const n = !v; try { localStorage.setItem('musaic.sim.light', n ? '1' : '0'); } catch { /* */ } if (n) setTab('semi'); return n; });
-  useEffect(() => { if (lightMode && tab !== 'semi') setTab('semi'); }, [lightMode, tab]);
+  const toggleLight = () => {
+    const next = !lightMode;
+    setLightMode(next);
+    try { localStorage.setItem('musaic.sim.light', next ? '1' : '0'); } catch { /* */ }
+    if (next && tab !== 'manual' && tab !== 'semi') setTab('semi');
+  };
   const [rumorsOpen, setRumorsOpen] = useState(false);
   const [rumorMsg, setRumorMsg] = useState<string | null>(null);
   const [confirmedRumors, setConfirmedRumors] = useState<ConfirmedRumor[]>(() => loadConfirmed());
@@ -9103,7 +9134,7 @@ export const SimConsoleModal: React.FC<{
   useEffect(() => { if (!rumorMsg) return; const t = setTimeout(() => setRumorMsg(null), 2600); return () => clearTimeout(t); }, [rumorMsg]);
   const toggleCalm = () => setCalmView(v => { const n = !v; try { localStorage.setItem('musaic.sim.calm', n ? '1' : '0'); } catch { /* */ } return n; });
   // v2.5.8: radar → straight into the manual batch (title, streams, tracklist with split streams)
-  const quickAddManual = (art: Artist, kind: 'single' | 'ep' | 'album') => {
+  const quickAddManual = useCallback((art: Artist, kind: 'single' | 'ep' | 'album') => {
     const m = metricsMap.get(art.id);
     const existing = new Set<string>([...simState.tracks.map(t => t.title.toLowerCase()), ...simState.albums.map(a => a.title.toLowerCase()), ...manualQueue.map(q => q.title.toLowerCase())]);
     const isBig = kind !== 'single';
@@ -9115,27 +9146,52 @@ export const SimConsoleModal: React.FC<{
     let albumTracks: SimAlbumTrack[] | undefined;
     if (isBig) { try { albumTracks = generateAlbumTracksWithFeats({ artist: art, allArtists: simState.artists, count, estimatedAlbumPlays: est, existingTitles: existing, namingProfile: m?.namingProfile || false, languageOverride: autopilot.languageMix }); } catch { albumTracks = undefined; } }
     const plays = albumTracks?.length ? albumTracks.reduce((x, t) => x + (t.plays || 0), 0) : est;
-    setManualQueue(q => [...q, { id: makeId('manual'), itemType, artistId: art.id, artistName: art.name, title, genre: art.genre, plays, duration: isBig ? undefined : getRandomDuration(), albumTracksCount: albumTracks?.length || (isBig ? count : undefined), albumTracks } as ManualSimItem]);
+    setManualQueue(q => [...q, { id: makeId('manual'), itemType, releaseFormat: kind, artistId: art.id, artistName: art.name, title, genre: art.genre, plays, duration: isBig ? undefined : getRandomDuration(), albumTracksCount: albumTracks?.length || (isBig ? count : undefined), albumTracks } as ManualSimItem]);
     setRumorMsg(`«${title}» (${kind === 'single' ? 'сингл' : kind === 'ep' ? 'EP' : 'альбом'}) — ${art.name} в ручном батче`);
-  };
+  }, [metricsMap, simState.tracks, simState.albums, simState.artists, manualQueue, autopilot.languageMix]);
   const handleRadarCreateManual = useCallback((art: Artist) => {
-    setRadarAssignSignal({ seq: Date.now(), artistId: art.id, genre: art.genre || '' });
+    setRadarAssignSignal({ artistId: art.id, genre: art.genre || '' });
     setTab('manual');
   }, []);
 
   // v2.5.5: announcements from the release calendar are offered in the batchers too
-  const readAnns = () => { try { const v = JSON.parse(localStorage.getItem('musaic.announcements') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
-  const [anns, setAnns] = useState<any[]>(readAnns);
-  useEffect(() => { if (!isOpen) return; setAnns(readAnns()); const f = () => setAnns(readAnns()); window.addEventListener('focus', f); window.addEventListener('storage', f); const t = setInterval(f, 4000); return () => { window.removeEventListener('focus', f); window.removeEventListener('storage', f); clearInterval(t); }; }, [isOpen]);
+  const readAnns = (): Announcement[] => {
+    try {
+      const value = JSON.parse(localStorage.getItem('musaic.announcements') || '[]');
+      return Array.isArray(value) ? value : [];
+    } catch { return []; }
+  };
+  const [anns, setAnns] = useState<Announcement[]>(readAnns);
+  useEffect(() => {
+    if (!isOpen) return;
+    const refresh = () => setAnns(readAnns());
+    refresh();
+    window.addEventListener('musaic-announcements', refresh);
+    window.addEventListener('storage', refresh);
+    return () => {
+      window.removeEventListener('musaic-announcements', refresh);
+      window.removeEventListener('storage', refresh);
+    };
+  }, [isOpen]);
   if (!isOpen) return null;
 
+  const runManualBatch = () => {
+    onRunWeek({ manualItems: manualQueue, advanceDays });
+    setManualQueue([]);
+    if (!lightMode) setTab('digest');
+  };
+
   const selectedProposalsCount = proposals.filter(p => p.selected).length;
-  const openRumors = confirmedRumors.filter(r => !r.used);
-  const markAnnUsed = (id: string, target: 'semi' | 'manual') => { const list = readAnns().map((a: any) => (a.id === id ? { ...a, simUsed: target } : a)); try { localStorage.setItem('musaic.announcements', JSON.stringify(list)); } catch { /* */ } setAnns(list); };
+  const fromDate = simState.currentDate;
+  const toDate = addDaysISO(fromDate, advanceDays);
+  const releaseFriday = getDropFriday(fromDate, toDate);
+  const fridayInStep = releaseFriday <= toDate;
+  const openRumors = confirmedRumors.filter(r => !r.used && isInSimReleaseWindow(r.date, fromDate, toDate));
+  const markAnnUsed = (id: string, target: 'semi' | 'manual') => { const list = readAnns().map(a => (a.id === id ? { ...a, simUsed: target } : a)); try { localStorage.setItem('musaic.announcements', JSON.stringify(list)); } catch { /* */ } setAnns(list); };
   const sendAnn = (id: string, target: 'semi' | 'manual') => {
-    const a = anns.find((x: any) => x.id === id); if (!a) return;
+    const a = anns.find(x => x.id === id); if (!a) return;
     const kind = a.type === 'clip' ? 'single' : a.type;
-    sendRumor({ id: `ann-${a.id}`, postId: '', source: 'Календарь', text: a.note || '', createdAt: a.createdAt || Date.now(), artistId: a.artistId || '', artistName: a.artistName, kind, date: a.date, title: a.title, feat: a.featuredArtist, coverUrl: a.coverUrl, annId: a.id } as any, target);
+    sendRumor({ id: `ann-${a.id}`, postId: '', source: 'Календарь', text: a.note || '', createdAt: a.createdAt || Date.now(), artistId: a.artistId || '', artistName: a.artistName, kind, date: a.date, title: a.title, feat: a.featuredArtist, coverUrl: a.coverUrl, annId: a.id }, target);
   };
   const sendRumor = (rm: ConfirmedRumor & { coverUrl?: string; annId?: string }, target: 'semi' | 'manual') => {
     const art = simState.artists.find(a => a.id === rm.artistId) || simState.artists.find(a => a.name.toLowerCase() === rm.artistName.toLowerCase());
@@ -9159,12 +9215,11 @@ export const SimConsoleModal: React.FC<{
         albumTracksCount: isBig ? albumTracks?.length || count : undefined, albumTracks, albumTrackTitles: albumTracks?.map(t => t.title)
       };
       setProposals(prev => [prop, ...prev]);
-      if (!lightMode) setTab('semi');
+      setTab('semi');
       setEditingProposal(prop);
     } else {
       // v2.5.5: goes straight into the manual form (title, artist, feat, cover) — check it and add
-      setIdeaAssignSignal({ seq: Date.now(), draft: { id: makeId('manual'), itemType, artistId: art.id, artistName: art.name, featuredArtist: rm.feat, title, genre: art.genre, plays: est, coverUrl: rm.coverUrl || undefined, duration: itemType === 'snippet' ? `0:${randInt(24, 46)}` : getRandomDuration(rm.feat), albumTracksCount: isBig ? albumTracks?.length || count : undefined, albumTracks } as ManualSimItem });
-      setLightMode(false); setTab('manual');
+      openManualForm({ id: makeId('manual'), itemType, releaseFormat: rm.kind, artistId: art.id, artistName: art.name, featuredArtist: rm.feat, title, genre: art.genre, plays: est, coverUrl: rm.coverUrl || undefined, duration: itemType === 'snippet' ? `0:${randInt(24, 46)}` : getRandomDuration(rm.feat), albumTracksCount: isBig ? albumTracks?.length || count : undefined, albumTracks });
     }
     if (rm.annId) markAnnUsed(rm.annId, target);
     else saveConfirmed(confirmedRumors.map(x => (x.id === rm.id ? { ...x, used: target } : x)));
@@ -9192,22 +9247,27 @@ export const SimConsoleModal: React.FC<{
         {/* Header */}
         <div className="relative px-5 md:px-6 py-4 border-b border-white/[0.12] bg-zinc-950/90 flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-base md:text-lg font-extrabold text-white tracking-tight truncate">
-              Пульт симуляции · {formatSimDate(simState.currentDate)}
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <h2 className="text-base md:text-lg font-extrabold text-white tracking-tight">
+                Пульт симуляции · {formatSimDate(simState.currentDate)}
+              </h2>
+              <button type="button" onClick={onExitSim}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold text-zinc-400 hover:bg-white/[0.07] hover:text-white cursor-pointer">
+                <LogOut className="w-3.5 h-3.5" />
+                Выйти в обычную базу
+              </button>
+            </div>
             <p className="text-xs text-zinc-300 tabular-nums mt-0.5">
               Неделя {simState.weekNumber} · {simState.artists.length} артистов · {simState.tracks.length} треков
             </p>
             <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[11px] tabular-nums">
-              <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200" title="Отмечено релизов на эту неделю">✓ {selectedProposalsCount} в релиз</span>
-              <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200" title="Прогноз прослушиваний отмеченных релизов">≈ {formatCompact(proposals.filter(p => p.selected).reduce((s, p) => s + (p.estimatedPlays || 0), 0))} просл.</span>
-              <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200" title="Релизов с фитами среди отмеченных">feat · {proposals.filter(p => p.selected && p.featuredArtist).length}</span>
-              <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200" title="Следующая дата">→ {formatSimDate(addDaysISO(simState.currentDate, 7))}</span>
+              {tab === 'manual' && <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200">{manualQueue.length} в очереди</span>}
+              {tab === 'semi' && <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200">{selectedProposalsCount} отмечено</span>}
+              <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-200" title="Дата после выбранного шага">→ {formatSimDate(toDate)}</span>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 min-w-0">
-            {!lightMode && (
             <div className="flex flex-wrap items-center gap-1 p-1 bg-zinc-900 border border-white/15 rounded-2xl">
               {[
                 { id: 'semi', label: 'Полуавтомат' },
@@ -9215,11 +9275,12 @@ export const SimConsoleModal: React.FC<{
                 { id: 'manual', label: 'Ручной батч' },
                 { id: 'radar', label: 'Радар артистов' },
                 { id: 'digest', label: 'Итоги и слоты' }
-              ].map(item => (
+              ].filter(item => !lightMode || item.id === 'semi' || item.id === 'manual' || item.id === tab).map(item => (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => setTab(item.id as any)}
+                  onClick={() => setTab(item.id as SimModeType | 'radar' | 'digest')}
+                  aria-pressed={tab === item.id}
                   className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
                     tab === item.id ? 'theme-bg-accent text-black font-bold shadow-md' : 'text-zinc-300 hover:text-white hover:bg-white/[0.06]'
                   }`}
@@ -9228,12 +9289,11 @@ export const SimConsoleModal: React.FC<{
                 </button>
               ))}
             </div>
-            )}
             <ListenEngineButton artists={simState.artists} tracks={simState.tracks} albums={simState.albums} refIso={simState.currentDate} onApplyListeners={onSetArtistFollowers} label="Движок" />
             <button
               type="button"
               onClick={() => setRumorsOpen(v => !v)}
-              title="Подтверждённые слухи из ленты"
+              title="Подтверждённые слухи из ленты. Счётчик показывает слухи в выбранном шаге"
               className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors cursor-pointer shrink-0 inline-flex items-center gap-1.5 ${rumorsOpen ? 'bg-white text-black border-transparent' : 'border-white/10 text-zinc-300 hover:text-white'}`}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />Слухи{openRumors.length > 0 && <span className="tabular-nums">· {openRumors.length}</span>}
@@ -9241,10 +9301,11 @@ export const SimConsoleModal: React.FC<{
             <button
               type="button"
               onClick={toggleLight}
-              title={lightMode ? 'Вернуть полный пульт со всеми вкладками' : 'Лёгкий режим: один экран, только главное'}
+              title={lightMode ? 'Вернуть полный пульт со всеми вкладками' : 'Включить простой режим батчей'}
+              aria-pressed={lightMode}
               className={`px-2.5 py-1.5 rounded-xl text-[11px] font-semibold border transition-colors cursor-pointer shrink-0 ${lightMode ? 'theme-bg-accent text-black border-transparent' : 'border-white/10 text-zinc-300 hover:text-white'}`}
             >
-              {lightMode ? 'Лёгкий режим' : 'Полный режим'}
+              {lightMode ? 'Полный режим' : 'Простой режим'}
             </button>
             <button
               type="button"
@@ -9265,7 +9326,7 @@ export const SimConsoleModal: React.FC<{
         </div>
 
         {/* Body (instant tab switching, zero AnimatePresence lag) */}
-        <div className="relative flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar min-w-0">
+        <div ref={consoleBodyRef} className="relative flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar min-w-0">
           {/* TAB 1: SEMI-AUTO PRODUCER PICKER */}
           {rumorMsg && <div className="mb-3 px-3 py-2 rounded-xl bg-white/[0.06] text-[12px] text-white">{rumorMsg}</div>}
           {rumorsOpen && (
@@ -9277,12 +9338,14 @@ export const SimConsoleModal: React.FC<{
               {confirmedRumors.length === 0 && <div className="text-[12px] text-zinc-500 py-3">Пока пусто. Открой «Ленту» и нажми «Подтвердить» под анонсом или инсайдом.</div>}
               <div className="space-y-1.5">
                 {[...confirmedRumors].sort((a, b) => Number(Boolean(a.used)) - Number(Boolean(b.used)) || Number(a.date < simState.currentDate) - Number(b.date < simState.currentDate) || a.date.localeCompare(b.date)).map(rm => {
-                  const soon = rm.date >= simState.currentDate && rm.date <= addDaysISO(simState.currentDate, advanceDays);
+                  const day = rm.date.slice(0, 10);
+                  const soon = isInSimReleaseWindow(day, fromDate, toDate);
+                  const timing = day === fromDate ? 'сегодня' : soon ? 'в выбранном шаге' : day < fromDate ? 'дата уже прошла' : '';
                   return (
                     <div key={rm.id} className={`flex flex-wrap items-center gap-3 p-2.5 rounded-xl ${rm.used ? 'opacity-50' : 'bg-white/[0.03]'}`}>
                       <div className="min-w-0 flex-1">
                         <div className="text-[13px] font-semibold text-white truncate">{rm.artistName}{rm.feat ? ` feat. ${rm.feat}` : ''} · {rm.kind === 'album' ? 'Альбом' : rm.kind === 'ep' ? 'EP' : rm.kind === 'snippet' ? 'Сниппет' : 'Сингл'}{rm.title ? ` «${rm.title}»` : ''}</div>
-                        <div className="text-[11px] text-zinc-500 truncate">≈ {formatSimDate(rm.date)}{soon ? ' · на этой неделе' : rm.date < simState.currentDate ? ' · дата уже прошла' : ''} · {rm.source}: {rm.text}</div>
+                        <div className="text-[11px] text-zinc-500 truncate">≈ {formatSimDate(rm.date)}{timing && ` · ${timing}`} · {rm.source}: {rm.text}</div>
                       </div>
                       {rm.used ? <span className="text-[11px] text-zinc-500">{rm.used === 'semi' ? 'в полуавтомате' : 'в батче'}</span> : (
                         <div className="flex items-center gap-1.5 shrink-0">
@@ -9297,11 +9360,14 @@ export const SimConsoleModal: React.FC<{
               </div>
             </div>
           )}
-          {lightMode && (
-            <SimLightPanel proposals={proposals} setProposals={setProposals} regenerate={regenerateProposals} autopilot={autopilot} setAuto={updateAutopilot} simState={simState} advanceDays={advanceDays} setAdvanceDays={setAdvanceDays} />
-          )}
           {(tab === 'semi' || tab === 'manual') && (
-            <WeekBuzzStrip simState={simState} rumors={confirmedRumors} anns={anns} onUseAnn={id => sendAnn(id, tab === 'manual' ? 'manual' : 'semi')} target={tab === 'manual' ? 'manual' : 'semi'} onUse={id => { const rm = confirmedRumors.find(x => x.id === id); if (rm) sendRumor(rm, tab === 'manual' ? 'manual' : 'semi'); }} />
+            <WeekBuzzStrip simState={simState} endDate={toDate} friday={releaseFriday} rumors={confirmedRumors} anns={anns}
+              target={tab}
+              onUseAnn={id => sendAnn(id, tab)}
+              onUse={id => { const rm = confirmedRumors.find(r => r.id === id); if (rm) sendRumor(rm, tab); }} />
+          )}
+          {lightMode && tab === 'semi' && (
+            <SimLightPanel proposals={proposals} setProposals={setProposals} regenerate={regenerateProposals} autopilot={autopilot} setAuto={updateAutopilot} simState={simState} advanceDays={advanceDays} />
           )}
           {!lightMode && tab === 'semi' && (
             <div className="space-y-4">
@@ -10025,8 +10091,11 @@ export const SimConsoleModal: React.FC<{
               onOpenIdeaStudio={artistId => setIdeaStudioState({ open: true, artistId })}
               radarAssignSignal={radarAssignSignal}
               createdAssignSignal={createdAssignSignal}
-              editingManualSignal={editingManualSignal}
-              ideaAssignSignal={ideaAssignSignal}
+              manualFormRequest={manualFormRequest}
+              clearRadarAssignment={clearRadarAssignment}
+              clearCreatedAssignment={clearCreatedAssignment}
+              clearManualFormRequest={clearManualFormRequest}
+              simple={lightMode}
             />
           )}
 
@@ -10217,7 +10286,7 @@ export const SimConsoleModal: React.FC<{
                         onAddToSemi={handleRadarAddSemi}
                         onCreateManual={handleRadarCreateManual}
                         onQuickManual={quickAddManual}
-                        queued={manualQueue.filter(q => q.artistId === m.artist.id).length}
+                        queued={queuedByArtist.get(m.artist.id) || 0}
                         onOpenArtist={onOpenArtist}
                       />
                     ))
@@ -10563,7 +10632,7 @@ export const SimConsoleModal: React.FC<{
 
         {/* Footer */}
         <div className="relative px-5 md:px-6 py-4 border-t border-white/[0.12] bg-zinc-900/75 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {(tab === 'semi' || tab === 'auto' || tab === 'manual') && (
               <>
                 <span className="text-xs font-medium text-zinc-300">Шаг времени:</span>
@@ -10586,34 +10655,20 @@ export const SimConsoleModal: React.FC<{
                     </button>
                   ))}
                 </div>
-                {(() => {
-                  const toD = addDaysISO(simState.currentDate, advanceDays);
-                  const fri = getDropFriday(simState.currentDate, toD);
-                  const inStep = fri <= toD;
-                  const dm = (iso: string) => formatSimDate(iso).slice(0, 5);
-                  const dowTo = new Date(simState.currentDate + 'T12:00:00Z').getUTCDay();
-                  const toFri = (5 - dowTo + 7) % 7 || 7;
-                  return (
-                    <span className="hidden lg:inline-flex items-center gap-2 text-[11px] text-zinc-400">
-                      <span>релизы: <b className={inStep ? 'text-emerald-300' : 'text-amber-300'}>пт {dm(fri)}</b> · вы будете: <b className="text-white">{dm(toD)}</b></span>
-                      {!inStep && (tab === 'manual' ? manualQueue.length > 0 : true) && <button type="button" onClick={() => setAdvanceDays(toFri)} className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-200 font-bold hover:bg-amber-500/25">до пятницы · {toFri} дн.</button>}
-                    </span>
-                  );
-                })()}
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
+                  <span>Дроп <b className={fridayInStep ? 'text-emerald-300' : 'text-amber-300'}>{releaseFriday === fromDate ? 'сегодня' : formatSimDate(releaseFriday).slice(0, 5)}</b>{!fridayInStep && ' · после шага'}</span>
+                  {!fridayInStep && (
+                    <button type="button" onClick={() => setAdvanceDays(diffDaysISO(fromDate, releaseFriday))}
+                      className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-200 font-bold hover:bg-amber-500/25 cursor-pointer">
+                      До пятницы
+                    </button>
+                  )}
+                </div>
               </>
             )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={onExitSim}
-              className="px-3.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-xs font-semibold text-red-300 flex items-center gap-1.5 cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Выйти в обычную базу</span>
-            </button>
-
             {tab === 'semi' && (
               <button
                 type="button"
@@ -10662,9 +10717,7 @@ export const SimConsoleModal: React.FC<{
               <button
                 type="button"
                 onClick={() => {
-                  onRunWeek({ manualItems: manualQueue, advanceDays });
-                  setManualQueue([]);
-                  setTab('digest');
+                  runManualBatch();
                 }}
                 className="px-4 py-2 rounded-xl theme-bg-accent text-black text-xs font-bold flex items-center gap-1.5 hover:opacity-90 cursor-pointer"
               >
@@ -10774,9 +10827,8 @@ export const SimConsoleModal: React.FC<{
           onAdjustArtistHype={onAdjustArtistHype}
           onOpenArtist={onOpenArtist}
           onTransferToManual={draft => {
-            setIdeaAssignSignal({ seq: Date.now(), draft });
+            openManualForm(draft);
             setIdeaStudioState({ open: false });
-            setTab('manual');
           }}
           onQueueManualItem={item => {
             setManualQueue(prev => [...prev, item]);
@@ -11279,9 +11331,7 @@ export const SimConsoleModal: React.FC<{
                   type="button"
                   onClick={() => {
                     setShowQueueShowcase(false);
-                    onRunWeek({ manualItems: manualQueue, advanceDays });
-                    setManualQueue([]);
-                    setTab('digest');
+                    runManualBatch();
                   }}
                   className="px-5 py-2.5 rounded-xl theme-bg-accent text-black text-xs font-extrabold flex items-center gap-1.5 cursor-pointer hover:opacity-90"
                 >

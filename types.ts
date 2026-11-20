@@ -73,6 +73,7 @@ export interface Album {
   totalPlays?: number;
   rating?: RatingData;
   albumValue?: AlbumValueRating;
+  releaseFormat?: 'ep' | 'album';
   intrinsicQuality?: number;
   simGenerated?: boolean;
   promoStrategy?: ReleasePromoStrategy;
